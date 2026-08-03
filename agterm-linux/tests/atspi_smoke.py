@@ -1871,6 +1871,7 @@ def verify_session_pickers(env, state):
 def verify_auto_follow(env, state):
     auto_state = state + "-auto-follow"
     os.makedirs(auto_state)
+    os.makedirs(os.path.join(auto_state, "windows"))
     auto_env = dict(
         env,
         AGTERM_STATE_DIR=auto_state,
@@ -1947,6 +1948,9 @@ def main():
     os.makedirs(os.path.join(home, ".claude"))
     os.makedirs(os.path.join(home, ".codex"))
     os.makedirs(state)
+    # A state dir with no prior-launch artifacts reads as a first launch and opens the welcome
+    # dialog over every check. `FirstRunWelcome.hasPriorState` looks for this directory.
+    os.makedirs(os.path.join(state, "windows"))
     socket = os.path.join(state, "agterm.sock")
     env = dict(
         os.environ,
