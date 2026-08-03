@@ -383,6 +383,14 @@ struct LinuxControlDispatcher {
             if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
                 return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
             }
+            let openPane: OverlayPane?
+            switch parseOverlayPane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let parsed): openPane = parsed
+            }
+            if openPane != nil, request.args?.sizePercent != nil {
+                return ControlResponse(ok: false, error: PaneOverlayError.sizePercentConflict)
+            }
             return actions.openSessionOverlay(request.target, window: request.args?.window,
                                               options: ControlSessionOverlayOpenOptions(
                                                 command: command,
@@ -390,15 +398,39 @@ struct LinuxControlDispatcher {
                                                 wait: request.args?.wait ?? false,
                                                 sizePercent: request.args?.sizePercent,
                                                 backgroundColor: request.args?.color,
-                                                follow: request.args?.follow ?? false
+                                                follow: request.args?.follow ?? false,
+                                                pane: openPane
                                               ))
         case .sessionOverlayClose:
-            return actions.closeSessionOverlay(request.target, window: request.args?.window)
+            switch parseOverlayPane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return actions.closeSessionOverlay(request.target, window: request.args?.window, pane: pane)
+            }
         case .sessionOverlayResize:
+            // pane overlays are always full, so ANY `--pane` is refused here, valid spelling or not.
+            if request.args?.pane != nil {
+                return ControlResponse(ok: false, error: PaneOverlayError.resizeUnsupported)
+            }
+            let wantsFull = request.args?.full == true
+            let percent = request.args?.sizePercent
+            if wantsFull, percent != nil {
+                return ControlResponse(ok: false, error: "session.overlay.resize: --full is mutually exclusive with --size-percent")
+            }
+            if !wantsFull, percent == nil {
+                return ControlResponse(ok: false, error: "session.overlay.resize requires --size-percent or --full")
+            }
+            if let percent, !(1...100).contains(percent) {
+                return ControlResponse(ok: false, error: "session.overlay.resize: --size-percent must be 1...100")
+            }
             return actions.resizeSessionOverlay(request.target, window: request.args?.window,
-                                                sizePercent: request.args?.sizePercent)
+                                                sizePercent: wantsFull ? nil : percent)
         case .sessionOverlayResult:
-            return actions.sessionOverlayResult(request.target, window: request.args?.window)
+            switch parseOverlayPane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return actions.sessionOverlayResult(request.target, window: request.args?.window, pane: pane)
+            }
         case .sessionBackground:
             return dispatchSessionBackground(request)
         case .sessionText:
@@ -595,5 +627,20 @@ struct LinuxControlDispatcher {
         }
         return actions.setDashboard(targets: targets, window: args?.window, close: false,
                                     fontMode: mode, mru: false)
+    }
+
+    private enum OverlayPaneSelection {
+        case pane(OverlayPane?)
+        case rejected(ControlResponse)
+    }
+
+    /// The `session.overlay` `--pane` selector: nil when absent, the parsed pane when the spelling is
+    /// accepted, and the pinned rejection otherwise. Mirrors the upstream dispatcher's `parseOverlayPane`.
+    private func parseOverlayPane(_ raw: String?) -> OverlayPaneSelection {
+        guard let raw else { return .pane(nil) }
+        guard let parsed = OverlayPane(controlName: raw) else {
+            return .rejected(ControlResponse(ok: false, error: PaneOverlayError.invalidPane))
+        }
+        return .pane(parsed)
     }
 }

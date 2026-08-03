@@ -101,6 +101,11 @@ final class AppController {
     var scratchSurfaces: [UUID: GhosttySurface] = [:] // full-overlay scratch shell
     var overlaySurfaces: [UUID: GhosttySurface] = [:]  // ephemeral overlay terminal (runs a command)
     var floatingOverlayFrames: [UUID: OpaquePointer] = [:]  // overlay rendered as a floating sized panel
+    // Pane-scoped overlays: an ephemeral terminal covering ONE split pane while its sibling stays live.
+    // Each pane's glArea lives in a GtkOverlay host for its whole lifetime, so the pane overlay is added
+    // and removed as an overlay child WITHOUT ever unparenting the pane's own (GL-context-bound) widget.
+    var paneOverlaySurfaces: [UUID: [OverlayPane: GhosttySurface]] = [:]
+    var paneHosts: [UUID: [OverlayPane: OpaquePointer]] = [:]
     var sessionPanes: [UUID: OpaquePointer] = [:]     // GtkPaned (main content) per session
     var sessionStacks: [UUID: OpaquePointer] = [:]    // outer GtkStack (main <-> scratch), the deck page
     var rowSession: [OpaquePointer: UUID] = [:]

@@ -21,6 +21,7 @@ extension AppController {
             for s in ws.sessions {
                 ensurePrimary(s)
                 syncSplit(s)
+                syncPaneOverlays(s, allowFocus: focusActive)  // after split so both pane hosts exist
                 syncScratch(s)
                 syncOverlay(s, allowFocus: focusActive)   // after scratch so an open overlay wins the visible child
             }
@@ -76,7 +77,7 @@ extension AppController {
         surf.onExit = { [weak self] in self?.closePrimaryPane(sid) }
         s.surface = surf
         surfaces[s.id] = surf
-        gtk_paned_set_start_child(paned, W(surf.glArea))
+        gtk_paned_set_start_child(paned, W(paneHost(s.id, .left, child: surf.glArea) ?? surf.glArea))
         "main".withCString { _ = gtk_stack_add_named(stack, W(paned), $0) }
         gtk_widget_set_halign(W(stack), GTK_ALIGN_FILL)
         gtk_widget_set_valign(W(stack), GTK_ALIGN_FILL)
@@ -114,6 +115,65 @@ extension AppController {
                 scratchSurfaces[s.id] = nil
             }
         }
+    }
+
+    /// The GtkOverlay a pane's terminal lives in for its whole lifetime. Its main child is the pane's own
+    /// glArea (never unparented), leaving the overlay layer free for a pane-scoped overlay terminal.
+    func paneHost(_ sessionID: UUID, _ pane: OverlayPane, child: OpaquePointer) -> OpaquePointer? {
+        if let existing = paneHosts[sessionID]?[pane] { return existing }
+        guard let host = op(gtk_overlay_new()) else { return nil }
+        gtk_widget_set_hexpand(W(host), 1)
+        gtk_widget_set_vexpand(W(host), 1)
+        gtk_overlay_set_child(host, W(child))
+        paneHosts[sessionID, default: [:]][pane] = host
+        return host
+    }
+
+    /// Create/tear down the pane-scoped overlay terminals, one per split pane. Unlike the session-wide
+    /// overlay these are always full-pane, so each simply covers its host; the sibling pane stays live and
+    /// interactive throughout.
+    private func syncPaneOverlays(_ s: Session, allowFocus: Bool) {
+        for pane in OverlayPane.allCases {
+            let wanted = s.paneOverlay(pane)
+            if let wanted, paneOverlaySurfaces[s.id]?[pane] == nil {
+                guard let host = paneHosts[s.id]?[pane] else { continue }
+                let codePath = NSTemporaryDirectory() + "agterm-povl-\(UUID().uuidString).code"
+                var ovlEnv = sessionEnv(for: s, pane: pane == .left ? .left : .right)
+                ovlEnv[OverlayCapture.cmdEnvKey] = wanted.command
+                ovlEnv[OverlayCapture.codeEnvKey] = codePath
+                let ov = GhosttySurface(sessionID: s.id, cwd: wanted.cwd ?? s.effectiveCwd,
+                                        command: "sh -c " + Self.singleQuoted(OverlayCapture.shellLine),
+                                        env: ovlEnv, controller: self, waitAfterCommand: wanted.wait,
+                                        role: .overlay,
+                                        reportsPaneState: false)
+                let sid = s.id
+                let owner = windowID
+                ov.onExit = {
+                    runOnMain { MainActor.assumeIsolated {
+                        if let txt = try? String(contentsOfFile: codePath, encoding: .utf8),
+                           let code = OverlayCapture.parseExitCode(txt) {
+                            gWindows[owner]?.store.recordPaneOverlayExit(sid, pane: pane, code: code)
+                        }
+                        try? FileManager.default.removeItem(atPath: codePath)
+                        gWindows[owner]?.closePaneOverlay(sid, pane: pane)
+                    } }
+                }
+                s.setPaneOverlaySurface(ov, pane: pane)
+                paneOverlaySurfaces[s.id, default: [:]][pane] = ov
+                gtk_overlay_add_overlay(host, W(ov.glArea))
+                ov.realizeWidgetIfNeeded()
+                if allowFocus, s.id == store.selectedSessionID { ov.grabFocus() }
+            } else if wanted == nil, let ov = paneOverlaySurfaces[s.id]?[pane] {
+                if let host = paneHosts[s.id]?[pane] { gtk_overlay_remove_overlay(host, W(ov.glArea)) }
+                paneOverlaySurfaces[s.id]?[pane] = nil
+            }
+        }
+    }
+
+    /// A pane overlay's command exited (or a control close): tear it down + reconcile.
+    func closePaneOverlay(_ id: UUID, pane: OverlayPane) {
+        store.closePaneOverlay(id, pane: pane)
+        reconcile()
     }
 
     /// Create/show/hide the ephemeral overlay terminal (runs `overlayCommand` over the session).
@@ -310,18 +370,19 @@ extension AppController {
             split.onExit = { [weak self] in self?.closeSplitPane(sid) }
             s.splitSurface = split
             splitSurfaces[s.id] = split
-            gtk_paned_set_end_child(paned, W(split.glArea))
+            gtk_paned_set_end_child(paned, W(paneHost(s.id, .right, child: split.glArea) ?? split.glArea))
         }
         if let split = splitSurfaces[s.id] {
             if s.splitSurface == nil {
-                if let primary = surfaces[s.id]?.glArea, gtk_paned_get_start_child(paned) != W(primary) {
+                if let primaryHost = paneHosts[s.id]?[.left], gtk_paned_get_start_child(paned) != W(primaryHost) {
                     gtk_paned_set_start_child(paned, nil)
-                    gtk_paned_set_start_child(paned, W(primary))
+                    gtk_paned_set_start_child(paned, W(primaryHost))
                 }
                 gtk_paned_set_end_child(paned, nil)
+                paneHosts[s.id]?[.right] = nil
                 splitSurfaces[s.id] = nil
             } else {
-                layoutSplit(s, paned: paned, split: split)
+                layoutSplit(s, paned: paned)
                 if s.isSplit {
                     split.refresh()
                     surfaces[s.id]?.refresh()
@@ -332,14 +393,16 @@ extension AppController {
         updatePaneDim(s)
     }
 
-    private func layoutSplit(_ s: Session, paned: OpaquePointer, split: GhosttySurface) {
-        guard let primary = surfaces[s.id]?.glArea else { return }
-        let primaryWidget = W(primary)
-        let splitWidget = W(split.glArea)
+    private func layoutSplit(_ s: Session, paned: OpaquePointer) {
+        guard let primaryHost = paneHosts[s.id]?[.left],
+              let splitHost = paneHosts[s.id]?[.right] else { return }
+        let primaryWidget = W(primaryHost)
+        let splitWidget = W(splitHost)
         let layout = SplitPaneLayout(isSplit: s.isSplit, splitFocused: s.splitFocused)
-        // Keep both GtkGLAreas in stable paned slots for the split's entire lifetime. Unparenting a
-        // GtkGLArea unrealizes it and invalidates the GL context that libghostty's surface was created
-        // against; reattaching the same widget then leaves its terminal buffer alive but the pane blank.
+        // Move the per-pane HOSTS between paned slots, never the GtkGLAreas they wrap. Unparenting a
+        // GtkGLArea unrealizes it and invalidates the GL context libghostty created its surface against;
+        // reattaching the same widget then leaves its terminal buffer alive but the pane blank. Each
+        // glArea therefore stays in its host for the pane's whole lifetime.
         // GtkPaned gives the sole visible child the full allocation, so visibility alone implements the
         // tmux-style hidden-split maximization without rehosting either renderer.
         let startWidget = layout.startSlot == .primary ? primaryWidget : splitWidget
@@ -420,6 +483,12 @@ extension AppController {
         }
         overlaySurfaces[id]?.teardown()
         overlaySurfaces[id] = nil
+        for (pane, ov) in paneOverlaySurfaces[id] ?? [:] {
+            if let host = paneHosts[id]?[pane] { gtk_overlay_remove_overlay(host, W(ov.glArea)) }
+            ov.teardown()
+        }
+        paneOverlaySurfaces[id] = nil
+        paneHosts[id] = nil
         splitSurfaces[id]?.teardown()
         splitSurfaces[id] = nil
         surfaces[id]?.teardown()

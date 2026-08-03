@@ -828,10 +828,18 @@ extension AppController: ControlActions {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            guard store.openOverlay(id, command: options.command, cwd: options.cwd, wait: options.wait,
-                                    sizePercent: options.sizePercent,
-                                    backgroundColor: options.backgroundColor) else {
-                return err("overlay already open")
+            if let pane = options.pane {
+                if let failure = store.openPaneOverlay(id, pane: pane, command: options.command,
+                                                       cwd: options.cwd, wait: options.wait,
+                                                       backgroundColor: options.backgroundColor) {
+                    return paneOverlayFailure(failure, target: target)
+                }
+            } else {
+                guard store.openOverlay(id, command: options.command, cwd: options.cwd, wait: options.wait,
+                                        sizePercent: options.sizePercent,
+                                        backgroundColor: options.backgroundColor) else {
+                    return err("overlay already open")
+                }
             }
             if options.follow { selectSession(id, userInitiated: false) }
             reconcile()
@@ -839,11 +847,20 @@ extension AppController: ControlActions {
         }
     }
 
-    func closeSessionOverlay(_ target: String?, window: String?) -> ControlResponse {
+    private func paneOverlayFailure(_ failure: PaneOverlayOpenFailure, target: String?) -> ControlResponse {
+        switch failure {
+        case .unknownSession: return err("no such session: \(target ?? "active")")
+        case .alreadyOpen: return err(PaneOverlayError.alreadyOpen)
+        case .paneNotVisible: return err(PaneOverlayError.paneNotVisible)
+        }
+    }
+
+    func closeSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            guard store.closeOverlay(id) else { return err("no overlay") }
+            let closed = pane.map { store.closePaneOverlay(id, pane: $0) } ?? store.closeOverlay(id)
+            guard closed else { return err("no overlay") }
             reconcile()
             return ok(id)
         }
@@ -859,13 +876,15 @@ extension AppController: ControlActions {
         }
     }
 
-    func sessionOverlayResult(_ target: String?, window: String?) -> ControlResponse {
+    func sessionOverlayResult(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
             guard let session = store.session(withID: id) else { return err("no such session") }
-            if session.overlayActive { return err(OverlayResultError.stillRunning) }
-            guard let code = session.overlayExitCode else { return err(OverlayResultError.noResult) }
+            let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
+                ?? (session.overlayActive, session.overlayExitCode)
+            if running { return err(OverlayResultError.stillRunning) }
+            guard let code = exitCode else { return err(OverlayResultError.noResult) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, exitCode: code))
         }
     }

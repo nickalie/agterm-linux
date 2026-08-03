@@ -680,6 +680,11 @@ final class GhosttySurface: TerminalSurface {
     /// token against the surface's live slot after a split pane is promoted and a new split is created.
     var paneToken: String { env["AGTERM_PANE_ID"] ?? "" }
 
+    /// Whether libghostty actually created the terminal and spawned its program. `realizeWidgetIfNeeded`
+    /// defers `ghostty_surface_new` until the `GtkGLArea` has a nonzero size, so holding a session slot
+    /// proves nothing — the live pointer is the only honest signal.
+    var isRealized: Bool { surface != nil }
+
     /// The live foreground-process argv (via `/proc/<pid>/cmdline`), or nil at the shell prompt — the
     /// Linux analogue of macOS's KERN_PROCARGS2 capture, used for `tree` introspection / restore.
     func foregroundCommand() -> [String]? {
