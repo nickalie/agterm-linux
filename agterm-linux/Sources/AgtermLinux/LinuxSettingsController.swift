@@ -132,6 +132,12 @@ extension AppController {
         reloadConfig()
     }
 
+    /// Sidebar-only, so it needs no `reloadConfig()`: nothing here reaches a ghostty config key, and the
+    /// next row click reads the persisted value directly.
+    func setWorkspaceRowClickExpands(_ enabled: Bool) {
+        persist(\.workspaceRowClickExpands, enabled ? nil : false)
+    }
+
     func setScrollSpeed(_ value: Double) {
         persist(\.mouseScrollMultiplier, value == 3 ? nil : value)
         reloadConfig()

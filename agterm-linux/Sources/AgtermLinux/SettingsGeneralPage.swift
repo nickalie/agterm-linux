@@ -19,6 +19,13 @@ extension AppController {
                 preferencesSwitch(
                     "Right-click pastes", active: settings.rightClickPaste ?? true,
                     handler: unsafeBitCast(onSettingsRightClickPaste, to: GCallback.self))))
+        adw_preferences_group_add(
+            cast(mouse),
+            W(
+                preferencesSwitch(
+                    "Click a workspace row to expand or collapse",
+                    active: settings.workspaceRowClickExpands ?? true,
+                    handler: unsafeBitCast(onSettingsWorkspaceRowClick, to: GCallback.self))))
         adw_preferences_page_add(cast(page), cast(mouse))
 
         let sessions = preferencesGroup("Sessions")
@@ -112,6 +119,11 @@ private let onSettingsScrollSpeed: @MainActor @convention(c) (OpaquePointer?, Op
 private let onSettingsRightClickPaste: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated {
         controllerForWidget(row)?.setRightClickPaste(adw_switch_row_get_active(row) != 0)
+    }
+}
+private let onSettingsWorkspaceRowClick: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        controllerForWidget(row)?.setWorkspaceRowClickExpands(adw_switch_row_get_active(row) != 0)
     }
 }
 private let onSettingsRestoreCommand: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in

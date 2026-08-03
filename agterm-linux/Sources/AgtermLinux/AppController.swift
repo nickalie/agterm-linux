@@ -589,8 +589,13 @@ final class AppController {
         rebuildSidebar()
     }
 
+    /// `workspaceRowClickExpands` gates the whole-row target only; the disclosure triangle above keeps
+    /// toggling regardless.
+    var workspaceRowClickExpands: Bool { linuxSettingsStore().load().workspaceRowClickExpands ?? true }
+
     func scheduleWorkspaceToggle(_ data: gpointer?) {
-        guard let data, let wsID = workspaceDiscButtons[OpaquePointer(data)] else { return }
+        guard let data, let wsID = workspaceDiscButtons[OpaquePointer(data)],
+              workspaceRowClickExpands else { return }
         cancelPendingWorkspaceToggle()
         pendingWorkspaceToggle = wsID
         pendingWorkspaceToggleSource = g_timeout_add(300, onWorkspaceToggleTimeout, Unmanaged.passUnretained(self).toOpaque())
@@ -606,7 +611,12 @@ final class AppController {
 
     func firePendingWorkspaceToggle() -> gboolean {
         pendingWorkspaceToggleSource = 0
-        guard let wsID = pendingWorkspaceToggle else { return 0 }
+        // re-read the setting when the deferred toggle fires: it can be turned off inside the deferral
+        // window, and nothing else cancels an already-scheduled toggle.
+        guard let wsID = pendingWorkspaceToggle, workspaceRowClickExpands else {
+            pendingWorkspaceToggle = nil
+            return 0
+        }
         pendingWorkspaceToggle = nil
         let isExpanded = store.workspaces.first(where: { $0.id == wsID })?.isExpanded ?? true
         store.setWorkspaceExpanded(wsID, expanded: !isExpanded)
