@@ -90,7 +90,12 @@ struct LinuxControlDispatcher {
     private func dispatchPickCommand(_ request: ControlRequest) -> ControlResponse {
         switch request.cmd {
         case .pickOpen:
-            guard let items = request.args?.items, !items.isEmpty else {
+            guard let items = request.args?.items else {
+                return ControlResponse(ok: false, error: "pick.open requires items")
+            }
+            let allowCustom = request.args?.allowCustom == true
+            // an empty list is a text prompt, which only makes sense when a custom answer is accepted
+            guard !items.isEmpty || allowCustom else {
                 return ControlResponse(ok: false, error: "pick.open requires at least one item")
             }
             guard items.count <= ControlPickItem.maxItems else {
@@ -114,7 +119,8 @@ struct LinuxControlDispatcher {
                     id: UUID().uuidString,
                     items: items,
                     prompt: request.args?.prompt,
-                    allowCustom: request.args?.allowCustom == true
+                    query: request.args?.query,
+                    allowCustom: allowCustom
                 ),
                 window: request.args?.window,
                 follow: request.args?.follow == true

@@ -129,7 +129,13 @@ extension AppController {
         ))
         gtk_widget_add_controller(W(win), keys)
 
-        filterControlPick("")
+        // `--query` opens the field pre-filled and filtered; setting the text before the initial filter
+        // keeps the entry and the list in step without relying on the search-changed signal firing.
+        let seeded = pick.query ?? ""
+        if !seeded.isEmpty {
+            seeded.withCString { gtk_editable_set_text(entry, $0) }
+        }
+        filterControlPick(seeded)
         gtk_window_present(WIN(win))
         _ = gtk_widget_grab_focus(W(entry))
     }
@@ -141,8 +147,10 @@ extension AppController {
         }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let indexed = pending.items.enumerated().map { (index: $0.offset, item: $0.element) }
+        // caller-supplied rows match the LABEL only, so a subtitle carrying consequence text
+        // ("cannot be undone") cannot let a refusal word isolate a destructive row.
         let filtered = fuzzyRank(query: trimmed, items: indexed) { value in
-            value.item.subtitle.map { [value.item.label, $0] } ?? [value.item.label]
+            paletteSearchKeys(title: value.item.label, subtitle: value.item.subtitle, callerSupplied: true)
         }
         controlPickRows = filtered.map {
             LinuxControlPickRow(item: $0.item, originalIndex: $0.index, customQuery: nil)
