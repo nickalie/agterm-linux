@@ -58,6 +58,14 @@ extension AppController {
               let stack = op(gtk_stack_new()) else { return }
         sessionPanes[s.id] = paned
         connect(paned, "notify::position", unsafeBitCast(onPanedPosition as @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
+        // Double-click the divider to restore an even split. The gesture sits on the GtkPaned itself and
+        // runs in the bubble phase, so the pane children consume their own clicks first and only presses
+        // landing on the handle reach it.
+        let dividerClick = gtk_gesture_click_new()
+        gtk_gesture_single_set_button(dividerClick, 1)
+        connect(dividerClick, "pressed", unsafeBitCast(onPanedDividerPressed as @convention(c)
+            (OpaquePointer?, Int32, Double, Double, gpointer?) -> Void, to: GCallback.self))
+        gtk_widget_add_controller(W(paned), dividerClick)
         sessionStacks[s.id] = stack
         let hadForeground = s.foregroundCommand != nil
         let restoreInput = consumeRestoreInput(&s.foregroundCommand)
@@ -422,6 +430,16 @@ extension AppController {
         }
         gtk_widget_set_visible(primaryWidget, layout.primaryVisible ? 1 : 0)
         gtk_widget_set_visible(splitWidget, layout.splitVisible ? 1 : 0)
+    }
+
+    /// Divider double-click: restore the even split. A no-op unless the session actually has a live split,
+    /// so a stray double-click on a single-pane session cannot persist a ratio it never had.
+    func evenSplitForPaned(_ paned: OpaquePointer) {
+        guard let (sid, _) = sessionPanes.first(where: { $0.value == paned }),
+              let session = store.session(withID: sid), session.hasSplit else { return }
+        _ = store.applySplitRatio(AppStore.splitRatioDefault, forSession: sid)
+        let width = max(1, gtk_widget_get_width(W(paned)))
+        gtk_paned_set_position(paned, Int32(Double(width) * AppStore.splitRatioDefault))
     }
 
     func capturePanedRatio(_ paned: OpaquePointer?) {

@@ -385,6 +385,15 @@ let onPanedPosition: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, 
     MainActor.assumeIsolated { controllerForWidget(paned)?.capturePanedRatio(paned) }
 }
 
+let onPanedDividerPressed: @MainActor @convention(c) (OpaquePointer?, Int32, Double, Double, gpointer?) -> Void = { gesture, nPress, _, _, _ in
+    guard nPress == 2 else { return }
+    MainActor.assumeIsolated {
+        let widget = op(gtk_event_controller_get_widget(gesture))
+        guard let widget else { return }
+        controllerForWidget(widget)?.evenSplitForPaned(widget)
+    }
+}
+
 let restorePanedRatioTick: @MainActor @convention(c) (gpointer?) -> gboolean = { data in
     guard let data else { return 0 }
     return MainActor.assumeIsolated {
