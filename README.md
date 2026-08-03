@@ -430,8 +430,11 @@ The same recently-used history decides where you land when you close the session
 On Linux, press **Ctrl+,** or choose **Preferences…** from the command palette.
 Both routes remain available when the toolbar is hidden.
 The GTK Preferences dialog has **General**, **Appearance**, **Interface**, **Notifications**, **Agent Status**, **Key Mapping**, and **Integrations** pages.
-Common options use native controls and apply live: mouse behavior, new-session directories, command restoration, close behavior, font and light/dark themes, terminal opacity, toolbar mode, sidebar tint and text size, inactive-pane muting, notifications, status colors and desktop bell, and auto-follow behavior.
+Common options use native controls and apply live: mouse behavior, whether clicking a workspace row expands or collapses it (on by default; the disclosure triangle toggles either way), new-session directories, command restoration, close behavior, font and light/dark themes, terminal opacity, toolbar mode, sidebar tint and text size, notifications, status colors and desktop bell, and auto-follow behavior.
+The mute strength covers the inactive half of a split and the session left visible around a floating overlay or the quick terminal.
 The Key Mapping page shows the active path and parse diagnostics and can open or reload `keymap.conf`.
+
+The first launch on a machine opens a welcome dialog naming the optional integrations and offering the agent skill and the agent status hooks; it never appears again, and each button runs the normal Preferences ▸ Integrations flow, which previews the exact file plan before applying it.
 
 Advanced terminal configuration remains in `<config directory>/ghostty.conf`, and key bindings remain in `keymap.conf`.
 `settings.json` is internal persistence, not a supported text configuration surface.

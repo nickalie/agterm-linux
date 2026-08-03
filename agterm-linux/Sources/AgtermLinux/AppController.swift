@@ -582,50 +582,6 @@ final class AppController {
         rebuildSidebar()
     }
 
-    /// Toggle one workspace's collapsed state — the sidebar header disclosure triangle.
-    func toggleWorkspaceCollapse(_ data: gpointer?) {
-        guard let data, let wsID = workspaceDiscButtons[OpaquePointer(data)] else { return }
-        cancelPendingWorkspaceToggle()
-        let isExpanded = store.workspaces.first(where: { $0.id == wsID })?.isExpanded ?? true
-        store.setWorkspaceExpanded(wsID, expanded: !isExpanded)
-        rebuildSidebar()
-    }
-
-    /// `workspaceRowClickExpands` gates the whole-row target only; the disclosure triangle above keeps
-    /// toggling regardless.
-    var workspaceRowClickExpands: Bool { linuxSettingsStore().load().workspaceRowClickExpands ?? true }
-
-    func scheduleWorkspaceToggle(_ data: gpointer?) {
-        guard let data, let wsID = workspaceDiscButtons[OpaquePointer(data)],
-              workspaceRowClickExpands else { return }
-        cancelPendingWorkspaceToggle()
-        pendingWorkspaceToggle = wsID
-        pendingWorkspaceToggleSource = g_timeout_add(300, onWorkspaceToggleTimeout, Unmanaged.passUnretained(self).toOpaque())
-    }
-
-    func cancelPendingWorkspaceToggle() {
-        if pendingWorkspaceToggleSource != 0 {
-            g_source_remove(pendingWorkspaceToggleSource)
-            pendingWorkspaceToggleSource = 0
-        }
-        pendingWorkspaceToggle = nil
-    }
-
-    func firePendingWorkspaceToggle() -> gboolean {
-        pendingWorkspaceToggleSource = 0
-        // re-read the setting when the deferred toggle fires: it can be turned off inside the deferral
-        // window, and nothing else cancels an already-scheduled toggle.
-        guard let wsID = pendingWorkspaceToggle, workspaceRowClickExpands else {
-            pendingWorkspaceToggle = nil
-            return 0
-        }
-        pendingWorkspaceToggle = nil
-        let isExpanded = store.workspaces.first(where: { $0.id == wsID })?.isExpanded ?? true
-        store.setWorkspaceExpanded(wsID, expanded: !isExpanded)
-        rebuildSidebar()
-        return 0
-    }
-
     /// Collapse every workspace except the active one to a header — the palette + `sidebar.collapse` arm.
     func collapseOtherWorkspaces() {
         let expanded = store.currentWorkspaceID.map { Set([$0]) } ?? []
