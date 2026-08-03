@@ -2,31 +2,27 @@ import agtermCore
 import AppKit
 import SwiftUI
 
-/// One selectable palette entry: a title (and optional subtitle, e.g. a session's cwd), an optional
-/// keyboard-shortcut hint shown right-aligned, plus the closure to run when chosen.
+/// One selectable palette entry: a title, an optional subtitle (e.g. a session's cwd), and the closure to
+/// run when chosen.
 struct PaletteItem: Identifiable {
     let id: String
     let title: String
     let subtitle: String?
-    /// The action's keyboard shortcut hint shown right-aligned, nil for items with no shortcut.
-    /// Rebindable built-ins read the live keymap (`AppActions.shortcutGlyph`) so it tracks rebinds and
-    /// render as macOS menu glyphs (e.g. `⌘⇧E`); custom commands show their raw kitty shortcut string
-    /// (e.g. `cmd+shift+e`).
+    /// The right-aligned shortcut hint, nil for items with no shortcut. Rebindable built-ins render the
+    /// live keymap (`AppActions.shortcutGlyph`) as macOS menu glyphs (`⌘⇧E`), so they track rebinds; a
+    /// custom command shows its raw kitty string (`cmd+shift+e`).
     let shortcut: String?
     /// A small trailing badge label (e.g. `custom` for user-defined keymap commands), nil for none.
     let badge: String?
-    /// A leading agent-status glyph (the attention palette's rows carry it), nil for items with no
-    /// status — only the `.attention` palette sets it, so the other palettes render no glyph.
+    /// A leading agent-status glyph, nil for none — only the `.attention` palette sets it.
     let status: AgentStatus?
-    /// Per-call `#rrggbb` glyph-tint override for the leading status glyph (the session's
-    /// `AgentIndicator.color`), so the attention row matches the sidebar; nil = the default status color.
+    /// Per-call `#rrggbb` tint for the status glyph (the session's `AgentIndicator.color`), so the
+    /// attention row matches the sidebar; nil = the default status color.
     let statusColor: String?
-    /// Per-call silhouette override for the leading status glyph (the session's `AgentIndicator.shape`),
-    /// so the attention row matches the sidebar; nil = the Settings shape for that status.
+    /// Per-call silhouette for the status glyph (`AgentIndicator.shape`); nil = the Settings shape.
     let statusShape: StatusShape?
-    /// Fired when this item BECOMES the selection (keyboard navigation), distinct from `run` (Enter/
-    /// click). Only the `.themes` palette sets it — it drives the live theme preview; nil everywhere
-    /// else, so the other palettes have no selection side effect.
+    /// Fired when this item BECOMES the selection (keyboard navigation), distinct from `run` (Enter/click).
+    /// Only `.themes` sets it, driving the live theme preview.
     let onSelect: (() -> Void)?
     let run: () -> Void
 
@@ -46,10 +42,9 @@ struct PaletteItem: Identifiable {
     }
 }
 
-/// Which palette is open. `actions` fuzzy-searches the app's commands; `sessions` fuzzy-searches
-/// the open sessions to jump between them; `themes` fuzzy-searches the bundled themes with a live
-/// preview on navigation (Enter commits, Esc reverts); `customCommands` fuzzy-searches only the
-/// user-defined keymap commands (the `custom` subset of `actions`, shown without the badge).
+/// Which palette is open. Each fuzzy-searches its own source: `actions` the app's commands, `sessions` the
+/// open sessions to jump between, `themes` the bundled themes with a live preview on navigation (Enter
+/// commits, Esc reverts), `customCommands` the `custom` subset of `actions` shown without the badge.
 enum PaletteMode {
     case actions
     case sessions
@@ -70,16 +65,16 @@ final class PaletteController {
         self.mode = (self.mode == mode) ? nil : mode
     }
 
-    /// Open a specific palette unconditionally (used by the theme picker's launcher/menu item, which
-    /// must open `.themes` rather than toggle it closed if it happened to already be the mode).
+    /// Open a palette unconditionally — the theme picker's launcher/menu item must not toggle `.themes`
+    /// closed when it already happens to be the mode.
     func open(_ mode: PaletteMode) { self.mode = mode }
 
     func close() { mode = nil }
 }
 
-/// The palette overlay: a dimmed scrim (click to dismiss) with a top-centered search field and a
+/// The palette overlay: a dimmed scrim (click to dismiss) over a top-centered search field and a
 /// fuzzy-filtered result list. Type to filter, ↑/↓ to move, Enter to run, Esc to close. Mounted by
-/// `ContentView` only while a palette is open; the item source switches on `controller.mode`.
+/// `ContentView` only while a palette is open.
 struct CommandPalette: View {
     let controller: PaletteController
     let actions: AppActions
@@ -95,21 +90,23 @@ struct CommandPalette: View {
     /// continue to close through `PaletteController`; a pick uses it to resolve cancellation.
     let onDismiss: (() -> Void)?
 
-    @State private var query = ""
+    @State private var query: String
     @State private var selection = 0
-    /// The visible, filtered result list. Held in `@State` (recomputed on query/mode change) so
-    /// the rendered rows and the Enter target are guaranteed to be the same array — a recomputed
-    /// property could otherwise be evaluated out of sync between the list and the run handler.
+    /// The visible, filtered result list. Held in `@State` so the rendered rows and the Enter target are
+    /// one array — a computed property could be evaluated out of sync between the list and the handler.
     @State private var filtered: [PaletteItem] = []
     @FocusState private var fieldFocused: Bool
 
+    /// `initialQuery` seeds the search field for an explicit picker: the caller's `--query` opens the
+    /// palette already filtered, since `.onAppear` runs the first `updateFiltered()` against it.
     init(controller: PaletteController, actions: AppActions, items: [PaletteItem]? = nil,
-         prompt: String? = nil, allowCustom: Bool = false, onCustom: ((String) -> Void)? = nil,
-         onDismiss: (() -> Void)? = nil) {
+         prompt: String? = nil, initialQuery: String? = nil, allowCustom: Bool = false,
+         onCustom: ((String) -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
         self.controller = controller
         self.actions = actions
         self.explicitItems = items
         self.prompt = prompt
+        _query = State(initialValue: initialQuery ?? "")
         self.allowCustom = allowCustom
         self.onCustom = onCustom
         self.onDismiss = onDismiss
@@ -127,28 +124,27 @@ struct CommandPalette: View {
         }
     }
 
-    /// Recomputes `filtered` for the current query: keep items whose title (or subtitle) matches,
-    /// best score first, then alphabetically by title (so an empty query lists everything A→Z and
-    /// equal-scoring matches are ordered predictably).
+    /// Recomputes `filtered`: items whose search keys match (`paletteSearchKeys` — label only for a
+    /// caller-supplied picker, label plus subtitle for a built-in palette), best score first then
+    /// alphabetically by title so equal scores are ordered predictably. An empty query lists a built-in
+    /// palette A→Z, but leaves a caller-supplied picker and `.attention` in their source order. The query is
+    /// trimmed of whitespace AND newlines first: `fuzzyScore` splits on both, so a blank query that kept a
+    /// newline would score every row 0 and lose the source order to the tie-break.
     private func updateFiltered() {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        // the attention palette's empty-query order is the paletteAttention()/attentionSessions ranking
-        // (blocked→active→completed, newest change first). preserve it verbatim instead of falling through
-        // to the alphabetical tie-break below — every row scores 0 for an empty query, so that tie-break
-        // would re-sort them A→Z and Return would jump to the alphabetically-first session, not the blocked
-        // one. fuzzy filtering still applies once the user types.
-        if explicitItems == nil, controller.mode == .attention, q.isEmpty {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // skipping the rank is what preserves the source order: every row scores 0 on an empty query and the
+        // tie-break below would re-sort A→Z, replacing the intended first row — the one Return runs.
+        if q.isEmpty, explicitItems != nil || controller.mode == .attention {
             filtered = allItems
             selection = filtered.isEmpty ? 0 : min(selection, filtered.count - 1)
             return
         }
         filtered = fuzzyRank(query: q, items: allItems) { item in
-            item.subtitle.map { [item.title, $0] } ?? [item.title]
+            paletteSearchKeys(title: item.title, subtitle: item.subtitle, callerSupplied: explicitItems != nil)
         }
         if explicitItems != nil,
            let label = pickCustomRowLabel(query: q, filteredCount: filtered.count, allowCustom: allowCustom) {
-            let value = q
-            filtered = [PaletteItem(id: "pick-custom", title: label) { onCustom?(value) }]
+            filtered = [PaletteItem(id: "pick-custom", title: label) { onCustom?(q) }]
         }
         selection = filtered.isEmpty ? 0 : min(selection, filtered.count - 1)
     }
@@ -164,10 +160,9 @@ struct CommandPalette: View {
         }
     }
 
-    /// Enter/leave the live-preview theme session as the palette opens, switches mode, or closes:
-    /// entering `.themes` captures the current theme (so Esc can revert) and starts the selection on
-    /// the current theme's row; leaving it (to another mode or closed) reverts any uncommitted preview.
-    /// Idempotent — `AppActions` guards begin/cancel on its active flag.
+    /// Enter/leave the live-preview theme session as the palette opens, switches mode, or closes: entering
+    /// `.themes` captures the current theme (so Esc can revert) and starts the selection on its row,
+    /// leaving reverts any uncommitted preview. Idempotent — `AppActions` guards on its active flag.
     private func syncThemeSession() {
         guard explicitItems == nil, controller.mode == .themes else {
             actions.cancelThemePreview()
@@ -210,8 +205,6 @@ struct CommandPalette: View {
             Divider()
             results
         }
-        // Keep the live material in its own invalidation boundary: arrow-key selection changes
-        // rebuild the palette content, but must not recreate/re-resolve the whole panel backdrop.
         .background { PalettePanelBackground() }
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.1)))
         .shadow(radius: 24)
@@ -220,11 +213,9 @@ struct CommandPalette: View {
             fieldFocused = true
             updateFiltered()
             if explicitItems == nil { syncThemeSession() }
-            // a palette opened from a title-bar button (the attention bell) mounts while that button
-            // still holds first responder, so the synchronous focus above loses the race and the field
-            // never takes the keyboard. re-assert on the next runloop tick — after the click settles —
-            // so the field wins. for the menu/hotkey/⌃P paths the field is already focused by then, so
-            // this is a no-op (see swiftui focus-pattern: onAppear focus may need a main-async kick).
+            // a palette opened from a title-bar button (the attention bell) mounts while that button still
+            // holds first responder, so the synchronous focus above loses the race. re-assert on the next
+            // runloop tick, once the click settles; a no-op for the menu/hotkey/⌃P paths.
             DispatchQueue.main.async { fieldFocused = true }
         }
         .onChange(of: controller.mode) {
@@ -252,13 +243,10 @@ struct CommandPalette: View {
             .frame(maxHeight: 320)
             .onChange(of: selection) { _, sel in
                 guard filtered.indices.contains(sel) else { return }
-                // live theme preview: navigating a row applies it (no-op for non-theme palettes,
-                // whose items carry no onSelect).
                 filtered[sel].onSelect?()
-                // With no anchor, scrollTo is a no-op while the row is already visible and performs
-                // only the minimum reveal at an edge. Animating a center-anchored scroll on every
-                // key-repeat event continually interrupted layout/compositing and made the whole
-                // material-backed palette flash.
+                // with no anchor, scrollTo no-ops while the row is visible and does the minimum reveal at
+                // an edge. an animated center-anchored scroll on every key-repeat kept interrupting
+                // layout/compositing and made the material-backed palette flash.
                 proxy.scrollTo(filtered[sel].id)
             }
         }
@@ -269,9 +257,8 @@ struct CommandPalette: View {
         selection = max(0, min(selection + delta, filtered.count - 1))
     }
 
-    /// Preview the currently-selected item (fires its `onSelect`). Called after a filter re-orders the
-    /// list so the new top match previews even when `selection` stayed 0 (no `onChange(of: selection)`).
-    /// A no-op for non-theme palettes — only theme rows carry an `onSelect`.
+    /// Fires the selected item's `onSelect`. Called after a filter re-orders the list, so the new top match
+    /// previews even when `selection` stayed 0 and `onChange(of: selection)` never fires.
     private func previewSelected() {
         guard filtered.indices.contains(selection) else { return }
         filtered[selection].onSelect?()
@@ -293,8 +280,7 @@ struct CommandPalette: View {
     }
 }
 
-/// The panel's live material is deliberately a separate view type so selection state changes in
-/// `CommandPalette` do not invalidate and re-resolve the entire backdrop.
+/// A separate view type so a selection change in `CommandPalette` doesn't re-resolve the whole backdrop.
 private struct PalettePanelBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -309,8 +295,8 @@ private struct PalettePanelBackground: View {
     }
 }
 
-/// A real row view gives SwiftUI a narrow diffing boundary: selection changes update the previous
-/// and next rows instead of rebuilding every row helper in the lazy stack.
+/// A real row view narrows SwiftUI's diffing boundary: a selection change updates the previous and next
+/// rows instead of rebuilding every row helper in the lazy stack.
 private struct PaletteRow: View {
     let item: PaletteItem
     let isSelected: Bool

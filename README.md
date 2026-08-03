@@ -347,13 +347,13 @@ agterm arranges terminals into a small hierarchy. These are the only terms you n
 
 **Session.** A session is one running shell with a name, a working directory, and its own scrollback. It is the unit you work in and the row you see in the sidebar. A new session takes its name from the basename of its directory; rename it to pin a custom name, clear the name to go back to the basename. New sessions open in your home directory by default, or in the current session's directory, or in a fixed folder (set in Settings). A session runs until you close it or its shell exits, and it comes back on the next launch with its directory, font size, and split state restored.
 
-**Panes.** A session can split into two shells side by side. Both panes are part of the same session and share one sidebar row; a split is one session with two terminals, not two sessions. One pane is focused at a time, and the divider position is remembered.
+**Panes.** A session can split into two shells side by side. Both panes are part of the same session and share one sidebar row; a split is one session with two terminals, not two sessions. One pane is focused at a time, and the divider position is remembered — drag the divider to resize the panes, double-click it to snap back to an even split.
 
 **Scratch terminal.** Every session has an extra shell, the scratch terminal, that you toggle on over the session and hide again without killing it. It opens in the session's directory and is for a quick aside next to your main work. It belongs to that one session and is not restored across launches.
 
 **Quick terminal.** The quick terminal is a single throwaway shell per window, not tied to any session. It drops over whatever session is active, for a command unrelated to what you are working on, and hiding it keeps the shell alive. It is not restored across launches.
 
-**Overlay.** An overlay runs one program in a temporary terminal over a session and disappears when the program exits, leaving the session as it was. It is mostly driven from the control API to launch an interactive program (a diff viewer, a process monitor) over a session without replacing its shell. See [Scripting agterm](#scripting-agterm).
+**Overlay.** An overlay runs one program in a temporary terminal over a session and disappears when the program exits, leaving the session as it was. It is mostly driven from the control API to launch an interactive program (a diff viewer, a process monitor) over a session without replacing its shell. It can cover the whole session, or just one split pane while the sibling pane stays live. See [Scripting agterm](#scripting-agterm).
 
 **Terminal zoom.** Zoom fills the whole window with one terminal surface — a pane, the scratch, an overlay, or the quick terminal — hiding the sidebar and collapsing the title bar to a slim strip that keeps the window title and an exit button. Cmd+Shift+Return toggles it on the active surface (rebindable as `toggle_terminal_zoom`; the exit button, ⌘W, and View ▸ Toggle Terminal Zoom all leave it). It is a view mode, not a layout change: entering closes transient chrome (an open palette or search), and exiting restores split ratios, focus, and visibility exactly as they were. Everything else keeps running behind the zoomed surface, and a script can zoom any surface by id with `agtermctl surface zoom`. Distinct from macOS window zoom and full screen, which size the window itself.
 
@@ -370,6 +370,12 @@ grid), and Esc closes it.
 It is opened over the control channel with `agtermctl dashboard <ids…>` — or with `agtermctl dashboard --mru` to
 fill the grid from the window's most-recently-used sessions instead of naming ids — and closed with `--close` (or
 Enter/Esc).
+An id may name one pane instead of the whole session by carrying a `:left`/`:right` suffix, the same form
+`tree --json` reports in `dashboardMembers`: `agtermctl dashboard "$a:left" "$b:right"` grids the main pane of one
+split session beside the split pane of another, leaving the panes you did not ask for out of the nine-cell budget.
+A bare id still takes every pane of its session.
+A `:right` on a session with no split names no pane, so it joins the unresolved note, and fails the command
+outright if nothing else resolved.
 The most-recently-used grid also has a built-in opener: **⌘⇧D** on macOS or **Ctrl+Shift+M** on Linux (or
 **Navigate ▸ Dashboard**, the command palette's **Dashboard**, or the title-bar grid button) toggles it, auto-sized,
 so the recent-sessions view is one keystroke away without a script.
@@ -382,7 +388,7 @@ The dashboard and terminal zoom are mutually exclusive.
 
 **Window.** A window is a whole set of workspaces and sessions in its own on-screen macOS window, with its own sidebar. Each window has its own sessions, so "work" and "personal" can run as two separate windows at once, each with its own tree. You keep a library of windows and open one per on-screen window; the windows open at quit reopen on the next launch with their frames. Windows are also fully scriptable: `agtermctl window` can create, raise, move, resize, and minimize them, so a few lines of shell can give every window the same frame and park all but the one you are on, turning several windows into what feels like one that switches contents. Right-click agterm's Dock icon for New Session, New Window, Quick Terminal, Dashboard, recent sessions, and sessions needing attention. The Dock menu is scoped to the last-active window: its lists and actions stay tied to that window even if another window comes forward while the menu is open. New Window is the exception — a new window belongs to no existing one, so it stays available whatever the last-active window is doing.
 
-**Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a set of workspaces to hide the rest, with a one-click way back. **Focus** in a workspace row's context menu zooms to that one workspace, and **Add to Focus** marks it alongside whatever is already marked — marking alone never narrows the tree, so a working set is built row by row with everything still on screen and applied once with the grid button at the bottom of the sidebar. A marked workspace row draws a heavier grid icon; the button applies or suspends the filter without losing the set, and is disabled when nothing is marked. Creating a workspace while the filter is on adds it to the set, and selecting a session outside the set suspends the filter rather than discarding it. The set is per-window and remembered across restarts. The two are independent.
+**Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a set of workspaces to hide the rest, with a one-click way back. **Focus** in a workspace row's context menu zooms to that one workspace, and **Add to Focus** marks it alongside whatever is already marked — marking alone never narrows the tree, so a working set is built row by row with everything still on screen and applied once with the grid button at the bottom of the sidebar. A marked workspace row draws a heavier grid icon; the button applies or suspends the filter without losing the set, and is disabled when nothing is marked. Creating a workspace while the filter is on adds it to the set, and selecting a session outside the set suspends the filter rather than discarding it — in the workspace tree; in the flagged view the filter stays applied and takes effect again when you switch back. The reverse holds too: if narrowing the sidebar would hide the session you are working in, agterm moves you to the most recent session still on screen, unless the narrowing leaves nothing visible at all. The set is per-window and remembered across restarts. The two are independent.
 
 Sidebar session rows support Shift-click range selection and Cmd-click toggling on macOS or Ctrl-click toggling on Linux for batch work.
 Right-clicking inside a multi-selection keeps the batch for Flag/Unflag, Close, and Move to; right-clicking outside narrows to the clicked row.
@@ -417,7 +423,7 @@ An ASCII-capable layout such as US, Dvorak, Colemak, French, or German remains s
 A layout that cannot type the complete ASCII alphabet resolves every shortcut key by its physical ANSI position, matching upstream macOS behavior and avoiding punctuation exceptions in Greek and Hebrew.
 Ctrl+Shift+Tab reverses an active Ctrl-Tab cycle, and the reserved Ctrl+Tab variants are consumed by the session switcher rather than sent to the terminal.
 
-The same recently-used history decides where you land when you close the session you are in: agterm returns you to the session you were most recently working in, not to whichever row happens to sit next to the one that closed. The pick stays inside the closing session's workspace, and in the flagged view stays within the flagged set, widening beyond the workspace only when the close leaves nothing there to return to; if no recent session qualifies, it falls back to the adjacent row in that workspace — to the adjacent flagged row in the flagged view, unless the close took the last flagged session, where the plain neighbor stands — and, when the closed session was the last one in its workspace, to the first session of another workspace.
+The same recently-used history decides where you land when you close the session you are in: agterm returns you to the session you were most recently working in, not to whichever row happens to sit next to the one that closed. The pick stays inside the closing session's workspace, and in the flagged view stays within the flagged set, while in the tree with the workspace filter applied it stays within the marked workspaces — widening beyond the workspace only when the close leaves nothing there to return to, and beyond what is on screen only when that too is exhausted. If no recent session qualifies at all, it falls back to the adjacent row, kept inside the narrowed view while one is applied, and to the first session of another workspace when the closed session was the last one in its own.
 
 ## Settings
 
@@ -513,9 +519,16 @@ Each command targets a session or workspace by its UUID, a unique prefix of that
 Input can be nonblank lines or a JSON array of objects with `id`, `label`, and an optional `subtitle`.
 The default call blocks and prints terminal-result JSON: picked item, custom query, or cancellation.
 Use `--allow-custom` to accept a query that does not match an item, `--window` to target another open window, and `--follow` to raise that window.
+Typing matches item labels only; a subtitle is shown but never searched, so consequence text on one row cannot filter out its safer neighbour.
+An empty query lists the items in the order they were supplied, so the caller's first item is the one Return runs on open.
+`--query TEXT` prefills the field and filters immediately, which ranks by match score and therefore does not preserve that supplied order.
+With `--allow-custom` the item list may be empty, which turns the picker into a plain text prompt: the custom row appears as soon as the query is nonblank, whether prefilled by `--query` or typed.
+An itemless call still reads stdin, so redirect it (`< /dev/null`) or it blocks.
 
 ```sh
 printf '%s\n' staging production | agtermctl pick --prompt "Deploy where?"
+
+agtermctl pick --allow-custom --query "$name" --prompt "Rename to" < /dev/null
 
 pick_id=$(printf '%s\n' alpha beta | agtermctl pick --no-block | jq -r '.id')
 agtermctl pick result "$pick_id"      # bare JSON result; exit 1 while pending, 2 when cancelled
@@ -542,7 +555,7 @@ The app retains the latest 4,096 events for its current process run. A raw `even
 
 The `--json` stream contains bare event objects, not the batch envelope, so a client that needs restart-safe resume must save `run` and `next` from raw `events.read` responses. A changed app run, expired cursor, or cursor ahead of the current sequence is a hard error with the current anchor in the raw response. `agtermctl events` exits non-zero for these cursor errors, server errors, or a missing app/socket; it never silently starts over. Stop a healthy stream with the usual SIGINT or SIGTERM behavior.
 
-`--workspace`/`--target` take an id, a unique id prefix, or `active` — never a name. (`session new` also accepts `--workspace-name <name>` to target a workspace by its sidebar label, plus `--create-workspace` to make it when none matches — the two are mutually exclusive with `--workspace`.) To create a workspace and then open a session in it, capture the printed id:
+`--workspace`/`--target` take an id, a unique id prefix, or `active` — never a name. (`session new` also accepts `--workspace-name <name>` to target a workspace by its sidebar label, plus `--create-workspace` to make it when none matches — the two are mutually exclusive with `--workspace`.) For workspaces, `active` is the one a new session lands in: a workspace you just created in the foreground, otherwise the selected session's, otherwise the last one. A newly created workspace stays the target until the selection moves to a DIFFERENT session, so New Session (and `session new`) right after creating one lands in the new workspace rather than the one you came from. Closing the last session clears the selection and ends it too, as do deleting the new workspace and hiding it behind the workspace filter — the filter permanently, so turning it off does not bring the target with it. `workspace select` moves the target to the workspace you name, including an empty one, where taking the target is the only thing it can do. Reselecting the session you are already on changes nothing: `session select`, `overlay open --follow` and single-session navigation all leave the target where it is. To create a workspace and then open a session in it, capture the printed id:
 
 ```sh
 agtermctl tree                                   # print the workspace/session tree with ids
@@ -584,6 +597,7 @@ agtermctl quick type 'ls -la'$'\n'               # type into the frontmost windo
 agtermctl surface zoom                           # fill the window with the active terminal surface (show|hide|toggle)
 agtermctl surface zoom show --target "surface:$AGTERM_SESSION_ID:right"  # zoom a specific surface by id (ids in tree --json)
 agtermctl dashboard "$a" "$b" "$c" --auto-size   # view-only grid; a split session is two cells, capped at 9 panes (--font-size N | --auto-size; --close)
+agtermctl dashboard "$a:left" "$b:right"         # ...or name one pane per session (:left|:right); a bare id still takes both
 agtermctl dashboard --mru --auto-size            # ...or fill it from the window's most-recently-used sessions (no ids)
 agtermctl font inc                               # increase the session's (main pane's) font size
 agtermctl font dec --pane right                   # shrink just the split pane's font (--pane left|right|scratch)
@@ -625,19 +639,22 @@ agtermctl session overlay open "make test" --block             # block until it 
 agtermctl session overlay resize --size-percent 60 --target 9f3c  # resize an open overlay to a floating 60% panel
 agtermctl session overlay resize --full --target 9f3c          # switch it back to the full-pane overlay
 agtermctl session overlay close --target 9f3c                  # close it from a script
+agtermctl session overlay open "revdiff HEAD~3" --target 9f3c --pane right  # cover only the split pane
 ```
 
 By default an overlay opens on its `--target` without switching the active session — full and floating both run their program in the background and appear when the user visits that session; pass `--follow` to select the target as the overlay opens (a no-op if it is already active). `session overlay resize` changes an already-open overlay in place — `--size-percent N` (1–100) makes it a floating panel, `--full` switches it back to full size — and the program keeps running across the change. By default it closes the instant the program exits; `--wait` keeps it on a "press any key to close" prompt so you can read the program's final output. A `*` `(overlay)` tag in `agtermctl tree` marks a session whose overlay is open.
 
 `--block` runs the program in the overlay (rendering normally) and blocks until it exits, then exits with the program's status — useful in a script that needs the outcome of an interactive run. The program's output stays its own concern: a TUI writes its result to its own file (for example `revdiff --output=…`) which the script reads, while `--block` reports only the exit status (the overlay never captures stdout). `--block` can't be combined with `--wait`; `session overlay result` reports the last overlay's exit status on demand for a manual open → poll flow.
 
+`--pane left|right` scopes the overlay to one split pane instead of the whole session: it covers exactly that pane and leaves the sibling pane visible and interactive, so an agent working in the split can show a diff or a TUI over its own pane without blanking the one you are reading. The two panes are independent and may both hold an overlay at once, each with its own background color. A pane overlay is always full-pane — there is no floating variant, so `--pane` cannot combine with `--size-percent` and `session overlay resize` takes no `--pane` — and everything else matches the session-wide overlay, including `--wait`, `--block`, `--cwd`, and `--follow`. A non-split session accepts `--pane left`, since its shell reports `AGTERM_PANE=left`, so a script can pass `--pane "$AGTERM_PANE"` without checking whether the session is split. A pane that is not on screen is refused with `pane not visible`: a shown split renders both panes, but a hidden one renders only the focused pane, so the refused one is the pane you are not in — `--pane left` while the hidden split holds the focus, `--pane right` while the main pane does. Hiding the split after opening is fine, the program keeps running and reappears when the split comes back. `session overlay close` and `session overlay result` take the same `--pane`, ⌘W dismisses the focused pane's overlay before it would close the session (one on the other pane is not in front of you, so ⌘W keeps its ordinary meaning), and `agtermctl tree --json` reports the covered panes as `paneOverlays`.
+
 By default the overlay fills the pane, drawn translucent, hiding the session beneath it. Pass `--size-percent N` (1–100) for a *floating* variant instead: an opaque, framed panel sized to N% of the pane in both dimensions and centered in it, with the session still visible around it. Useful for a small auxiliary program (a picker, a monitor) that you want floating over — not replacing — the terminal you're working in. It composes with `--block` (a blocking floating overlay). Like a full overlay it opens in the background and runs even when the target is not active; pass `--follow` to switch the user to the target as it opens.
 
-A session's terminal surface is created lazily — it does not exist until the session has been shown at least once. Injecting text into a never-shown session therefore fails with `session not realized` unless you pass `--select`, which selects the session (realizing its surface) before injecting:
+Every session's terminal is mounted whether or not it has been shown, so `session type` reaches a background session without selecting it. A session created a moment ago is the one exception: its surface needs a layout pass before it can take input, so `session type` waits briefly for it rather than failing, and a script can create and type back to back. Pass `--select` to select the session first — it only moves your selection when the surface is not ready yet — and `session not realized` is left for a surface that never comes up:
 
 ```sh
-id=$(agtermctl session new --cwd ~/src/agterm)
-agtermctl session type --target "$id" --select $'echo hello\n'
+id=$(agtermctl session new --cwd ~/src/agterm --no-select)
+agtermctl session type --target "$id" $'echo hello\n'   # no focus change
 ```
 
 `agtermctl window` drives the named windows. `window list` prints `id  name  [open]  [active]` (raw with `--json`); the other subcommands take a window id, a unique prefix, or `active` (the frontmost):

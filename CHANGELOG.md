@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.20.2 - 2026-08-03
+
+### Improved
+
+- double-clicking the divider between two split panes snaps the split back to even. A drag can never hit exactly 50/50, and the gesture is recognized only on the pixels the split already owns for its own drag, so word selection in the terminal is untouched. A re-grab after a nudge-drag, which macOS also reports as a double-click, does not throw the adjustment away #357 @umputun
+- a cookbook recipe that grids the flagged sessions' panes that are running something, on one chord. The unit is a pane, so a split whose left half sits at a prompt while its right runs a build contributes one cell, and pressing the chord again closes the grid #355 @umputun
+
+### Bug Fixes
+
+- a pane started with `session new --command` always read as idle in `tree --json`: its `foreground` was omitted however hard the program worked, so nothing driving the control API could tell a busy agent session from an empty shell. Such a pane has no job-control shell, so its program stays in the process group led by setuid-root `login`, whose argv is refused to a non-root caller. The tree read now descends the group to the first readable member, while the quit-time restore capture deliberately does not, so a `--command` session still restores through the exec path with its `--wait` hold intact #358 @umputun
+- a pane overlay opened on the unfocused side of a split rendered at full brightness, so both panes read as live and the split focus cue was gone. The overlay now carries the same wash an inactive pane gets, blended against the overlay's own background rather than the session's, so an overlay opened with `--background-color` fades its text instead of shifting its background #356 @umputun
+- an interior newline in a session, workspace or window name, or in a session's `--cwd`, survived into the stored value and expanded unquoted into the `/bin/sh -c` line of a custom command through the `{AGT_SESSION_NAME}` / `{AGT_SESSION_PWD}` / `{AGT_WORKSPACE_NAME}` / `{AGT_WINDOW_NAME}` tokens, where a newline separates statements. The OSC path already sanitized these values; the control-socket and GUI rename paths trimmed surrounding whitespace only #354 @x9x9x9x9x9x91
+
+## v0.20.1 - 2026-08-02
+
+### Improved
+
+- Settings ▸ General fits without scrolling again: the caption under the workspace row-click toggle is gone. It spelled out that the disclosure triangle keeps working either way, which the section did not need a whole line to say b35dd34 @umputun
+
+## v0.20.0 - 2026-08-02
+
+### New Features
+
+- overlays can cover one pane of a split instead of the whole session: `session overlay open|close|result` take `--pane left|right`, the sibling pane stays visible and interactive, and both panes can hold their own overlay with its own command, cwd and background color. Pane overlays are always full-pane, so `--pane` is rejected with `--size-percent` and `session overlay resize` takes none #343 @umputun
+- `agtermctl dashboard` accepts a `:left` or `:right` suffix on each positional id, so one pane of a split can go on the grid instead of the session always contributing both. It is the same form `tree --json` reports in `dashboardMembers`, so write and read round-trip, and it composes with any head #334 @umputun
+- caller-supplied pickers match a row's label only and never its subtitle, closing a path where typing a refusal filtered the safe row out and left the destructive one preselected. An empty query now keeps the caller's item order instead of re-sorting alphabetically, `--query` prefills the field, and a picker with no items is allowed #339 @umputun
+- clicking anywhere on a workspace row toggles its expansion, behind a new Settings ▸ General ▸ Mouse toggle that is on by default. The disclosure triangle is untouched and works either way #342 @umputun
+- a first launch on a machine opens a welcome alert naming the Help menu's optional installers, with two checkboxes that install the agent skill and the agent status hooks in one pass, because nothing else tells a new user they exist #353 @umputun
+
+### Improved
+
+- a cookbook recipe that picks a project in the native picker and opens a session in its workspace, creating that workspace when it does not exist, and hands a prompt typed after the project's name to a configured command #352 @x9x9x9x9x9x91
+- a cookbook recipe that lists what the Claude Code run in a session was working on, newest first, in a floating overlay, each item an age, a title, a one-sentence detail and a status #345 @umputun
+- a cookbook recipe joining Kimi Code to the agent-status integration, so its sessions report status onto their sidebar row with the stock hook script and four config entries #336 @x9x9x9x9x9x91
+- the opencode session-resume recipe's removal step and Usage paragraph named a flat state path while the function honors `$XDG_STATE_HOME`, so a reader with a custom state home cleaned the wrong directory and left his bindings behind. Both now name the path the function actually uses, and the `--session` passthrough claim is corrected #330 @cherkale
+
+### Bug Fixes
+
+- typing into a session right after `session new --no-select` failed with "session not realized", because the reply came from a synchronous store mutation that raced the mount and layout gap. The main pane now runs the same bounded poll with or without select, so the select-then-reselect workaround, which tears down the workspace focus filter and rewrites recency, is no longer needed #351 @umputun
+- hovering the divider between two split panes showed the terminal's I-beam instead of the resize cursor, in any window with more than one session. Dragging always worked and only the pointer feedback was wrong; #324 fixed the flicker, but its fix held only while a single session was mounted #344 @umputun
+- `agtermctl` died on signal 13 with no output when a request went over the server's 1 MiB cap. The client fd never set `SO_NOSIGPIPE`, so it took the signal before it could read the server's "request too large" reply #340 @x9x9x9x9x9x91
+- a session's blinking status glyph strobed instead of pulsing when its terminal title updated rapidly, as Codex CLI does every ~100ms while working. The row builder reset every recycled cell to an idle indicator before re-applying the real one, which restarted the fade each time #335 @umputun
+
+## v0.19.1 - 2026-07-31
+
+### Improved
+
+- a floating overlay and the quick terminal now mute the session behind them, the same wash an inactive split pane already gets and at the strength already in Settings, so a panel reads as sitting over the terminal rather than as part of it. A full-size overlay and the scratch pane hide their panes outright and take no wash #327 @umputun
+- a cookbook recipe for the native picker that shipped in 0.19.0: press a chord and agterm's own fuzzy picker lists directories under your search roots, then types the pick into the session you pressed the key in, trailing slash and no Return #320 @umputun
+- a third session-resume cookbook recipe next to the Claude Code and Codex ones, so each tab reopens its own opencode conversation after a restart #328 @cherkale
+
+### Bug Fixes
+
+- creating a workspace never moved the target, so a new one was never current while any session was selected: File ▸ Rename Workspace edited the workspace you came from, ⌘N put the new session there too, and `agtermctl session new --workspace active` right after `workspace new` targeted the previous one. A new workspace now holds the target until the selection moves to a different session, and `workspace select` retargets even when the workspace it names already owns the selection #329 @umputun
+- hovering the sidebar handle or a split divider only flashed the resize cursor, which then alternated with the terminal's I-beam on every mouse move. Dragging worked, only the pointer feedback was broken; a regression from #207 #326 @umputun
+- narrowing the sidebar could leave the window drawing a session no row pointed at: focusing a workspace that does not own the active session, applying the workspace filter while its workspace is unmarked, switching to the flagged view while the session is not flagged, or unflagging it there. The selection now moves to the most recent session still visible #322 @umputun
+
 ## v0.19.0 - 2026-07-29
 
 ### New Features

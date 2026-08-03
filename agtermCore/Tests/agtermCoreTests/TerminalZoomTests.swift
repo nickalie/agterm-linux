@@ -12,7 +12,13 @@ struct TerminalZoomTests {
         #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: true) == .quick)
         #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .primary))
 
+        // `splitFocused` alone describes no pane: with neither a shown split nor a split surface the focused
+        // pane is still the primary, matching `rendersPane`/`focusedOverlayPane` and `.split`'s isAvailable.
         session.splitFocused = true
+        #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .primary))
+
+        store.toggleSplit(session.id)
+        session.splitSurface = SpySurface()
         #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .split))
 
         session.scratchActive = true
@@ -48,8 +54,7 @@ struct TerminalZoomTests {
         #expect(session.hasSplit == true)
         #expect(TerminalZoomController.isTargetValid(.session(session.id, .split), in: store, quickTerminalVisible: false))
 
-        // the primary exits: the survivor is PROMOTED into the main slot, so no right pane exists
-        // anymore — a zoom on the split target must end, not keep covering the promoted main pane.
+        // the primary exiting PROMOTES the survivor into the main slot, leaving no right pane to zoom.
         session.surface = SpySurface()
         session.splitSurface = SpySurface()
         store.closePrimaryPane(session.id)
@@ -57,7 +62,6 @@ struct TerminalZoomTests {
         #expect(session.splitSurface == nil)
         #expect(!TerminalZoomController.isTargetValid(.session(session.id, .split), in: store, quickTerminalVisible: false))
 
-        // closing a live split clears the target the ordinary way too.
         store.toggleSplit(session.id)
         #expect(TerminalZoomController.isTargetValid(.session(session.id, .split), in: store, quickTerminalVisible: false))
         store.closeSplit(session.id)
@@ -78,8 +82,6 @@ struct TerminalZoomTests {
         session.hasSplit = true
         store.closePrimaryPane(session.id)
 
-        // the survivor MOVES into the primary slot: the primary target keeps pointing at the live
-        // shell (now the survivor), and the split target dies with the vacated right pane.
         #expect(session.surface === survivor)
         #expect(session.splitSurface == nil)
         #expect(session.splitFocused == false)
@@ -107,6 +109,103 @@ struct TerminalZoomTests {
         #expect(!TerminalZoomController.isTargetValid(.session(session.id, .overlay), in: store, quickTerminalVisible: false))
     }
 
+    @Test func paneOverlayTargetsFollowTheirSlotAndFocusedPane() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.surface = SpySurface()
+        store.toggleSplit(session.id)
+        session.splitSurface = SpySurface()
+        session.splitFocused = false
+
+        #expect(store.openPaneOverlay(session.id, pane: .left, command: "top") == nil)
+        #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .overlayLeft))
+        #expect(TerminalZoomController.isTargetValid(.session(session.id, .overlayLeft), in: store, quickTerminalVisible: false))
+        #expect(!TerminalZoomController.isTargetValid(.session(session.id, .overlayRight), in: store, quickTerminalVisible: false))
+
+        session.splitFocused = true
+        #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .split))
+
+        #expect(store.openPaneOverlay(session.id, pane: .right, command: "top") == nil)
+        #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .overlayRight))
+
+        #expect(store.closePaneOverlay(session.id, pane: .right))
+        #expect(!TerminalZoomController.isTargetValid(.session(session.id, .overlayRight), in: store, quickTerminalVisible: false))
+        #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false) == .session(session.id, .split))
+    }
+
+    @Test func paneOverlayTakesItsPanesVisibilityAndSessionCoversHideBoth() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.surface = SpySurface()
+        store.toggleSplit(session.id)
+        session.splitSurface = SpySurface()
+        #expect(store.openPaneOverlay(session.id, pane: .right, command: "top") == nil)
+        // realized, so hiding its pane below only unmounts it — an unrealized slot is retired instead.
+        session.rightOverlaySurface = SpySurface()
+
+        #expect(TerminalZoomSurface.overlayRight.isVisible(in: session))
+        #expect(!TerminalZoomSurface.split.isVisible(in: session))
+        #expect(TerminalZoomSurface.primary.isVisible(in: session))
+
+        // the split hidden with the LEFT pane focused stops laying the right pane out at all.
+        session.splitFocused = false
+        store.toggleSplit(session.id)
+        #expect(!TerminalZoomSurface.overlayRight.isVisible(in: session))
+        #expect(TerminalZoomSurface.overlayRight.isAvailable(in: session))
+
+        store.toggleSplit(session.id)
+        session.scratchActive = true
+        #expect(!TerminalZoomSurface.overlayRight.isVisible(in: session))
+        session.scratchActive = false
+        session.overlayActive = true
+        #expect(!TerminalZoomSurface.overlayRight.isVisible(in: session))
+    }
+
+    @Test func exactlyOneSurfaceIsActiveAndItIsTheOneTheDeckShowsAcrossEverySessionShape() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        let names = ["isSplit", "hasSplit", "focusRight", "splitSurface", "scratch", "sessionOverlay",
+                     "leftOverlay", "rightOverlay"]
+
+        for combination in 0..<(1 << names.count) {
+            let on: (Int) -> Bool = { combination & (1 << $0) != 0 }
+            session.isSplit = on(0)
+            session.hasSplit = on(1)
+            session.splitFocused = on(2)
+            session.splitSurface = on(3) ? SpySurface() : nil
+            session.scratchActive = on(4)
+            session.overlayActive = on(5)
+            session.leftOverlay = on(6) ? PaneOverlay(command: "top") : nil
+            session.rightOverlay = on(7) ? PaneOverlay(command: "top") : nil
+
+            // derived from the deck's OWN predicates (`focusedPane`, the pane slots), never from `isActive`,
+            // so a wrong-but-unique active case cannot pass by cardinality alone.
+            let focused = session.focusedPane
+            let expected: TerminalZoomSurface
+            if session.overlayActive {
+                expected = .overlay
+            } else if session.scratchActive {
+                expected = .scratch
+            } else {
+                expected = session.paneOverlay(focused) != nil ? focused.zoomSurface : focused.paneZoomSurface
+            }
+
+            let active = TerminalZoomSurface.allCases.filter { $0.isActive(in: session) }
+            let shape = names.indices.filter { on($0) }.map { names[$0] }.joined(separator: "+")
+            #expect(active == [expected], "[\(shape.isEmpty ? "bare" : shape)] resolved to \(active)")
+            #expect(TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: false)
+                == .session(session.id, expected), "[\(shape.isEmpty ? "bare" : shape)] wrong zoom target")
+            // a pane overlay is only ever the active target while its own pane is the one on screen.
+            if expected == .overlayLeft || expected == .overlayRight {
+                #expect(session.focusedOverlayPane == focused && session.rendersPane(focused),
+                        "[\(shape)] pane overlay active over a pane the deck does not lay out")
+            }
+        }
+    }
+
     @Test func surfaceIDsRoundTripControlNames() throws {
         let sessionID = try #require(UUID(uuidString: "5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9"))
         let surfaceID = TerminalSurfaceID(sessionID: sessionID, surface: .split)
@@ -115,6 +214,18 @@ struct TerminalZoomTests {
         #expect(TerminalSurfaceID(rawValue: surfaceID.rawValue) == surfaceID)
         #expect(TerminalSurfaceID(rawValue: "surface:\(sessionID.uuidString):split") == surfaceID)
         #expect(TerminalSurfaceID(rawValue: "session:\(sessionID.uuidString):right") == nil)
+    }
+
+    @Test func surfaceIDsRoundTripPaneOverlayNames() throws {
+        let sessionID = try #require(UUID(uuidString: "5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9"))
+        let left = TerminalSurfaceID(sessionID: sessionID, surface: .overlayLeft)
+        let right = TerminalSurfaceID(sessionID: sessionID, surface: .overlayRight)
+
+        #expect(left.rawValue == "surface:5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9:overlay-left")
+        #expect(right.rawValue == "surface:5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9:overlay-right")
+        #expect(TerminalSurfaceID(rawValue: left.rawValue) == left)
+        #expect(TerminalSurfaceID(rawValue: right.rawValue) == right)
+        #expect(TerminalSurfaceID(rawValue: "surface:\(sessionID.uuidString):overlay-middle") == nil)
     }
 
     @Test func setModeIsIdempotentAndTargeted() {
