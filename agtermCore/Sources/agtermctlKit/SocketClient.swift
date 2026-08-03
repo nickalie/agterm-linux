@@ -104,7 +104,14 @@ struct SocketClient {
             var offset = 0
             let base = raw.bindMemory(to: UInt8.self).baseAddress!
             while offset < data.count {
+                // Glibc has no SO_NOSIGPIPE, so the per-write MSG_NOSIGNAL is what turns a write to a
+                // hung-up peer into EPIPE there instead of the default-fatal SIGPIPE; Darwin already set
+                // the socket option in `connect()`.
+                #if canImport(Glibc)
+                let n = SwiftGlibc.send(fd, base + offset, data.count - offset, Int32(MSG_NOSIGNAL))
+                #else
                 let n = write(fd, base + offset, data.count - offset)
+                #endif
                 if n <= 0 { throw SocketClientError("write failed: \(String(cString: strerror(errno)))") }
                 offset += n
             }
