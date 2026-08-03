@@ -73,6 +73,10 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     let revealAction = g_simple_action_new("reveal", g_variant_type_new("s"))
     connect(revealAction, "activate", unsafeBitCast(onRevealAction as @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
     g_action_map_add_action(app, revealAction)
+    // Decide the first-run welcome BEFORE anything writes state: opening a window seeds a session and
+    // saves `windows/<id>.json`, which `hasPriorState` would then read as a previous launch.
+    let welcomeDue = WelcomeDialog.isDue(stateDirectory: linuxStateDirectory(),
+                                         settings: linuxSettingsStore().load())
     gLibrary = WindowLibrary(directory: linuxStateDirectory())
     ensureStarterFiles()
     installAppCSS()
@@ -90,6 +94,9 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     let ids = gLibrary.openIDs()
     let toOpen = ids.isEmpty ? [gLibrary.windows.first?.id].compactMap { $0 } : ids
     for id in toOpen { openWindow(id) }
+    if welcomeDue, let id = gLibrary.frontmostWindowID ?? toOpen.first, let controller = gWindows[id] {
+        WelcomeDialog.presentOnce(in: controller)
+    }
     #if DEBUG
     if let rawURL = ProcessInfo.processInfo.environment["AGTERM_ATSPI_OPEN_URL"], !rawURL.isEmpty {
         GhosttyApp.exerciseURLAction(rawURL)

@@ -28,6 +28,9 @@ done
 "$PYTHON" -c 'import gi; gi.require_version("Atspi", "2.0"); from gi.repository import Atspi'
 
 mkdir -p "$ARTIFACT_DIR" "$RUN_ROOT/home" "$RUN_ROOT/state" "$RUN_ROOT/runtime" "$RUN_ROOT/tmp"
+# A fresh state dir reads as a first launch, which would open the welcome dialog over every check.
+# `FirstRunWelcome.hasPriorState` looks for this directory, so creating it stands in for a prior launch.
+mkdir -p "$RUN_ROOT/state/windows"
 chmod 0700 "$RUN_ROOT/runtime"
 
 export HOME="$RUN_ROOT/home"
