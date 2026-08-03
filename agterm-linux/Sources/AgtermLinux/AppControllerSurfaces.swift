@@ -24,6 +24,7 @@ extension AppController {
                 syncPaneOverlays(s, allowFocus: focusActive)  // after split so both pane hosts exist
                 syncScratch(s)
                 syncOverlay(s, allowFocus: focusActive)   // after scratch so an open overlay wins the visible child
+                updatePaneDim(s)   // last: the floating-overlay backdrop mute needs syncOverlay's frame
             }
         }
         // Drop closed sessions, but never one a pending close still holds for its undo window.
@@ -666,14 +667,29 @@ extension AppController {
         if id == store.selectedSessionID { updateTitle() }
     }
 
+    /// Mute strength now covers three backdrops, not just the inactive split pane (upstream #327): the
+    /// session left visible AROUND a floating overlay or the quick terminal is muted too, and a pane
+    /// overlay is muted with the pane it covers when that pane is the unfocused half of a split.
     private func updatePaneDim(_ s: Session) {
         let strength = linuxSettingsStore().load().inactivePaneMuteStrength ?? AppSettings.defaultInactivePaneMuteStrength
         let dimmed = 1.0 - AppSettings.muteOpacity(strength: strength)
+        // a floating panel over this session mutes BOTH panes behind it; the quick terminal is
+        // window-level, so it mutes whichever session the deck is showing.
+        let behindFloating = floatingOverlayFrames[s.id] != nil
+            || (quickVisible && s.id == store.selectedSessionID)
+        let leftMuted = behindFloating || (s.isSplit && s.splitFocused)
+        let rightMuted = behindFloating || (s.isSplit && !s.splitFocused)
         if let main = surfaces[s.id]?.glArea {
-            gtk_widget_set_opacity(W(main), s.isSplit && s.splitFocused ? dimmed : 1.0)
+            gtk_widget_set_opacity(W(main), leftMuted ? dimmed : 1.0)
         }
         if let split = splitSurfaces[s.id]?.glArea {
-            gtk_widget_set_opacity(W(split), s.isSplit && !s.splitFocused ? dimmed : 1.0)
+            gtk_widget_set_opacity(W(split), rightMuted ? dimmed : 1.0)
+        }
+        if let overlay = paneOverlaySurfaces[s.id]?[.left]?.glArea {
+            gtk_widget_set_opacity(W(overlay), leftMuted ? dimmed : 1.0)
+        }
+        if let overlay = paneOverlaySurfaces[s.id]?[.right]?.glArea {
+            gtk_widget_set_opacity(W(overlay), rightMuted ? dimmed : 1.0)
         }
     }
 

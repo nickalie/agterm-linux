@@ -541,6 +541,7 @@ final class AppController {
         guard let frame = quickFrame else { return }
         quickVisible = visible
         gtk_widget_set_visible(W(frame), visible ? 1 : 0)
+        updateAllPaneDimming()   // the quick terminal mutes the session left visible behind it
         if visible { quickSurface?.grabFocus() }
     }
 
@@ -553,6 +554,7 @@ final class AppController {
         quickFrame = nil
         quickSurface = nil
         quickVisible = false
+        updateAllPaneDimming()
     }
 
     func toggleFlagActive() {
