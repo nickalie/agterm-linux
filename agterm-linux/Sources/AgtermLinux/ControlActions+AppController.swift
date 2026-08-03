@@ -511,19 +511,28 @@ extension AppController: ControlActions {
             guard !members.isEmpty else { return err("no recent sessions") }
         } else {
             let candidates = store.workspaces.flatMap { $0.sessions.map(\.id) }
-            var ids: [UUID] = []
-            var seen = Set<UUID>()
+            var resolvedTargets: [ResolvedDashboardTarget] = []
             var unresolved: [String] = []
             for target in targets {
-                if case .resolved(let id) = ControlResolve.resolve(target, candidates: candidates,
-                                                                   active: store.selectedSessionID) {
-                    if seen.insert(id).inserted { ids.append(id) }
-                } else {
+                guard let parsed = DashboardTarget(rawValue: target),
+                      case .resolved(let id) = ControlResolve.resolve(parsed.head, candidates: candidates,
+                                                                      active: store.selectedSessionID),
+                      let session = store.session(withID: id) else {
                     unresolved.append(target)
+                    continue
                 }
+                // a `:right` ref to a session with no split is a MISS, not a malformed command: the
+                // dispatcher already passed the grammar.
+                guard parsed.pane != .split || session.hasSplit else {
+                    unresolved.append(target)
+                    continue
+                }
+                resolvedTargets.append(ResolvedDashboardTarget(session: id, pane: parsed.pane))
             }
-            guard !ids.isEmpty else { return err("no dashboard sessions resolved") }
-            let expanded = store.dashboardMembers(for: ids, limit: DashboardLayout.maxCells)
+            let expanded = store.dashboardMembers(for: resolvedTargets, limit: DashboardLayout.maxCells)
+            // guard the EXPANSION, not the resolved targets: a `:right` ref to an unsplit session resolves
+            // its id but expands to nothing, and opening empty would silently close a live dashboard.
+            guard !expanded.members.isEmpty else { return err("no dashboard sessions resolved") }
             members = expanded.members
             if !unresolved.isEmpty { notes.append("unresolved: \(unresolved.joined(separator: ", "))") }
             if expanded.dropped > 0 {

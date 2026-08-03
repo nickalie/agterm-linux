@@ -471,12 +471,19 @@ final class AppController {
             return
         }
         // Promote the survivor to the single pane: detach the dead primary (the store already freed its
-        // ghostty surface; teardown never touches the glArea) and reparent the survivor from the end
+        // ghostty surface; teardown never touches the glArea) and move the survivor's HOST from the end
         // slot to the start slot, so it fills the page and a future re-split has a free end slot.
-        // Removing a child from a GtkPaned does NOT free the survivor's glArea, so its shell lives on.
+        // Moving the host rather than the glArea is what keeps the survivor's GL context realized, and it
+        // carries any pane overlay layered on it — matching the model's `promotePaneOverlay`.
         gtk_paned_set_start_child(paned, nil)
         gtk_paned_set_end_child(paned, nil)
-        gtk_paned_set_start_child(paned, W(survivor.glArea))
+        let survivorHost = paneHosts[id]?[.right]
+        gtk_paned_set_start_child(paned, W(survivorHost ?? survivor.glArea))
+        paneHosts[id]?[.left] = survivorHost
+        paneHosts[id]?[.right] = nil
+        let survivorOverlay = paneOverlaySurfaces[id]?[.right]
+        paneOverlaySurfaces[id]?[.left] = survivorOverlay
+        paneOverlaySurfaces[id]?[.right] = nil
         surfaces[id] = survivor
         splitSurfaces[id] = nil
         let sid = id

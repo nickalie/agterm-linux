@@ -378,6 +378,12 @@ extension AppController {
                     gtk_paned_set_start_child(paned, nil)
                     gtk_paned_set_start_child(paned, W(primaryHost))
                 }
+                // drop the right pane's overlay while its host still exists; the model already tore the
+                // surface down in `closeSplit`, so only the widget layer is left to unparent.
+                if let ov = paneOverlaySurfaces[s.id]?[.right], let host = paneHosts[s.id]?[.right] {
+                    gtk_overlay_remove_overlay(host, W(ov.glArea))
+                }
+                paneOverlaySurfaces[s.id]?[.right] = nil
                 gtk_paned_set_end_child(paned, nil)
                 paneHosts[s.id]?[.right] = nil
                 splitSurfaces[s.id] = nil
