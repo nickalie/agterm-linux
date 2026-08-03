@@ -43,7 +43,10 @@ export AGTERM_TEST_CTL="$CTL"
 if [[ -z "${AGTERM_RESOURCE_ROOT:-}" ]]; then
   resource_root="$RUN_ROOT/resources"
   mkdir -p "$resource_root"
-  ln -s "$ROOT/agterm/Resources/agent-status" "$resource_root/agent-status"
+  # COPY the agent-status assets rather than symlinking them: the hooks installer bakes the resolved
+  # agtermctl path into the scripts it stages, and through a symlink that write lands in the tracked
+  # sources and dirties the working tree with a run-specific path.
+  cp -R "$ROOT/agterm/Resources/agent-status" "$resource_root/agent-status"
   ln -s "$ROOT/plugins/agterm/skills/agterm" "$resource_root/agent-skill"
   export AGTERM_RESOURCE_ROOT="$resource_root"
 fi
