@@ -820,6 +820,10 @@ final class WindowLibraryTests {
         let windowsDir = directory.appendingPathComponent("windows")
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: windowsDir.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: windowsDir.path) }
+        // The mode is the only way to make the rewrite fail, and root ignores it — which is the user the
+        // Linux CI container runs as. There is no failure to observe then, so assert nothing rather than
+        // pin the opposite branch by accident.
+        guard !FileManager.default.isWritableFile(atPath: windowsDir.path) else { return }
 
         let library = WindowLibrary(directory: directory)
         let armed = try #require(library.store(for: id)?.session(withID: sessionID))
