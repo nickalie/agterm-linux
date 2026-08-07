@@ -199,6 +199,8 @@ final class GhosttySurface: TerminalSurface {
         if command != nil {
             cfg.wait_after_command = waitAfterCommand
         }
+        let appearanceSide = LinuxAppearanceSide(isDark: AppController.systemIsDark)
+        GhosttyApp.shared.applyColorScheme(appearanceSide)
         surface = ghostty_surface_new(app, &cfg)
         guard let surface else {
             storage.release()
@@ -208,7 +210,7 @@ final class GhosttySurface: TerminalSurface {
         ghostty_surface_set_content_scale(surface, Double(scale), Double(scale))
         pushSize()
         ghostty_surface_set_focus(surface, true)
-        applyColorScheme()   // report the system light/dark scheme (OSC color-scheme queries)
+        applyColorScheme(appearanceSide)   // report the system light/dark scheme (OSC color-scheme queries)
         feed(GhosttyApp.shared.currentThemeOSC)   // push theme colors the embedded GL renderer won't adopt from config
         if controller?.store.session(withID: sessionID)?.backgroundWatermark != nil {
             applyWatermarkFromSession()
@@ -283,6 +285,22 @@ final class GhosttySurface: TerminalSurface {
     func applyConfig(_ config: ghostty_config_t) {
         guard let surface else { return }
         ghostty_surface_update_config(surface, config)
+        guard let clone = ghostty_config_clone(config) else { return }
+        ownedConfigs.forEach { ghostty_config_free($0) }
+        ownedConfigs = [clone]
+    }
+
+    func reapplyCurrentConfig() {
+        guard let surface else { return }
+        if let config = ownedConfigs.last {
+            ghostty_surface_update_config(surface, config)
+        } else {
+            GhosttyApp.shared.reapplyCurrentConfig(to: surface)
+        }
+    }
+
+    func reloadConfigFromHost() {
+        controller?.reloadConfig()
     }
 
     func applyWatermarkFromSession(windowOpacity: Double? = nil, settings: AppSettings? = nil) {
@@ -320,6 +338,12 @@ final class GhosttySurface: TerminalSurface {
     func reapplyWatermarkIfNeeded(windowOpacity: Double? = nil, settings: AppSettings? = nil) {
         guard oscBackgroundColorHex != nil
                 || controller?.store.session(withID: sessionID)?.backgroundWatermark != nil else { return }
+        reapplyBackgroundOverlay(windowOpacity: windowOpacity, settings: settings)
+    }
+
+    /// Automatic appearance reconciliation restores every per-session overlay.
+    /// Explicit reloads keep the watermark-only path.
+    func reapplySessionConfigIfNeeded(windowOpacity: Double? = nil, settings: AppSettings? = nil) {
         reapplyBackgroundOverlay(windowOpacity: windowOpacity, settings: settings)
     }
 
@@ -488,11 +512,11 @@ final class GhosttySurface: TerminalSurface {
         name.withCString { gtk_widget_set_cursor_from_name(W(glArea), $0) }
     }
 
-    /// Push the current system light/dark scheme to the surface (at create + on style-manager change).
-    func applyColorScheme() {
+    /// Push the captured system light/dark scheme to the surface (at create + on style-manager change).
+    func applyColorScheme(_ side: LinuxAppearanceSide) {
         guard let surface else { return }
-        let dark = adw_style_manager_get_dark(adw_style_manager_get_default()) != 0
-        ghostty_surface_set_color_scheme(surface, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        ghostty_surface_set_color_scheme(
+            surface, side.isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
     }
 
     func grabFocus() {

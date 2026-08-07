@@ -12,7 +12,6 @@ import agtermCore
 @main
 struct AgtermApp {
     static func main() {
-        GhosttyApp.shared.start()
         // AGTERM_APP_ID overrides the GApplication id so a dev/test instance registers separately on
         // the session bus and runs ALONGSIDE a deployed one (the Linux analogue of the macOS .debug
         // bundle id) instead of forwarding its launch to the running instance.
@@ -56,7 +55,8 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
 
 /// First-time application setup (idempotent — a second activate/open raises the frontmost instead): the
 /// reveal action, the WindowLibrary, the starter config files, app CSS/icons, the control server, the
-/// quit-signal handlers, the color-scheme tracker, then the saved windows. Shared by `activate`+`open`.
+/// quit-signal handlers, the color-scheme tracker, saved windows, appearance reconciliation, then the
+/// first-run welcome. Shared by `activate`+`open`.
 @MainActor func activateApplication(_ app: OpaquePointer?) {
     // A second launch (or any re-activate) of the single-instance GApplication fires activate again:
     // raise the frontmost window instead of no-op'ing, so launching agterm while it runs focuses it.
@@ -69,6 +69,8 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     // Route every deferred main-actor job (MainTimer) through g_timeout_add BEFORE any store or
     // controller exists — see `agterm-linux/docs/main-loop.md`.
     installGLibMainTimer()
+    let appearanceSide = LinuxAppearanceSide(isDark: AppController.systemIsDark)
+    GhosttyApp.shared.start(appearanceSide: appearanceSide)
     // The notification click-to-reveal target: an `app.reveal` action carrying a session-id string.
     let revealAction = g_simple_action_new("reveal", g_variant_type_new("s"))
     connect(revealAction, "activate", unsafeBitCast(onRevealAction as @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
@@ -94,6 +96,9 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     let ids = gLibrary.openIDs()
     let toOpen = ids.isEmpty ? [gLibrary.windows.first?.id].compactMap { $0 } : ids
     for id in toOpen { openWindow(id) }
+    if let controller = gWindows.values.first {
+        _ = controller.reloadConfigForAppearanceChange(appearanceSide)
+    }
     if welcomeDue, let id = gLibrary.frontmostWindowID ?? toOpen.first, let controller = gWindows[id] {
         WelcomeDialog.presentOnce(in: controller)
     }
@@ -127,7 +132,10 @@ func linuxSettingsStore() -> SettingsStore {
 /// open window's snapshot — AppStore only saves on structural mutations, so a live `cd` since the last
 /// one would otherwise be lost.
 private let onShutdown: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, _ in
-    MainActor.assumeIsolated { flushOnQuit() }
+    MainActor.assumeIsolated {
+        colorSchemeChangeDebouncer.cancel()
+        flushOnQuit()
+    }
 }
 
 /// Install the app-wide CSS once: the `.agterm-blink` keyframe animation that pulses an in-progress
@@ -138,9 +146,11 @@ private let onShutdown: @MainActor @convention(c) (OpaquePointer?, gpointer?) ->
     let provider = gtk_css_provider_new()
     let css = """
     .agterm-blink { animation: agterm-blink-pulse 1.2s ease-in-out infinite; }
-    @keyframes agterm-blink-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    /* one selector per keyframe: GTK 4.14's _gtk_css_keyframes_parse takes a single progress value and then
+       expects the block, so a `0%, 100%` list is a parse error there - and GTK drops @keyframes silently */
+    @keyframes agterm-blink-pulse { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
     window.agterm-translucent { background-color: transparent; }   /* terminal translucency: ghostty's alpha reaches the compositor */
-    .agterm-quick { background-color: #1e2228; }
+    \(LinuxQuickCardPolicy.cardCSS)
     .agterm-switcher { background-color: alpha(#1e2228, 0.96); padding: 10px; border-radius: 10px; border: 1px solid alpha(#ffffff, 0.12); }
     .agterm-switcher label { padding: 3px 0; opacity: 0.6; }
     .agterm-switcher label.agterm-switcher-current { opacity: 1; font-weight: bold; }
@@ -213,11 +223,30 @@ nonisolated private func iconResourceCandidates() -> [String] {
     }
 }
 
+@MainActor private let colorSchemeChangeDebouncer = Debouncer()
+private let colorSchemeChangeDebounceInterval: TimeInterval = 0.05
+
+@MainActor private func colorSchemeReloadContext() -> AppearanceReloadContext {
+    let settings = linuxSettingsStore().load()
+    return AppearanceReloadContext(
+        followsSystemAppearance: settings.followSystemAppearance == true,
+        hasLightSlot: settings.theme != nil,
+        hasDarkSlot: settings.darkTheme != nil,
+        currentSide: LinuxAppearanceSide(isDark: AppController.systemIsDark)
+    )
+}
+
 private let onColorSchemeChanged: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { _, _, _ in
     MainActor.assumeIsolated {
-        for ctl in gWindows.values { ctl.reapplyColorScheme() }
-        gWindows.values.first?.reloadConfig()
-        for ctl in gWindows.values { ctl.rebuildSettingsForColorSchemeChange() }
+        colorSchemeChangeDebouncer.schedule(after: colorSchemeChangeDebounceInterval) {
+            let context = colorSchemeReloadContext()
+            let plan = gAppearanceReloadPolicy.plan(for: context)
+            synchronizeLiveColorScheme(plan.side)
+            guard plan.requiresConfigReload else { return }
+            guard let controller = gWindows.values.first,
+                  controller.reloadConfigForAppearanceChange(plan.side) else { return }
+            for ctl in gWindows.values { ctl.rebuildSettingsForColorSchemeChange() }
+        }
     }
 }
 
