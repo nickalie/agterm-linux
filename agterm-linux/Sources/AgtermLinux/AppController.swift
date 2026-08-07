@@ -209,6 +209,9 @@ final class AppController {
         decorationLayout.withCString { adw_header_bar_set_decoration_layout(sidebarHeader, $0) }
         let scroller = OpaquePointer(gtk_scrolled_window_new())
         sidebarScroller = scroller
+        // Rows ellipsize (makeNameWidget), so refusing to scroll horizontally cannot push the column's
+        // minimum width past its size request below.
+        gtk_scrolled_window_set_policy(scroller, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
         gtk_widget_add_css_class(W(scroller), "agterm-sidebar")   // theme-bg tint target
         gtk_scrolled_window_set_child(scroller, W(sidebarBox))
         gtk_widget_set_size_request(W(scroller), 240, -1)
@@ -688,6 +691,7 @@ final class AppController {
         }
         guard let label = op(gtk_label_new(text)) else { return nil }
         gtk_label_set_xalign(label, 0)
+        gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END)
         gtk_widget_set_hexpand(W(label), 1)
         nameLabels[label] = (id, isWorkspace)
         let dbl = gtk_gesture_click_new()

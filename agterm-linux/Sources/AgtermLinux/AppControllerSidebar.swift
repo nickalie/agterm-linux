@@ -90,6 +90,7 @@ extension AppController {
             if store.flaggedSessions.isEmpty {
                 if let hint = op(gtk_label_new("No flagged sessions.\nRight-click a session → Flag.")) {
                     gtk_label_set_justify(hint, GTK_JUSTIFY_CENTER)
+                    gtk_label_set_wrap(hint, 1)
                     gtk_widget_set_margin_top(W(hint), 24)
                     gtk_widget_add_css_class(W(hint), "dim-label")
                     gtk_box_append(cast(sidebarBox), W(hint))
@@ -219,9 +220,13 @@ extension AppController {
         // The flagged row normally includes its workspace breadcrumb, but inline rename must edit only
         // the session's bare display name. Reuse the normal name widget for the active rename so the
         // entry is created and seeded without the breadcrumb.
-        let label = flaggedView && renaming?.id != s.id
+        let flaggedLabel: OpaquePointer? = flaggedView && renaming?.id != s.id
             ? op(gtk_label_new(LinuxSidebarPolicy.flaggedRowLabel(for: s, in: store)))
-            : makeNameWidget(id: s.id, text: s.displayName, isWorkspace: false)
+            : nil
+        // Middle ellipsis for the same reason as the palette rows: the trailing breadcrumb is what
+        // tells two identically named sessions apart.
+        if let flaggedLabel { gtk_label_set_ellipsize(flaggedLabel, PANGO_ELLIPSIZE_MIDDLE) }
+        let label = flaggedLabel ?? makeNameWidget(id: s.id, text: s.displayName, isWorkspace: false)
         gtk_widget_set_hexpand(W(label), 1)
         gtk_widget_set_margin_top(W(label), 4)
         gtk_widget_set_margin_bottom(W(label), 4)
