@@ -305,9 +305,17 @@ extension AppController {
         let size = AppSettings.clampSidebarFontSize(value)
         persist(\.sidebarFontSize, size == AppSettings.defaultSidebarFontSize ? nil : size)
         for controller in gWindows.values {
-            controller.applySidebarFontSize()
+            controller.applyTextSizes()
             controller.rebuildSidebar()
         }
+    }
+
+    /// The palette/picker/switcher text size. A live palette keeps the size it opened with — the CSS applies
+    /// on the next present, which is also when its scaled default size is read.
+    func setInterfaceFontSize(_ value: Double) {
+        let size = AppSettings.clampInterfaceFontSize(value)
+        persist(\.interfaceFontSize, size == AppSettings.defaultInterfaceFontSize ? nil : size)
+        for controller in gWindows.values { controller.applyTextSizes() }
     }
 
     func setInactivePaneMute(_ value: Double) {
@@ -398,13 +406,14 @@ extension AppController {
         settings.backgroundOpacity = nil
         settings.sidebarBackgroundShift = nil
         settings.sidebarFontSize = nil
+        settings.interfaceFontSize = nil
         settings.inactivePaneMuteStrength = nil
         try? linuxSettingsStore().save(settings)
         reloadConfig()
         for controller in gWindows.values {
             controller.applyToolbarMode()
             controller.applyWindowTranslucency()
-            controller.applySidebarFontSize()
+            controller.applyTextSizes()
             controller.updateAllPaneDimming()
             controller.rebuildSidebar()
         }

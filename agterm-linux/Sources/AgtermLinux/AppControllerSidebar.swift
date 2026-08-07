@@ -4,7 +4,7 @@ import agtermCore
 
 @MainActor
 extension AppController {
-    static var sidebarFontProvider: OpaquePointer?
+    static var textSizeProvider: OpaquePointer?
 
     func newSession(in workspaceID: UUID) {
         noteUserActivity()
@@ -39,16 +39,17 @@ extension AppController {
         }
     }
 
-    func applySidebarFontSize() {
+    func applyTextSizes() {
         guard let display = gdk_display_get_default() else { return }
         let settings = linuxSettingsStore().load()
         let css = LinuxSidebarPolicy.sidebarCSS(fontSize: settings.sidebarFontSize)
-        if Self.sidebarFontProvider == nil {
+            + "\n" + LinuxInterfacePolicy.interfaceCSS(fontSize: settings.interfaceFontSize)
+        if Self.textSizeProvider == nil {
             let provider = OpaquePointer(gtk_css_provider_new())
-            Self.sidebarFontProvider = provider
+            Self.textSizeProvider = provider
             gtk_style_context_add_provider_for_display(display, provider, 651)
         }
-        if let provider = Self.sidebarFontProvider {
+        if let provider = Self.textSizeProvider {
             css.withCString { gtk_css_provider_load_from_string(cast(provider), $0) }
         }
     }

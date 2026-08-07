@@ -109,6 +109,17 @@ extension AppController {
         connect(sidebarFont, "notify::value", unsafeBitCast(onSettingsSidebarFont, to: GCallback.self))
         adw_preferences_group_add(cast(window), W(sidebarFont))
 
+        let interfaceFont = OpaquePointer(
+            adw_spin_row_new_with_range(
+                AppSettings.interfaceFontSizeRange.lowerBound,
+                AppSettings.interfaceFontSizeRange.upperBound, 1)
+        )
+        "Palette and switcher font size".withCString { adw_preferences_row_set_title(cast(interfaceFont), $0) }
+        adw_spin_row_set_value(
+            interfaceFont, settings.interfaceFontSize ?? AppSettings.defaultInterfaceFontSize)
+        connect(interfaceFont, "notify::value", unsafeBitCast(onSettingsInterfaceFont, to: GCallback.self))
+        adw_preferences_group_add(cast(window), W(interfaceFont))
+
         let mute = OpaquePointer(adw_spin_row_new_with_range(0, 10, 1))
         "Inactive pane mute".withCString { adw_preferences_row_set_title(cast(mute), $0) }
         adw_spin_row_set_value(
@@ -168,6 +179,9 @@ private let onSettingsSidebarTint: @MainActor @convention(c) (OpaquePointer?, Op
 }
 private let onSettingsSidebarFont: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated { controllerForWidget(row)?.setSidebarFontSize(adw_spin_row_get_value(row)) }
+}
+private let onSettingsInterfaceFont: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated { controllerForWidget(row)?.setInterfaceFontSize(adw_spin_row_get_value(row)) }
 }
 private let onSettingsInactivePaneMute: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated { controllerForWidget(row)?.setInactivePaneMute(adw_spin_row_get_value(row)) }
