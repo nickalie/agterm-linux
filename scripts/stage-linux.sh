@@ -51,6 +51,7 @@ cp -R "$APP/vendor/ghostty/share/terminfo" "$DEST/share/terminfo"
 [[ -d "$APP/Resources/icons" ]] && cp -R "$APP/Resources/icons" "$DEST/share/icons"
 mkdir -p "$DEST/share/agterm"
 cp -R "$ROOT/agterm/Resources/agent-status" "$DEST/share/agterm/agent-status"
+cp -R "$ROOT/agterm/Resources/hud" "$DEST/share/agterm/hud"
 cp -R "$ROOT/plugins/agterm/skills/agterm" "$DEST/share/agterm/agent-skill"
 printf '%s\n' "${AGTERM_PACKAGE_VERSION:-dev}" > "$DEST/share/agterm/VERSION"
 

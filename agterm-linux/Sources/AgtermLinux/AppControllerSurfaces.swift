@@ -213,27 +213,29 @@ extension AppController {
                 }
                 s.overlaySurface = ov
                 overlaySurfaces[s.id] = ov
-                if let pct = s.overlaySizePercent, let overlay = deckOverlay {
+                if s.overlaySizePercent != nil, let overlay = deckOverlay {
                     let frame = OpaquePointer(gtk_frame_new(nil))
                     gtk_widget_add_css_class(W(frame), "card")
                     gtk_widget_add_css_class(W(frame), "agterm-quick")
                     gtk_widget_set_overflow(W(frame), GTK_OVERFLOW_HIDDEN)   // clip GL child to the rounded card; see LinuxQuickCardPolicy
                     gtk_widget_set_halign(W(frame), GTK_ALIGN_CENTER)
-                    gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
-                    let dw = gtk_widget_get_width(W(overlay)), dh = gtk_widget_get_height(W(overlay))
-                    gtk_widget_set_size_request(W(frame), max(Int32(240), dw * Int32(pct) / 100),
-                                                max(Int32(160), dh * Int32(pct) / 100))
+                    // A HUD is passive: the click that would make its surface the focused widget must reach
+                    // the session underneath instead, so the whole panel is untargetable.
+                    if s.hudActive { gtk_widget_set_can_target(W(frame), 0) }
                     gtk_frame_set_child(cast(frame), W(ov.glArea))
                     gtk_overlay_add_overlay(overlay, W(frame))
                     gtk_widget_set_visible(W(frame), s.id == store.selectedSessionID ? 1 : 0)
                     floatingOverlayFrames[s.id] = frame
+                    applyFloatingOverlayGeometry(frame, session: s)
                 } else {
                     "overlay".withCString { _ = gtk_stack_add_named(stack, W(ov.glArea), $0) }
                 }
                 ov.realizeWidgetIfNeeded()
             }
             if floatingOverlayFrames[s.id] != nil {
-                if allowFocus, s.id == store.selectedSessionID { overlaySurfaces[s.id]?.grabFocus() }
+                if allowFocus, s.programOverlayActive, s.id == store.selectedSessionID {
+                    overlaySurfaces[s.id]?.grabFocus()
+                }
             } else {
                 "overlay".withCString { gtk_stack_set_visible_child_name(stack, $0) }
                 if allowFocus, s.id == store.selectedSessionID { overlaySurfaces[s.id]?.grabFocus() }
@@ -567,7 +569,7 @@ extension AppController {
         }
         updateFloatingOverlayVisibility(activeID: active?.id)
         if focus, let active {
-            if active.overlayActive {
+            if active.programOverlayActive {
                 overlaySurfaces[active.id]?.grabFocus()
             } else if active.scratchActive {
                 scratchSurfaces[active.id]?.grabFocus()
@@ -578,6 +580,44 @@ extension AppController {
             }
         }
         updateToggleIcons()
+    }
+
+    /// Size and place a floating panel over the deck.
+    ///
+    /// A PROGRAM overlay is one percent on both axes and never shrinks past a floor that keeps its program
+    /// usable. A HUD sizes each axis separately — width from the caller or the box, height always measured
+    /// from the message — and takes NO floor: flooring it is a square panel around two lines of text.
+    /// `.top`/`.bottom` hold `HudPosition.edgeMarginPercent` off the pane edge while the panel leaves room
+    /// for it, and center when it does not, so a tall panel can never overhang the pane.
+    func applyFloatingOverlayGeometry(_ frame: OpaquePointer?, session s: Session) {
+        guard let frame, let overlay = deckOverlay, let pct = s.overlaySizePercent else { return }
+        let dw = gtk_widget_get_width(W(overlay)), dh = gtk_widget_get_height(W(overlay))
+        guard let heightPercent = s.hudHeightPercent else {
+            gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
+            gtk_widget_set_margin_top(W(frame), 0)
+            gtk_widget_set_margin_bottom(W(frame), 0)
+            gtk_widget_set_size_request(W(frame), max(Int32(240), dw * Int32(pct) / 100),
+                                        max(Int32(160), dh * Int32(pct) / 100))
+            return
+        }
+        gtk_widget_set_size_request(W(frame), dw * Int32(pct) / 100, dh * Int32(heightPercent) / 100)
+        let margin = Double(dh) * Double(HudPosition.edgeMarginPercent) / 100
+        let free = max(0, Double(dh) * Double(100 - heightPercent) / 200 - margin)
+        let position = free > 0 ? (s.hudSpec?.position ?? HudPosition.defaultPosition) : .center
+        gtk_widget_set_margin_top(W(frame), position == .top ? Int32(margin) : 0)
+        gtk_widget_set_margin_bottom(W(frame), position == .bottom ? Int32(margin) : 0)
+        switch position {
+        case .top: gtk_widget_set_valign(W(frame), GTK_ALIGN_START)
+        case .center: gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
+        case .bottom: gtk_widget_set_valign(W(frame), GTK_ALIGN_END)
+        }
+    }
+
+    /// Re-apply the live panel's geometry after `session.hud.update` or `session.overlay.resize` changed the
+    /// percent, without touching the surface: the helper repaints in place and must not re-spawn.
+    func resizeFloatingOverlayFrame(for id: UUID) {
+        guard let frame = floatingOverlayFrames[id], let s = store.session(withID: id) else { return }
+        applyFloatingOverlayGeometry(frame, session: s)
     }
 
     private func updateFloatingOverlayVisibility(activeID: UUID?) {
@@ -693,8 +733,9 @@ extension AppController {
         let strength = linuxSettingsStore().load().inactivePaneMuteStrength ?? AppSettings.defaultInactivePaneMuteStrength
         let dimmed = 1.0 - AppSettings.muteOpacity(strength: strength)
         // a floating panel over this session mutes BOTH panes behind it; the quick terminal is
-        // window-level, so it mutes whichever session the deck is showing.
-        let behindFloating = floatingOverlayFrames[s.id] != nil
+        // window-level, so it mutes whichever session the deck is showing. A HUD is exempt: it is a
+        // message ABOUT the session, which stays lit, focused and typable under it.
+        let behindFloating = (floatingOverlayFrames[s.id] != nil && s.programOverlayActive)
             || (quickVisible && s.id == store.selectedSessionID)
         let leftMuted = behindFloating || (s.isSplit && s.splitFocused)
         let rightMuted = behindFloating || (s.isSplit && !s.splitFocused)

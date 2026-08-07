@@ -240,7 +240,7 @@ extension AppController {
 
     func searchTargetSurface(for id: UUID) -> GhosttySurface? {
         guard let s = store.session(withID: id) else { return nil }
-        if s.overlayActive, let overlay = overlaySurfaces[id] { return overlay }
+        if s.programOverlayActive, let overlay = overlaySurfaces[id] { return overlay }
         if s.scratchActive, let scratch = scratchSurfaces[id] { return scratch }
         return focusedSurface(for: id)
     }

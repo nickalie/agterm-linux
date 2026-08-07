@@ -288,14 +288,14 @@ private let onRevealAction: @MainActor @convention(c) (OpaquePointer?, OpaquePoi
     guard let focus = LinuxNotificationRevealFocus.resolve(
         pane: pane, sessionExists: session != nil,
         hasSplit: session?.hasSplit ?? false,
-        coverActive: (session?.overlayActive ?? false) || (session?.scratchActive ?? false)
+        coverActive: (session?.programOverlayActive ?? false) || (session?.scratchActive ?? false)
     ), let session else { return }
     let wantSplit = focus == .split
     session.splitFocused = wantSplit
     gtk_window_present(WIN(controller.windowPointer))
     controller.selectSession(id)
     if focus == .overlay,
-       let cover = session.overlayActive ? controller.overlaySurfaces[id] : controller.scratchSurfaces[id] {
+       let cover = session.programOverlayActive ? controller.overlaySurfaces[id] : controller.scratchSurfaces[id] {
         cover.grabFocus()
     } else if session.hasSplit {
         controller.focusPane(left: !wantSplit)

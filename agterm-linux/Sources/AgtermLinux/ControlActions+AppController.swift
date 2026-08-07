@@ -881,6 +881,9 @@ extension AppController: ControlActions {
         case .success(let id):
             guard store.resizeOverlay(id, sizePercent: sizePercent) else { return err("no overlay") }
             reconcile()
+            // the surface stays mounted, so only the frame re-flows: a program never re-spawns and the HUD
+            // helper repaints in place off the body file `writeHudBody` rewrote.
+            resizeFloatingOverlayFrame(for: id)
             return ok(id)
         }
     }
@@ -890,6 +893,9 @@ extension AppController: ControlActions {
         case .failure(let response): return response
         case .success(let id):
             guard let session = store.session(withID: id) else { return err("no such session") }
+            // a HUD carries no process and so no result: `overlayActive` alone would answer the misleading
+            // "overlay still running" for a panel nothing is waiting on.
+            if pane == nil, session.hudActive { return err(OverlayResultError.noResult) }
             let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
                 ?? (session.overlayActive, session.overlayExitCode)
             if running { return err(OverlayResultError.stillRunning) }
