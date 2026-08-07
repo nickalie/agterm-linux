@@ -67,8 +67,12 @@ extension AppController {
             (OpaquePointer?, Int32, Double, Double, gpointer?) -> Void, to: GCallback.self))
         gtk_widget_add_controller(W(paned), dividerClick)
         sessionStacks[s.id] = stack
-        let hadForeground = s.foregroundCommand != nil
-        let restoreInput = consumeRestoreInput(&s.foregroundCommand)
+        // The capture rides the TRANSIENT pending slot, seeded only by an app-bootstrap restore: the
+        // persisted field is stripped at launch so a replay can fire exactly once. Taking it clears it, so
+        // this pane's next surface is a plain shell.
+        let pendingForeground = s.takePendingForegroundCommand(pane: .left)
+        let hadForeground = pendingForeground != nil
+        let restoreInput = consumeRestoreInput(pendingForeground)
         let inputs = CommandRestore.RestoreInputs(
             wasRestored: s.wasRestored,
             restoreEnabled: restoreEnabled,
@@ -282,10 +286,10 @@ extension AppController {
 
     private var restoreEnabled: Bool { linuxSettingsStore().load().restoreRunningCommand ?? false }
 
-    private func consumeRestoreInput(_ argv: inout [String]?) -> String? {
-        guard let captured = argv else { return nil }
-        argv = nil
-        guard restoreEnabled else { return nil }
+    /// The captured argv as terminal input. Nil for no capture, and nil while restore is off — the slot is
+    /// taken either way, so a pane that skipped its replay cannot fire it later.
+    private func consumeRestoreInput(_ argv: [String]?) -> String? {
+        guard let captured = argv, restoreEnabled else { return nil }
         return CommandRestore.shellQuotedLine(captured) + "\n"
     }
 
@@ -368,7 +372,7 @@ extension AppController {
            }) { return }
         guard let paned = sessionPanes[s.id] else { return }
         if s.isSplit, splitSurfaces[s.id] == nil {
-            let capturedInput = consumeRestoreInput(&s.splitForegroundCommand)
+            let capturedInput = consumeRestoreInput(s.takePendingForegroundCommand(pane: .right))
             let restoreInput = CommandRestore.restoreInput(
                 restoreEnabled: restoreEnabled,
                 restoreOverride: s.takePendingRestoreOverride(pane: .right),

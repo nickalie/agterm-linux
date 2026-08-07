@@ -939,6 +939,9 @@ extension AppController: ControlActions {
             for session in ctl.store.workspaces.flatMap(\.sessions) {
                 session.foregroundCommand = nil
                 session.splitForegroundCommand = nil
+                // the launch armed the replay in the transient slots, so clearing the persisted fields
+                // alone would leave one running.
+                session.clearPendingForegroundCommands()
             }
         }
         gLibrary.saveAllOpen()
