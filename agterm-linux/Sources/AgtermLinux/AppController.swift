@@ -284,7 +284,7 @@ final class AppController {
         adw_toolbar_view_set_content(contentToolbar, W(contentBox))
         let split = buildSidebarSplit(sidebar: sidebarToolbar, content: contentToolbar)
         applyToolbarMode()
-        applySidebarFontSize()
+        applyTextSizes()
         // The whole split (sidebar + deck) sits under a GtkOverlay so the quick terminal can float over
         // the FULL window content (matching macOS), not just the deck.
         let windowOverlay = OpaquePointer(gtk_overlay_new())
@@ -709,8 +709,21 @@ final class AppController {
         syncSidebarSelection()
     }
 
+    /// A session-wide cover hides the panes, so rearranging them behind it would only show up once the cover
+    /// goes — the layout the user left is silently different. A shown scratch is DISMISSED instead, matching
+    /// Ctrl+W's cover-first rule, so either one is the way back to the panes as they were; hiding is
+    /// keep-alive, so the scratch shell survives. A full program overlay runs a caller's program that must
+    /// not be closed under it, so the press is inert. Control's `session.split` still drives the deck behind
+    /// either cover.
     func toggleSplit() {
-        guard let id = store.selectedSessionID else { return }
+        guard let id = store.selectedSessionID, let session = store.session(withID: id) else { return }
+        guard !session.fullOverlayActive else { return }
+        if session.scratchActive {
+            store.toggleScratch(id)
+            reconcile()
+            updateToggleIcons()
+            return
+        }
         store.toggleSplit(id)
         reconcile()
         updateToggleIcons()
