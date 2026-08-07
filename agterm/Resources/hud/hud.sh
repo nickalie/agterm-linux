@@ -27,9 +27,42 @@ set -uf
 # ${#line} counts CODE POINTS only under a UTF-8 locale and BYTES otherwise, and code points is what the app
 # counted (HudLayout.cellCount) — so without this every non-ASCII message centers wrong. A Dock-launched app
 # inherits launchd's environment, which sets no LANG or LC_*, and an inherited LC_ALL would override LC_CTYPE.
+#
+# Both halves of that have to be PROBED rather than assumed, because neither holds off macOS: glibc rejects
+# the bare name "UTF-8" that macOS accepts, leaving the C locale, and dash — the /bin/sh on Debian and Ubuntu
+# — counts bytes under every locale, having no multibyte support at all. Try the names in turn and measure a
+# two-byte character; `cellcount` below counts by hand wherever this comes up empty.
 unset LC_ALL
-LC_CTYPE=UTF-8
-export LC_CTYPE
+probe=$(printf '\303\251')   # "é": one code point, two UTF-8 bytes
+multibyte=''
+# the brace group keeps the assignments in THIS shell (a subshell would discard them) while silencing the
+# setlocale warning bash prints for a name the platform's libc does not have.
+{ for name in UTF-8 C.UTF-8 en_US.UTF-8; do
+    LC_CTYPE=$name
+    export LC_CTYPE
+    if [ "${#probe}" = 1 ]; then multibyte=1; break; fi
+done; } 2>/dev/null
+
+# The byte values of a UTF-8 continuation byte (10xxxxxx), as a `case` range. Under a byte-counting shell
+# every OTHER byte starts a code point, so subtracting these is the count the app measured.
+cont=$(printf '\200-\277')
+
+# Sets `count` to the code points in $1. `${#}` already answers that where the probe succeeded; the loop is
+# the fallback, and it is builtins only, so a tick still costs no fork. Handing off to a shell that can count
+# was the other option and is not available: `exec` leaves the app's `Process` waiting on a child that never
+# reports, so the panel would outlive every teardown.
+cellcount() {
+    if [ -n "$multibyte" ]; then count=${#1}; return; fi
+    _rest=$1
+    count=0
+    while [ -n "$_rest" ]; do
+        case $_rest in
+            [$cont]*) ;;
+            *) count=$(( count + 1 )) ;;
+        esac
+        _rest=${_rest#?}
+    done
+}
 
 file=${AGTERM_HUD_FILE:-}
 [ -n "$file" ] || exit 0
@@ -98,7 +131,9 @@ while [ -f "$file" ]; do
             pre="$glyph "
         fi
         first=0
-        left=$(( (cols - ${#line} - ${#pre}) / 2 ))
+        cellcount "$line"; linecells=$count
+        cellcount "$pre"; precells=$count
+        left=$(( (cols - linecells - precells) / 2 ))
         if [ "$left" -gt 0 ]; then
             block="$block${csi}${left}C"
         fi
