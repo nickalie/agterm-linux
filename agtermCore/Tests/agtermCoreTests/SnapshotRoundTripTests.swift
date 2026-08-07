@@ -29,17 +29,25 @@ struct SnapshotRoundTripTests {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
         let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        // split, because the capture path only ever records a split argv for a SHOWN split and the launch
+        // restore arms the split slot on the same condition
+        session.isSplit = true
         session.foregroundCommand = ["ssh", "gate", "-p", "22"]
         session.splitForegroundCommand = ["tail", "-f", "/var/log/x"]
         let snap = store.snapshot()
         let snapped = snap.workspaces[0].sessions[0]
         #expect(snapped.foregroundCommand == ["ssh", "gate", "-p", "22"])
         #expect(snapped.splitForegroundCommand == ["tail", "-f", "/var/log/x"])
+        // the executable half of the round trip is quit → next-launch bootstrap; a non-launch rebuild
+        // deliberately drops the captured commands (see AppStoreRestoreSeedTests).
         let restored = makeStore()
-        restored.restore(from: snap)
+        restored.restore(from: snap, launchRestore: true)
         let r = restored.workspaces[0].sessions[0]
-        #expect(r.foregroundCommand == ["ssh", "gate", "-p", "22"])
-        #expect(r.splitForegroundCommand == ["tail", "-f", "/var/log/x"])
+        #expect(r.pendingForegroundCommand == ["ssh", "gate", "-p", "22"])
+        #expect(r.pendingSplitForegroundCommand == ["tail", "-f", "/var/log/x"])
+        // re-snapshotting the restored store must not write the argv back — that is what makes the
+        // launch-time strip durable against any save before the surfaces consume it.
+        #expect(restored.snapshot().workspaces[0].sessions[0].foregroundCommand == nil)
     }
 
     @Test func legacySnapshotWithoutForegroundCommandDecodesNil() throws {
@@ -289,6 +297,29 @@ struct SnapshotRoundTripTests {
         let store = makeStore()
         store.restore(from: snap)
         #expect(store.focusedWorkspaceIDs.isEmpty && !store.focusEnabled)
+    }
+
+    @Test func hudStateNeverReachesTheSnapshot() throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.overlayActive = true
+        session.overlaySizePercent = 30
+        session.hudSpec = HudSpec(message: "gathering options", detail: "scanning /a", spinner: .bar)
+        session.hudFile = "/tmp/agterm-hud-test.txt"
+
+        let snap = store.snapshot()
+        let json = String(decoding: try JSONEncoder().encode(snap), as: UTF8.self)
+        #expect(!json.contains("hud"))
+        #expect(!json.contains("gathering options"))
+
+        let restored = makeStore()
+        restored.restore(from: snap)
+        let r = restored.workspaces[0].sessions[0]
+        #expect(r.hudSpec == nil)
+        #expect(r.hudFile == nil)
+        #expect(r.hudActive == false)
+        #expect(r.overlayActive == false)
     }
 
     @Test func sessionSnapshotDecodesWithoutSplitRatio() throws {

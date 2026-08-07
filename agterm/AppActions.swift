@@ -343,7 +343,8 @@ final class AppActions {
 
     /// Open `keymap.conf` in the user's editor (`$VISUAL`/`$EDITOR`, else `vi`) in a 95% floating overlay
     /// over the active session, via the login shell so an exported `$EDITOR` is honored; exiting reloads the
-    /// keymap. No-op with no active session, before the settings model is wired, or with an overlay open.
+    /// keymap. No-op with no active session, before the settings model is wired, or with a caller's PROGRAM
+    /// in the overlay slot — a HUD there yields, as it does to any `openOverlay`.
     func editKeymap() {
         guard uiActionsEnabled else { return }
         guard let store, let id = store.selectedSessionID, let path = settingsModel?.keymapPath else { return }
@@ -665,9 +666,18 @@ final class AppActions {
     /// closing only HIDES it (both shells stay alive) and maximizes the focused pane, so reopening restores
     /// both in their original positions with the SAME pane focused — focus follows `splitFocused`, which
     /// `AppStore.toggleSplit` moves only for a genuinely new split.
+    ///
+    /// A session-wide cover hides the panes, so rearranging them behind it would only be seen once the cover
+    /// goes — the layout the user left is silently different. A shown scratch is DISMISSED instead, ⌘W's
+    /// cover-first rule, making this the way back to the panes as they were; hiding is keep-alive, so the
+    /// scratch shell survives. A full overlay runs a caller's program that must not be closed under it, so
+    /// the press is inert. Control's `session.split` keeps acting on the deck behind either cover.
     func toggleSplit() {
         guard uiActionsEnabled else { return }
         guard let store, let session = store.activeSession else { return }
+        guard !session.fullOverlayActive else { return }
+        // the deck's `scratchActive` onChange reclaims first responder for the pane, as it does for ⌘J.
+        if session.scratchActive { store.toggleScratch(session.id); return }
         store.toggleSplit(session.id)
         focusSplitPane(session, wantSplit: session.splitFocused)
     }
@@ -772,7 +782,7 @@ final class AppActions {
     /// searchable, else the active session's focused pane. Full overlay and quick terminal are unsearchable
     /// (blocked by `coverHidesActiveSession`); a FLOATING overlay leaves the pane visible, so it targets it.
     private func searchTarget() -> GhosttySurfaceView? {
-        if let session = store?.activeSession, session.scratchActive, !session.overlayActive {
+        if let session = store?.activeSession, session.scratchActive, !session.programOverlayActive {
             return session.topmostSurface as? GhosttySurfaceView
         }
         // the focused pane hidden under its OWN overlay has no searchable target: the overlay is unsearchable

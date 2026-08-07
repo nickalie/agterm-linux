@@ -85,6 +85,9 @@ final class GhosttyApp {
     /// The sidebar row-text point size. The sidebar Coordinator reads it for each row's font and the derived
     /// row height (via `AppSettings.sidebarRowHeight`); settings-mirrored like `toolbarMode`.
     private(set) var sidebarFontSize: CGFloat = CGFloat(AppSettings.defaultSidebarFontSize)
+    /// The sizes the palette/picker and session switcher derive from the separate `interfaceFontSize`,
+    /// resolved once per settings change rather than per row.
+    private(set) var interfaceMetrics = InterfaceMetrics(fontSize: AppSettings.defaultInterfaceFontSize)
     /// The base terminal font size in points (the Settings default; nil → the ghostty built-in). The renderer
     /// never reads it — it is the size a session with a nil `session.fontSize` reverts to, which the dashboard
     /// font-override clear needs to recognize its own async CELL_SIZE report (`pendingFontRestore`).
@@ -149,6 +152,27 @@ final class GhosttyApp {
         ghostty_app_tick(app)
     }
 
+    /// Re-side the APP config to the launch appearance, BEFORE the first surface is created.
+    ///
+    /// `Surface.init` rebuilds a surface's config whenever the app's conditional state differs from the
+    /// config's, and that rebuild replays the config FILES only: it carries `working-directory` over and
+    /// drops the per-surface `env_vars`, `initial_input` and `command` the host set on the struct. A
+    /// host-built config always resolves LIGHT, so on a dark launch with a dual `theme = light:,dark:`
+    /// every surface created before the first re-feed spawns with no `AGTERM_*`, no restore replay and no
+    /// `session.new --command` (#260). Only the `update_config` round trip re-sides the stored app config
+    /// — after it the states match and surfaces keep what they were built with. The KVO appearance reload
+    /// does the same thing but is debounced, so it lands well after the launch restore.
+    ///
+    /// Must run where `NSApp` exists (`GhosttyApp` is built before that, so its own read is always light)
+    /// and before any scene mounts, which is why `applicationDidFinishLaunching` calls it.
+    func syncLaunchColorScheme() {
+        guard let app, Self.currentIsDark(), let config else { return }
+        ghostty_app_set_color_scheme(app, GHOSTTY_COLOR_SCHEME_DARK)
+        ghostty_app_update_config(app, config)
+        // the reply carries the config libghostty APPLIED; take and free it so the box holds no stale clone.
+        if let derived = callbacks.takeDerivedAppConfig() { ghostty_config_free(derived) }
+    }
+
     /// Set the window translucency the chrome applies. `SettingsModel` calls this and every setter below at
     /// launch and on each change; the window re-syncs on `.agtermAppearanceChanged`.
     func setWindowTranslucency(opacity: Double, blurRadius: Int) {
@@ -205,6 +229,11 @@ final class GhosttyApp {
         // 9...20, but a hand-edited settings.json must not draw a giant font in the clamped row
         // (sidebarRowHeight clamps its own copy).
         sidebarFontSize = CGFloat(AppSettings.clampSidebarFontSize(size))
+    }
+
+    /// `InterfaceMetrics` clamps its own input, so a hand-edited out-of-range value lands in range here too.
+    func setInterfaceFontSize(_ size: Double) {
+        interfaceMetrics = InterfaceMetrics(fontSize: size)
     }
 
     /// Set the agent-status glyph colors from the user's hex settings; nil or malformed → the system default.

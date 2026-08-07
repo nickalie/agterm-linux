@@ -4,8 +4,9 @@ description: >
   Drive agterm, a native desktop terminal app (macOS upstream or the GTK Linux port), programmatically via its agtermctl CLI and a local
   control socket. Use when running inside an agterm session and asked to control the terminal:
   create, rename, close, select, or reorder sessions and workspaces; split panes; toggle the
-  per-session scratch terminal; open or close overlay terminals and read their exit status; display
-  the native fuzzy picker with caller-supplied choices and poll or cancel it; display
+  per-session scratch terminal; open or close overlay terminals and read their exit status; post a
+  passive HUD message panel over a session while the user keeps typing;
+  display the native fuzzy picker with caller-supplied choices and poll or cancel it; display
   an image inline via a bundled helper script; type
   into a session, copy its selection, or search its scrollback; post desktop notifications; manage windows (new, list,
   select, close, resize, move); change font size; or reload and edit the keymap and the agterm-scoped
@@ -17,7 +18,8 @@ description: >
 when_to_use: >
   Trigger on: agterm, agtermctl, agterm control socket, session.new, session.close, session.type,
   session.split, session.scratch, session.focus, session.resize, surface.zoom, dashboard, pick, pick.open, pick.result, pick.cancel, native picker, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
-  session.flag, session.seen, session.reveal, session.duplicate, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
+  session.flag, session.seen, session.reveal, session.duplicate, session.background, session.overlay,
+  session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, window.minimize, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, keymap.list, config.reload,
   theme.set, theme.list, events, events.read, event subscription, select theme, edit keymap, show an image, display an image inline, show-image,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
@@ -87,11 +89,13 @@ holds a tree of **workspaces**, each holding **sessions**. A session has a prima
 have: a **split** pane (a second shell side by side), a **scratch** terminal (a third full-coverage
 shell, toggled like the split), and an ephemeral **overlay** (runs one program on top, then vanishes).
 An overlay covers the whole session, or with `--pane left|right` exactly one split pane, leaving the
-sibling pane visible and usable. Separately, each window has one **quick terminal** (a scratch overlay
-at 90% of the window, not part of the tree).
+sibling pane visible and usable. The same session-wide slot also holds a **HUD** (`session hud`), a small
+passive panel carrying a message instead of a program: the session keeps focus and stays typable under it.
+One slot, so a session shows either a HUD or a program overlay, never both. Separately, each window has one
+**quick terminal** (a scratch overlay at 90% of the window, not part of the tree).
 
 Inspect the live tree any time with `agtermctl tree --json` (workspaces → sessions, each with
-`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
+`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `hud`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
 terminal title (e.g. a remote host over SSH), omitted when none was reported — read it when a
 session's local `cwd` is stale because it's connected to a remote. `surfaces[].id` is the
 control address for `surface zoom` (`left`, `right`, `scratch`, `overlay`, `overlay-left`, or
@@ -149,7 +153,7 @@ prompt concatenates with yours, and the program starts on the merged line. (`--n
 focus, but the newline and shared-buffer hazards of `type`-as-launcher remain — `--command` is still the
 rule.) After `--command`, confirm in `tree --json` that the new node's `foreground` shows your program running, not a bare shell prompt.
 
-## Command summary (71 commands)
+## Command summary (74 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -174,6 +178,14 @@ omitted for a full-pane overlay or no overlay so gate on `overlay` first; the re
 resize` for a record-then-restore zoom), `paneOverlays` (the panes covered by their own overlay —
 `["left"]`, `["right"]` or `["left","right"]`, omitted when neither is; the read side of `overlay open
 --pane`, independent of the session-wide `overlay` flag),
+`hud` (the message panel occupying the session-wide slot — `{message, detail?, spinner, backgroundColor?,
+sizePercent?, heightPercent?, position}`, the two percents being the panel's width and height shares —
+omitted when none is up; the read side of `session hud`. `position` and `spinner`
+always report the EFFECTIVE value, `center` and a static panel's `none` included, so a caller who omitted
+them never has to know the defaults; `spinner` names the STYLE, so `none` is what a caller echoes back to
+turn one off. While a HUD is up the node's `overlay` reads `false` and `overlaySizePercent` is omitted, so a
+poll for "is a program covering this session" cannot mistake a message for one; HUD state is poll-only,
+no event announces it),
 `splitRatio` (the left-pane divider fraction 0.05–0.95 of a
 session that has a split — shown or hidden; omitted when there's no split or the ratio was never set (at
 the default 0.5) —
@@ -324,6 +336,32 @@ omitted when expanded).
   `--background-color` gives the overlay pane its own solid color, independent of the session's. An
   overlay is a real terminal (pty), which is also how you **display an image inline** — via the bundled
   `scripts/show-image.sh` (see below).
+- `hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position top|center|bottom] [--background-color #rrggbb] [--size-percent N]` ·
+  `hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--size-percent N]` ·
+  `hud close` — post a small **passive** panel over the session saying what you are doing
+  ("gathering options…"). Unlike an overlay it takes no input and steals nothing: the session keeps first
+  responder, the user keeps typing, and the terminal behind it is neither dimmed nor click-blocked. Use it
+  for the seconds an agent needs before it can show something (computing picker items, waiting on a slow
+  command), then take it down. `open` is the default subcommand, so `hud "…"` posts; a message that is
+  literally `update` or `close` needs the explicit `hud open` verb. `--detail` adds a dim second line,
+  `--spinner` animates a glyph in the default `bar` style and `--spinner-style bar|braille|circle|blocks|dot`
+  picks another, turning the spinner on by itself (`dot` blinks instead of animating, for a panel up for
+  minutes; an update may switch style in place). `--spinner-style none` is accepted and leaves the panel
+  static, so the `none` a read-back reports round-trips. `--position` places it vertically (default `center`; `top` and `bottom`
+  hold a fixed margin off the pane edge automatically). The panel is sized from the message on both axes —
+  width from the longest line, height from the number of them — so a title and a subtitle give a wide, short
+  panel, not a square one. `--size-percent N` (1-100) overrides the WIDTH only, bounded to 10-80% of the
+  pane, since a message must never cover the session it is about, so a requested 100 reads back as 80. The
+  height always follows the message. `hud update` repaints in place with no re-spawn and no blink,
+  and REPLACES the whole spec — repeat `--detail`/`--spinner` to keep them, since an omitted one drops.
+  It takes no `--background-color`: the surface reads that once at creation, so only a fresh `hud` changes
+  it and `tree` keeps reporting the creation color across updates. Message and detail are capped at 256 characters and reject control characters, newline included.
+  It occupies the SAME slot as `overlay open`, so: a second `hud` replaces the first, `overlay open`
+  replaces a HUD (a running program is never replaced), `overlay close` and ⌘W take a HUD down,
+  `overlay result` refuses with `no overlay result: the slot holds a hud`, `overlay resize --size-percent`
+  works on it while `--full` is refused (`a hud is always floating: pass --size-percent, not --full`),
+  and `surface zoom` will not address it. `hud update`/`hud close` with none up answer `no hud`. Read it
+  back from the tree node's `hud` object; nothing announces it as an event, so poll `tree`.
 
 **window** — `new [name] [--minimized]` · `list` · `select <id>` · `close <id>` · `rename <id> <name>` ·
 `delete <id>` · `resize <id> --width W --height H` · `move <id> --x X --y Y [--display N]` ·

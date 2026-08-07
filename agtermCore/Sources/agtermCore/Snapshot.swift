@@ -55,30 +55,47 @@ public struct Snapshot: Codable, Equatable, Sendable {
         case focusedWorkspaceID
     }
 
-    /// Custom decode so `sessionRecency` is LOSSY: a present-but-invalid list (a malformed UUID, a wrong
-    /// JSON type after a hand edit) drops to nil. `Optional` alone tolerates only a MISSING key, so one bad
-    /// MRU entry would fail the whole `Snapshot` and `PersistenceStore.load` would start fresh, wiping every
-    /// workspace and session over a non-essential field. Mirrors `backgroundWatermark` below; others strict.
+    /// Custom decode so EVERY optional is LOSSY: a present-but-invalid value (a malformed UUID, an unknown
+    /// enum raw value from a newer build, a wrong JSON type from a hand edit) drops to nil. `Optional`
+    /// alone tolerates only a MISSING key, so one bad value would fail the whole `Snapshot` and
+    /// `PersistenceStore.load` would start fresh, wiping every workspace and session over a non-essential
+    /// field. `WorkspaceSnapshot` and `SessionSnapshot` below guard their own optionals the same way, so
+    /// the whole tree survives a bad optional at any depth.
+    ///
+    /// What still throws is identity and payload: `version`, `workspaces`, and each nested `id`/`name`/
+    /// `cwd`/`sessions`. That gap is real and unclosed, not a safe floor: a hand-edited `"cwd": 5` on one
+    /// session still wipes the entire tree, the same #360 path these guards exist to close. It stands
+    /// because the alternatives each cost something this one does not, never because throwing is cheaper.
+    /// It is the most destructive outcome available. Recovering the field keeps a session pointing
+    /// somewhere the user never left it; dropping the element loses that session silently. Pick one
+    /// deliberately before treating this line as settled.
+    ///
+    /// A parse-level failure is outside all of it: unterminated JSON never reaches these guards, and
+    /// `save` writes atomically so the app itself cannot leave that behind.
     ///
     /// Also migrates the legacy `focusedWorkspaceID`: its presence implied the filter was on, so it becomes
     /// a one-member ENABLED set. Neither key present decodes to nil/nil — an empty, disabled filter.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version)
-        selectedSessionID = try c.decodeIfPresent(UUID.self, forKey: .selectedSessionID)
+        selectedSessionID = (try? c.decodeIfPresent(UUID.self, forKey: .selectedSessionID)) ?? nil
         workspaces = try c.decode([WorkspaceSnapshot].self, forKey: .workspaces)
-        sidebarWidth = try c.decodeIfPresent(Double.self, forKey: .sidebarWidth)
-        sidebarVisible = try c.decodeIfPresent(Bool.self, forKey: .sidebarVisible)
-        sidebarMode = try c.decodeIfPresent(SidebarMode.self, forKey: .sidebarMode)
+        sidebarWidth = (try? c.decodeIfPresent(Double.self, forKey: .sidebarWidth)) ?? nil
+        sidebarVisible = (try? c.decodeIfPresent(Bool.self, forKey: .sidebarVisible)) ?? nil
+        sidebarMode = (try? c.decodeIfPresent(SidebarMode.self, forKey: .sidebarMode)) ?? nil
         let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-        let legacyFocus = try legacyContainer.decodeIfPresent(UUID.self, forKey: .focusedWorkspaceID)
-        let ids = try c.decodeIfPresent([UUID].self, forKey: .focusedWorkspaceIDs)
-        if ids == nil, let legacyID = legacyFocus {
+        let legacyFocus = (try? legacyContainer.decodeIfPresent(UUID.self, forKey: .focusedWorkspaceID)) ?? nil
+        // `Result` separates a FAILED decode from an absent key. `try?` cannot: SE-0230 flattens it, so
+        // both arrive as nil. The migration below must fire only on absence, because on a malformed set it
+        // would take the legacy id and force `focusEnabled` true over an explicit `false` in the same file.
+        let decodedIDs = Result { try c.decodeIfPresent([UUID].self, forKey: .focusedWorkspaceIDs) }
+        let ids = (try? decodedIDs.get()) ?? nil
+        if case .success(.none) = decodedIDs, let legacyID = legacyFocus {
             focusedWorkspaceIDs = [legacyID]
             focusEnabled = true
         } else {
             focusedWorkspaceIDs = ids
-            focusEnabled = try c.decodeIfPresent(Bool.self, forKey: .focusEnabled)
+            focusEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .focusEnabled)) ?? nil
         }
         sessionRecency = (try? c.decodeIfPresent([UUID].self, forKey: .sessionRecency)) ?? nil
     }
@@ -98,6 +115,21 @@ public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
         self.name = name
         self.sessions = sessions
         self.collapsed = collapsed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, sessions, collapsed
+    }
+
+    /// Custom decode so `collapsed` is LOSSY, matching the other two snapshot types: the synthesized
+    /// decode would throw on a hand-edited `"collapsed": "yes"`, failing the whole workspace and making
+    /// `PersistenceStore.load` wipe the tree over one row's expansion arrow.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        sessions = try c.decode([SessionSnapshot].self, forKey: .sessions)
+        collapsed = (try? c.decodeIfPresent(Bool.self, forKey: .collapsed)) ?? nil
     }
 }
 
@@ -171,26 +203,29 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         case restoreCommand, splitRestoreCommand
     }
 
-    /// Custom decode so `backgroundWatermark` is LOSSY: an unknown `kind`/`fit`/`position` — a DOWNGRADE
-    /// after a newer release added a value this build can't decode, or a hand-edit typo — drops to nil
-    /// instead of throwing `DataCorrupted`, which would fail the whole `SessionSnapshot` and make
-    /// `PersistenceStore.load` start fresh, wiping everything. Others keep missing-key `decodeIfPresent`.
+    /// Custom decode so every optional is LOSSY, matching `Snapshot.init(from:)`: an unknown
+    /// `kind`/`fit`/`position` after a DOWNGRADE, or any hand-edit typo, drops that field to nil rather
+    /// than throwing. A throw here fails the whole `SessionSnapshot`, which fails the `workspaces` array
+    /// above it, and `PersistenceStore.load` starts fresh, wiping everything over one session's font size.
+    /// `id` and `cwd` stay strict, and that is the unclosed half: a session that cannot say which it is
+    /// or where to spawn is not restorable, but throwing here costs the WHOLE tree, not this one session.
+    /// See `Snapshot.init(from:)` above for the trade-off and why it has not been picked yet.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        customName = try c.decodeIfPresent(String.self, forKey: .customName)
+        customName = (try? c.decodeIfPresent(String.self, forKey: .customName)) ?? nil
         cwd = try c.decode(String.self, forKey: .cwd)
-        isSplit = try c.decodeIfPresent(Bool.self, forKey: .isSplit)
-        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
-        splitCwd = try c.decodeIfPresent(String.self, forKey: .splitCwd)
-        splitRatio = try c.decodeIfPresent(Double.self, forKey: .splitRatio)
-        flagged = try c.decodeIfPresent(Bool.self, forKey: .flagged)
-        foregroundCommand = try c.decodeIfPresent([String].self, forKey: .foregroundCommand)
-        splitForegroundCommand = try c.decodeIfPresent([String].self, forKey: .splitForegroundCommand)
-        initialCommand = try c.decodeIfPresent(String.self, forKey: .initialCommand)
-        commandWait = try c.decodeIfPresent(Bool.self, forKey: .commandWait)
+        isSplit = (try? c.decodeIfPresent(Bool.self, forKey: .isSplit)) ?? nil
+        fontSize = (try? c.decodeIfPresent(Double.self, forKey: .fontSize)) ?? nil
+        splitCwd = (try? c.decodeIfPresent(String.self, forKey: .splitCwd)) ?? nil
+        splitRatio = (try? c.decodeIfPresent(Double.self, forKey: .splitRatio)) ?? nil
+        flagged = (try? c.decodeIfPresent(Bool.self, forKey: .flagged)) ?? nil
+        foregroundCommand = (try? c.decodeIfPresent([String].self, forKey: .foregroundCommand)) ?? nil
+        splitForegroundCommand = (try? c.decodeIfPresent([String].self, forKey: .splitForegroundCommand)) ?? nil
+        initialCommand = (try? c.decodeIfPresent(String.self, forKey: .initialCommand)) ?? nil
+        commandWait = (try? c.decodeIfPresent(Bool.self, forKey: .commandWait)) ?? nil
         backgroundWatermark = (try? c.decodeIfPresent(BackgroundWatermark.self, forKey: .backgroundWatermark)) ?? nil
-        restoreCommand = try c.decodeIfPresent(String.self, forKey: .restoreCommand)
-        splitRestoreCommand = try c.decodeIfPresent(String.self, forKey: .splitRestoreCommand)
+        restoreCommand = (try? c.decodeIfPresent(String.self, forKey: .restoreCommand)) ?? nil
+        splitRestoreCommand = (try? c.decodeIfPresent(String.self, forKey: .splitRestoreCommand)) ?? nil
     }
 }

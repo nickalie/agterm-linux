@@ -183,8 +183,9 @@ public final class Session: Identifiable {
     /// a plain shell when off). Never persisted.
     @ObservationIgnored public var wasRestored = false
 
-    /// The main pane's foreground command (full argv) for restore-running-command, captured at the last clean
-    /// quit and read once by the surface factory on restore, then cleared. Persisted; nil at a prompt.
+    /// The main pane's foreground command (full argv) for restore-running-command, read once by the surface
+    /// factory on a launch restore, then cleared. Persisted; nil at a prompt. Capture sites and the
+    /// launch-only replay gate: `.claude/rules/settings.md`.
     @ObservationIgnored public var foregroundCommand: [String]?
     /// The split (right) pane's foreground command (full argv), the split analogue of `foregroundCommand`.
     @ObservationIgnored public var splitForegroundCommand: [String]?
@@ -209,8 +210,21 @@ public final class Session: Identifiable {
     /// fire on a later manual ⌘D.
     @ObservationIgnored public var pendingSplitRestoreCommand: String?
 
-    /// Whether an ephemeral overlay terminal covers this session (full single-pane size); the detail pane
-    /// shows/hides it. Control-channel only and ephemeral — it runs one program and vanishes.
+    /// The main pane's TRANSIENT captured foreground command for THIS launch, copied from the persisted
+    /// `foregroundCommand` by an app-bootstrap restore and consumed by the surface factory. Never
+    /// serialized by `snapshot()`, which is what makes the launch-time strip durable: the persisted field
+    /// goes nil the moment the replay is armed, so no save landing before the surface spawns can write the
+    /// argv back over the file the strip just cleaned.
+    @ObservationIgnored public var pendingForegroundCommand: [String]?
+    /// The split analogue of `pendingForegroundCommand`, seeded only when the restored split was SHOWN
+    /// (`isSplit`) — a hidden split builds no right surface at bootstrap.
+    @ObservationIgnored public var pendingSplitForegroundCommand: [String]?
+
+    /// Whether the session-wide overlay slot is OCCUPIED, by either of its two occupants: a caller's PROGRAM
+    /// (`session.overlay.open`, which covers the session and owns first responder) or a passive HUD message
+    /// (`session.hud.open`, which covers nothing). Raw, so it answers only "occupied" — ask
+    /// `programOverlayActive` or `hudActive` for which, and never this, wherever the answer decides focus,
+    /// coverage, or input. Control-channel only and ephemeral; the detail pane shows and hides it.
     public var overlayActive: Bool = false
 
     /// The overlay's surface, created on open and torn down when its `overlayCommand` exits or the control
@@ -237,20 +251,67 @@ public final class Session: Identifiable {
     /// `session.overlay.result`; in-memory only.
     @ObservationIgnored public var overlayExitCode: Int?
 
-    /// For a *floating* overlay, the percent of the pane (width and height) the panel occupies, 1...100; nil
-    /// for the default full-pane overlay. Floating = an opaque framed panel centered in the pane, session
-    /// still VISIBLE behind it (full instead hides it and draws translucent). Cleared on close, never persisted.
+    /// The percent of the pane an opaque framed panel occupies with the session still VISIBLE behind it; nil
+    /// is the full-pane program overlay, which hides it and draws translucent. 1...100 for a floating PROGRAM
+    /// overlay, which takes it on BOTH axes and is always centered; a HUD shares the field for its WIDTH
+    /// only, bounded by `HudLayout.clampSizePercent` and placed by its own `HudSpec.position`, and sizes its
+    /// height through `hudHeightPercent`. Cleared on close, never persisted.
     public var overlaySizePercent: Int?
 
-    /// Whether a FULL-coverage overlay is up: `overlayActive` with no size percent. It hides everything
-    /// beneath — the pane(s) AND a shown scratch — so its translucent background reveals the window backing,
-    /// never a covered surface: under window translucency every surface renders fully transparent, so anything
-    /// left visible below would bleed through. A floating (sized) overlay is not a cover.
-    public var fullOverlayActive: Bool { overlayActive && overlaySizePercent == nil }
+    /// The percent of the pane's HEIGHT a HUD panel occupies, measured from its message rather than set by
+    /// the caller (`HudLayout.heightPercent`); nil for an empty slot and for a program overlay, which takes
+    /// `overlaySizePercent` on both axes. A HUD is two or three lines of text, so sharing one percent across
+    /// both axes made every panel as tall as it was wide. Observed — the deck reads it to frame the panel.
+    /// Cleared with the rest of the HUD state, never persisted.
+    public var hudHeightPercent: Int?
 
-    /// Whether a FLOATING overlay is up: `overlayActive` WITH a size percent, the complement of
-    /// `fullOverlayActive` and not a cover. Read by the detail pane to gate the floating panel.
-    public var floatingOverlayActive: Bool { overlayActive && overlaySizePercent != nil }
+    /// Bumped on every overlay-slot OPEN so the deck can key the panel's view identity on it. A HUD is
+    /// REPLACED in place — `closeOverlay` then `openOverlay` inside one store call — so `overlayActive`
+    /// never dips to false where SwiftUI can see it. Without a changing identity `makeNSView` is therefore
+    /// never re-invoked and `updateNSView` runs against the torn-down view with `overlaySurface` nil.
+    /// Observed (the deck reads it while building the panel), ephemeral, never persisted.
+    public var overlaySlotGeneration: Int = 0
+
+    /// The HUD occupying the overlay slot, nil when the slot is empty or runs a caller's program. Observed:
+    /// the deck reads it to keep the session focusable and to place the panel. Ephemeral, never persisted —
+    /// a HUD is a message about work in flight and means nothing after a relaunch.
+    public var hudSpec: HudSpec?
+
+    /// Path to the rendered-message file the HUD helper re-reads each tick (`AGTERM_HUD_FILE`); `discardHudBody`
+    /// deletes it. Per SESSION, so an update rewrites the path the running helper already opened.
+    /// `@ObservationIgnored`: the surface factory, the HUD commands and `overlay close` read it, and none of
+    /// them is a view that must re-render when it changes.
+    @ObservationIgnored public var hudFile: String?
+
+    /// Drops the HUD: deletes the body file and clears the state describing it. The single owner of that
+    /// deletion, so it happens wherever a HUD is discarded — `closeOverlay` and every teardown that discards
+    /// the whole session — and not only where a realized surface tears itself down. The file carries the
+    /// panel's TEXT under a world-readable `/tmp` path, so a HUD closed before its surface existed must not
+    /// leave it there. Deleting it also stops a helper still running against it.
+    public func discardHudBody() {
+        if let hudFile { try? FileManager.default.removeItem(atPath: hudFile) }
+        hudSpec = nil
+        hudFile = nil
+        hudHeightPercent = nil
+    }
+
+    /// Whether the overlay slot holds a HUD rather than a caller's program. The one predicate separating the
+    /// two occupants, so the deck's passivity exemptions and the program-overlay questions below cannot
+    /// disagree about which is up.
+    public var hudActive: Bool { overlayActive && hudSpec != nil }
+
+    /// Whether the overlay slot runs a CALLER'S PROGRAM, either coverage variant. The deck's "a session-wide
+    /// cover is up" question: a program overlay owns first responder and mutes the panes under it, a HUD does
+    /// neither, so every passivity exemption reads this rather than the raw slot state.
+    public var programOverlayActive: Bool { overlayActive && !hudActive }
+
+    /// Whether a FULL-coverage PROGRAM overlay is up: `overlayActive` with no size percent. It hides
+    /// everything beneath — the pane(s) AND a shown scratch — so its translucent background reveals the
+    /// window backing, never a covered surface: under window translucency every surface renders fully
+    /// transparent, so anything left visible below would bleed through. A floating (sized) overlay is not a
+    /// cover. `!hudActive` keeps it a question about a running program even if a HUD ever reaches the slot
+    /// without a size percent; a HUD covers nothing and must never hide the session behind it.
+    public var fullOverlayActive: Bool { overlayActive && !hudActive && overlaySizePercent == nil }
 
     /// The left pane's overlay, covering that pane only and leaving the sibling live; nil means none is up,
     /// so the slot itself IS the "active" signal. Observed, ephemeral, control-channel only.
@@ -537,22 +598,58 @@ public final class Session: Identifiable {
         }
     }
 
-    /// Drops both unconsumed override payloads, leaving the persisted fields alone. Called where a live
-    /// `Session` leaves the tree but may return as the SAME object (the soft-close grace window): a payload
-    /// armed at bootstrap would otherwise survive the round trip and fire when its surface is rebuilt.
+    /// Takes the pane's transient captured foreground command, clearing it so it fires once. Same
+    /// consume-on-read rule as `takePendingRestoreOverride(pane:)`, and for the same reason: a leftover
+    /// payload would fire again when `makeSplitSurface` runs on a fresh ⌘D mid-session. `.scratch` is
+    /// never restored.
+    public func takePendingForegroundCommand(pane: StatusPane) -> [String]? {
+        switch pane {
+        case .left:
+            let pending = pendingForegroundCommand
+            pendingForegroundCommand = nil
+            return pending
+        case .right:
+            let pending = pendingSplitForegroundCommand
+            pendingSplitForegroundCommand = nil
+            return pending
+        case .scratch:
+            return nil
+        }
+    }
+
+    /// Drops the unconsumed CAPTURE payloads only, leaving the `session.restore` pins — persisted and
+    /// pending — armed. What `restore.clear` needs: it clears captures, and the launch arms them here
+    /// rather than in the persisted fields, so clearing those alone would leave a replay running.
+    public func clearPendingForegroundCommands() {
+        pendingForegroundCommand = nil
+        pendingSplitForegroundCommand = nil
+    }
+
+    /// Drops every unconsumed bootstrap payload — both override pins and both captured commands — leaving
+    /// the persisted fields alone. Called where a live `Session` leaves the tree but may return as the SAME
+    /// object (the soft-close grace window): a payload armed at bootstrap would otherwise survive the round
+    /// trip and fire when its surface is rebuilt.
     public func clearPendingRestoreOverrides() {
         pendingRestoreCommand = nil
         pendingSplitRestoreCommand = nil
+        pendingForegroundCommand = nil
+        pendingSplitForegroundCommand = nil
     }
 
-    /// The surface on top and owning keyboard focus: an active overlay (full OR floating), else the scratch,
-    /// else the focused pane's own overlay, else the active pane. The overlay renders above the scratch, and a
-    /// full overlay or the scratch covers the panes (INCLUDING their pane overlays), so session-focus helpers
-    /// route through this to keep first responder off a covered surface — except `TerminalView.focusIfNeeded`,
-    /// which targets its own deck slot, already gated by `isActive`. nil while a pane overlay's slot is open
-    /// but its surface has not realized yet; the bounded focus retries re-resolve a beat later.
+    /// The surface on top and owning keyboard focus: an active PROGRAM overlay (full OR floating), else the
+    /// scratch, else the focused pane's own overlay, else the active pane. The overlay renders above the
+    /// scratch, and a full overlay or the scratch covers the panes (INCLUDING their pane overlays), so
+    /// session-focus helpers route through this to keep first responder off a covered surface — except
+    /// `TerminalView.focusIfNeeded`, which targets its own deck slot, already gated by `isActive`. nil while a
+    /// pane overlay's slot is open but its surface has not realized yet; the bounded focus retries re-resolve
+    /// a beat later.
+    ///
+    /// A HUD in the slot is SKIPPED, which is what keeps it passive: roughly eight app focus-routing sites
+    /// read this (sidebar click, session selection, overlay-close refocus), and handing any of them the HUD
+    /// helper would take first responder off the session the message is about — the deck's exemptions one
+    /// layer down.
     public var topmostSurface: (any TerminalSurface)? {
-        if overlayActive { return overlaySurface }
+        if programOverlayActive { return overlaySurface }
         if scratchActive { return scratchSurface }
         if let pane = focusedOverlayPane { return paneOverlaySurface(pane) }
         return activeSurface
@@ -562,18 +659,20 @@ public final class Session: Identifiable {
     /// requested pane is hidden, so stay on `topmostSurface`; else the pane's OWN overlay when one covers it,
     /// so `session.focus right` cannot make a covered pane first responder; else the pane itself. Returns nil
     /// for a covering pane overlay whose surface has not realized yet, leaving the retry to re-resolve.
+    /// A HUD is no cover, so the requested pane stays reachable while one is up.
     public func focusTarget(wantSplit: Bool) -> (any TerminalSurface)? {
-        if overlayActive || scratchActive { return topmostSurface }
+        if programOverlayActive || scratchActive { return topmostSurface }
         let pane: OverlayPane = wantSplit ? .right : .left
         if paneOverlay(pane) != nil { return paneOverlaySurface(pane) }
         return wantSplit ? splitSurface : surface
     }
 
-    /// The pane-or-scratch surface actually ON SCREEN: the scratch when it covers the panes with no overlay up,
-    /// else the focused pane — so `session.text` (no `--pane`) and `session.search` hit the scratch, not the
-    /// pane beneath. An overlay routes via `topmostSurface`; this stays pane-vs-scratch, like `searchTarget`.
+    /// The pane-or-scratch surface actually ON SCREEN: the scratch when it covers the panes with no program
+    /// overlay up, else the focused pane — so `session.text` (no `--pane`) and `session.search` hit the
+    /// scratch, not the pane beneath. A program overlay routes via `topmostSurface`; this stays
+    /// pane-vs-scratch, like `searchTarget`, and a HUD leaves the scratch on screen underneath it.
     public var onScreenSurface: (any TerminalSurface)? {
-        scratchActive && !overlayActive ? topmostSurface : activeSurface
+        scratchActive && !programOverlayActive ? topmostSurface : activeSurface
     }
 
     /// The match counter for the search bar and `session.search`: empty before a query runs, `"no matches"` at

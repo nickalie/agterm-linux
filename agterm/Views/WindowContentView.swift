@@ -266,6 +266,18 @@ struct WindowContentView: View {
         }
     }
 
+    /// The separator between the custom titlebar row and the content below it, themed (`chromeText` at low
+    /// opacity) so it stays visible on light themes. Both columns draw it so the line runs full width.
+    /// Hidden mode draws nothing: `titlebarHeight` is 0 there, so with no row above it the line would sit
+    /// on the window's top edge separating nothing, which reads as a rendering artifact (#368).
+    @ViewBuilder private var titlebarHairline: some View {
+        if toolbarMode != .hidden {
+            Rectangle()
+                .fill(chromeText.opacity(0.1))
+                .frame(height: 1)
+        }
+    }
+
     /// A plain `HStack` (sidebar + themed draggable divider + terminal) instead of `NavigationSplitView`, so
     /// macOS 26 can't impose Liquid-Glass sidebar chrome (inset panel, toggle capsule) or the toolbar style.
     @ViewBuilder private var splitRoot: some View {
@@ -305,10 +317,7 @@ struct WindowContentView: View {
 
     private var sidebarColumn: some View {
         VStack(spacing: 0) {
-            // matches the detail pane's hairline so the line runs full width under the title bar.
-            Rectangle()
-                .fill(chromeText.opacity(0.1))
-                .frame(height: 1)
+            titlebarHairline
             WorkspaceSidebar(store: store, actions: actions)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
@@ -388,11 +397,7 @@ struct WindowContentView: View {
 
     @ViewBuilder private var detailColumn: some View {
         VStack(spacing: 0) {
-            // hairline between the title bar and the terminal; in the detail pane so it starts at the
-            // sidebar's right edge, themed (chromeText, low opacity) so it stays visible on light themes.
-            Rectangle()
-                .fill(chromeText.opacity(0.1))
-                .frame(height: 1)
+            titlebarHairline
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // the overlay renders in-deck inside `sessionDetail` (`overlayPanel`), not at this level.
@@ -577,11 +582,26 @@ struct WindowContentView: View {
     /// `frontmostWindowID`, and is observed, so this reacts.
     private var isFrontmost: Bool { library.activeWindowID == windowID }
 
+    /// Where the terminal area starts ON SCREEN: the sidebar column plus its 1pt divider, or 0 whenever no
+    /// sidebar is showing. The palette and switcher center their panel over THAT area rather than the whole
+    /// window, which otherwise reads as off-center whenever the sidebar is up. The palette's scrim stays
+    /// full width and dismisses on a click anywhere; the switcher's is deliberately click-through and ends
+    /// on Ctrl release.
+    ///
+    /// Zoom and the dashboard are why `store.sidebarVisible` alone is not the answer: both leave that flag
+    /// set while covering the sidebar (zoom drops `alwaysMountedSplitLayer` to opacity 0, the dashboard
+    /// paints over it), and `pickPaletteOverlay` is mounted through both. Reading the flag there shifts a
+    /// picker by half a sidebar that is not on screen.
+    private var terminalAreaInset: Double {
+        guard store.sidebarVisible, terminalZoom.target == nil, !dashboard.isOpen else { return 0 }
+        return store.sidebarWidth + 1
+    }
+
     /// Mounted only while a palette is open in the frontmost window; its content (search field + result
     /// list) is rebuilt from `palette.mode`.
     @ViewBuilder private var commandPaletteOverlay: some View {
         if isFrontmost, pick.pending == nil, palette.mode != nil {
-            CommandPalette(controller: palette, actions: actions)
+            CommandPalette(controller: palette, actions: actions, terminalAreaInset: terminalAreaInset)
         }
     }
 
@@ -594,6 +614,7 @@ struct WindowContentView: View {
             CommandPalette(
                 controller: palette,
                 actions: actions,
+                terminalAreaInset: terminalAreaInset,
                 items: pending.items.enumerated().map { index, item in
                     PaletteItem(id: item.id, title: item.label, subtitle: item.subtitle) {
                         pick.resolve(ControlPickResult(
@@ -619,7 +640,7 @@ struct WindowContentView: View {
     /// The Ctrl-Tab session switcher overlay, mounted only while cycling in the frontmost window.
     @ViewBuilder private var sessionSwitcherOverlay: some View {
         if isFrontmost, sessionSwitcher.isActive {
-            SessionSwitcherOverlay(switcher: sessionSwitcher, store: store)
+            SessionSwitcherOverlay(switcher: sessionSwitcher, store: store, terminalAreaInset: terminalAreaInset)
         }
     }
 

@@ -93,14 +93,14 @@ paths:
 
 ## Public catalog
 
-There are 71 public commands:
+There are 74 public commands:
 
 - `tree`, `events.read`
 - `workspace.new`, `.rename`, `.delete`, `.select`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
 - `session.new`, `.duplicate`, `.close`, `.select`, `.rename`, `.reveal`, `.move`, `.type`, `.split`,
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
-  `.overlay.result`
+  `.overlay.result`, `.hud.open`, `.hud.update`, `.hud.close`
 - `surface.zoom`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`
 - `quick`, `quick.type`, `quick.text`
 - `sidebar`, `sidebar.mode`, `sidebar.expand`, `sidebar.collapse`, `notify`
@@ -109,7 +109,7 @@ There are 71 public commands:
   `.fullscreen`, `.minimize`
 - `keymap.reload`, `keymap.list`, `config.reload`, `theme.set`, `theme.list`, `restore.clear`
 
-`debug.appearance` is a private 72nd `Command` case used only by `AppearanceFlipUITests`.
+`debug.appearance` is a private 75th `Command` case used only by `AppearanceFlipUITests`.
 It accepts light/dark, sets `NSApp.appearance`, posts `.agtermSystemAppearanceChanged`, echoes the effective
 side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provide no CLI or skill entry.
 
@@ -241,6 +241,92 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   output, and exits with captured status.
 - `overlay.resize` requires an open overlay and exactly one valid percent or `--full`; mutate the same
   surface host. Read `overlaySizePercent`, gated by overlay-active because nil means either full or absent.
+- `session.hud.*` puts a passive message panel in the SESSION-WIDE overlay slot rather than adding a cover,
+  so the Command-W ladder, `coverHidesActiveSession`, `searchTarget`, and session-close teardown are
+  unchanged. It is control-native: no menu item, chord, or palette entry, a deliberate exemption from
+  [[menu-actions]]'s shared-action-seam rule because there is nothing here for a human to invoke by hand.
+- Passivity is four deck exemptions plus two NSView-level gates, all reading ONE predicate,
+  `Session.programOverlayActive` (`overlayActive && !hudActive`): `gates.overlaid`, the floating click
+  catcher, `backdropWashActive`, the scratch's focus gate, `TerminalView.viewOnly` on the panel, and the
+  program-only key for the overlay-close refocus. `viewOnly` owns the NSView layer, where `mouseDown` makes
+  a surface first responder; the panel's ancestor `.allowsHitTesting(false)` currently blocks the click
+  before that, so the two are belt and braces and neither is the place to economise.
+  Keying the refocus on the raw slot instead yanks focus out of a search field or a rename on every
+  close. Never spell it inline; two spellings will disagree. `OverlayPanelStyle` resolves
+  every per-occupant parameter, so the modifier chain stays constant and only values flip. `overlayPanel`'s
+  `.id` carries `Session.overlaySlotGeneration`, or a replacement keeping `overlayActive` true never re-runs
+  `makeNSView` and `updateNSView` hits a torn-down view.
+- The same predicate governs focus routing: `Session.topmostSurface`, `focusTarget(wantSplit:)`,
+  `onScreenSurface`, `AppActions.searchTarget`'s scratch rung, and the scratch factory's `suppressAutoFocus`.
+  A raw `overlayActive` read at any of them hands first responder or a buffer read to the HUD painter.
+- One slot, asymmetric replacement: a second `hud.open` replaces the first, `overlay.open` closes a HUD and
+  proceeds, and a HUD over a RUNNING program is refused `overlay already open`. `overlay.close`, Command-W,
+  and session close tear a HUD down. `overlay.result` refuses with `OverlayHudError.noResult` because
+  `overlayActive` alone would answer the misleading "overlay still running", and `overlay.resize` takes a
+  percent but refuses `--full` (`OverlayHudError.fullResize`), which would cover the session it describes.
+- Zoom narrows on the same predicate: `isActive`'s shared `uncovered` and its `.scratch`/`.overlay` arms,
+  `isAvailable`'s `.overlay` arm, `isVisible`, and `paneVisible`. Widen `uncovered` and narrow the `.overlay`
+  arm together or no case is active and the documented-unreachable `?? .primary` fallback runs. The explicit
+  `surface:<id>:overlay` address is REFUSED for a HUD, and no overlay surface node is listed beside it.
+- A HUD sizes each axis separately, through `HudLayout.panelSize` into one `HudPanelSize` that travels
+  store-to-deck: width from the box's columns, height from its rows. One percent across both made every
+  panel as tall as it was wide, which is a square box around two lines of text, so `OverlayPanelStyle`
+  carries `widthFraction`/`heightFraction` and only a PROGRAM overlay sets them equal.
+- `--size-percent` reaches the WIDTH alone, on open and on `overlay.resize` — the text wraps at
+  `HudLayout.maxColumns`, not at the panel, so a resize changes no rows — and the height takes no caller
+  override at all. Every HUD WIDTH passes `HudLayout.clampSizePercent` (10...80), the caller's included, so
+  `--full`'s refusal and the never-cover invariant cannot disagree. The height is capped at the same 80 but
+  takes NO minimum floor: the box already carries `verticalPadding`, and flooring it is the square again.
+  The 80 cap is also what makes `top`/`bottom` always fit their edge margin, the height being what decides
+  how far the panel travels; `OverlayPanelStyle.verticalOffset`'s centering fallback is defensive only.
+- An unmeasured pane splits the fallback: width takes `maxSizePercent` (nothing is known to fit), height
+  takes `minSizePercent` (80% of a pane is a cover, not a message). `OverlayPanelStyle` falls back the same
+  way for a HUD whose height has not been measured yet.
+- `HudSpinner` owns the spinner: one case per style, each carrying its own FRAMES and tick interval, and
+  both ride the body header so the helper holds no table and a case is one edit. Frames must be single
+  scalars that render one column and contain no space — the header is word-split, and `spinnerWidth`
+  reserves exactly two cells. `dot`'s blank frame is U+00A0, not a space, for that reason.
+  The CLI keeps `--spinner` as the on switch for `HudSpinner.defaultStyle` and adds `--spinner-style`,
+  which implies it; both resolve client-side, so `ControlArgs.spinner` always carries a style name or
+  nothing and the dispatcher validates one thing. `noneName` is ACCEPTED by both, not just the socket —
+  refusing it in the CLI would fail a value `tree` had just handed the caller — and beats a bare
+  `--spinner` beside it. Rejection messages list it through `acceptedNamesList`, never the styles alone.
+- Read back `ControlSessionNode.hud` with BOTH shares, `sizePercent` and `heightPercent`, `overlay` false
+  and `overlaySizePercent` omitted beside it;
+  `position` and `spinner` always report the effective value, defaults included — `spinner` names the STYLE
+  and spells a static panel `HudSpinner.noneName`, which the dispatcher accepts back as "no spinner" so a
+  caller can round-trip what `tree` gave it. HUD state is poll-only.
+  `openOverlay`/`closeOverlay` emit no `scheduleTreeChanged()` and neither does a HUD, so document no event.
+- The panel is a pty running bundled `Resources/hud/hud.sh`, spawned `autoFocus: false` with
+  `AGTERM_HUD_FILE` as its only HUD-SPECIFIC variable (the surface still inherits the session environment
+  and the overlay wrapper's `AGTERM_OVL_*` pair) and capturing no exit code. Grid, spinner (flag, interval
+  and frames) and the APP'S PID
+  ride the body file's HEADER line and are re-read every tick, so `hud.update` repaints in place with no
+  respawn; write that file atomically. It is per SESSION, so an update rewrites the path the running helper
+  already opened. `Session.discardHudBody` is the only deleter and every store teardown runs it — close,
+  ⌘W, session/workspace/window teardown — so a HUD closed before its surface realized cannot strand the
+  message text in `/tmp`. An update carries the OPEN's background color forward, the factory reading it once
+  at creation, so `hud.backgroundColor` never names a color the panel will not paint.
+- The header's grid is `HudLayout.paintGrid` — the PANEL's own cells (`panelGrid`: the effective percent of
+  the pane, less `window-padding-*`, over the measured cell), NOT `HudLayout.box`, which only decides the
+  size. Both now measure the same message, so the two usually agree, but the panel is whole CELLS of a
+  rounded percent and the box is not — centering on the box can still strand the message by a column or a
+  row, and a `--size-percent` width detaches them outright. `box` remains the fallback when nothing is
+  measured. Every path that changes the panel's size — open, update, `overlay.resize` — must rewrite the
+  header through `ControlServer.writeHudBody`, which reads the size the STORE resolved; a window resize is
+  the one skew left, until the next update.
+- The helper forces `LC_CTYPE=UTF-8` on itself: `${#line}` counts BYTES otherwise, and a Dock-launched app
+  inherits launchd's locale-less environment. Under it `${#line}` counts CODE POINTS, so the app measures in
+  `HudLayout.cellCount` (Unicode scalars, precomposed first) rather than `String.count`, whose grapheme
+  clusters disagree on every combining mark and ZWJ emoji. Neither side counts display columns, so a
+  double-width glyph overflows the frame — accepted, not fixed.
+- It skips a repaint whose frame is byte-identical to the last, so a spinner-less panel writes once and
+  stops waking the renderer, and traps WINCH to invalidate that cache. This is a cache, not a measurement:
+  the box still comes only from the body file.
+- The helper stops on either the file disappearing or a builtin `kill -0` on that pid failing. The pid is
+  the only stop a HARD-killed app has: `destroySurface` never runs, so the body file survives, and no SIGHUP
+  arrives because the pty's session leader is the surviving `login`. Without it every crash, `kill -9` and
+  XCUITest `terminate()` leaves a 2-10 Hz repaint loop running forever.
 - `surface.zoom show|hide|toggle` reparents exactly one surface below a slim titlebar. Explicit IDs are
   `surface:<session-id>:<left|right|scratch|overlay|overlay-left|overlay-right>` or `quick`, including
   hidden live panes. The active target is the single case `TerminalZoomSurface.isActive` accepts: quick,

@@ -168,7 +168,9 @@ extension AppStore {
 
     /// Opens an ephemeral overlay terminal on a session running `command` (e.g. a TUI). The surface is
     /// created lazily by the detail pane and runs the command as its process; `closeOverlay` tears it down
-    /// when the program exits. False for an unknown session or one already showing an overlay. NOT persisted.
+    /// when the program exits. False for an unknown session or one already showing a caller's PROGRAM — a
+    /// HUD instead yields the slot, since it is a message about work in flight and nothing is lost by
+    /// replacing it. NOT persisted.
     /// - `sizePercent` (clamped to 1...100) requests a *floating* overlay: an opaque framed panel at that
     ///   percent of the pane with the session visible behind it; nil gives the full-pane overlay that hides it.
     /// - `backgroundColor` (`#rrggbb`) gives the overlay pane its own solid background, independent of the
@@ -176,7 +178,10 @@ extension AppStore {
     @discardableResult public func openOverlay(_ sessionID: UUID, command: String, cwd: String? = nil,
                                                wait: Bool = false, sizePercent: Int? = nil,
                                                backgroundColor: String? = nil) -> Bool {
-        guard let session = session(withID: sessionID), !session.overlayActive else { return false }
+        guard let session = session(withID: sessionID) else { return false }
+        if session.hudActive { closeOverlay(sessionID) }
+        guard !session.overlayActive else { return false }
+        session.overlaySlotGeneration += 1
         session.overlayCommand = command
         session.overlayCwd = cwd
         session.overlayWait = wait
@@ -190,10 +195,14 @@ extension AppStore {
     /// Resizes an already-open overlay in place: `sizePercent` (clamped to 1...100) switches it to floating,
     /// nil to the translucent full-pane overlay, as in `openOverlay`. The surface stays mounted (the detail
     /// pane hosts both variants), so only the layout re-flows and the program never re-spawns. False with no
-    /// open overlay.
+    /// open overlay. A HUD in the slot takes the narrower `HudLayout.clampSizePercent` bound instead, so no
+    /// resize path can grow a message until it covers the session it is about, and the percent reaches its
+    /// WIDTH alone: its height stays measured from the message, which a resize does not change (the text
+    /// wraps at `HudLayout.maxColumns`, not at the panel).
     @discardableResult public func resizeOverlay(_ sessionID: UUID, sizePercent: Int?) -> Bool {
         guard let session = session(withID: sessionID), session.overlayActive else { return false }
-        session.overlaySizePercent = sizePercent.map { min(100, max(1, $0)) }
+        let hud = session.hudActive
+        session.overlaySizePercent = sizePercent.map { hud ? HudLayout.clampSizePercent($0) : min(100, max(1, $0)) }
         return true
     }
 
@@ -215,7 +224,54 @@ extension AppStore {
         session.overlayWait = false
         session.overlaySizePercent = nil
         session.overlayBackgroundColor = nil
+        // every teardown routes through here — explicit close, ⌘W, the program's own exit, a replacement —
+        // so discarding the HUD here is what keeps `hudActive` and its body file from outliving the slot they
+        // describe, including for a HUD whose surface never realized and so never tore itself down.
+        session.discardHudBody()
         return true
+    }
+
+    /// Opens a HUD in the session's overlay slot: a passive message panel rendered by the app's bundled
+    /// helper, which `command` runs and which re-reads `file` every tick. Always FLOATING and always within
+    /// `HudLayout.clampSizePercent` — the app's measurement or the caller's `spec.sizePercent`, whichever
+    /// applies, bounded — because a HUD must never cover the session it is a message about.
+    ///
+    /// A live HUD is REPLACED (torn down and re-opened, so the helper picks up the new file), a live
+    /// PROGRAM overlay refuses. False for an unknown session or an occupied program slot. NOT persisted.
+    @discardableResult public func openHud(_ sessionID: UUID, command: String, spec: HudSpec, file: String,
+                                           size: HudPanelSize) -> Bool {
+        guard openOverlay(sessionID, command: command,
+                          sizePercent: HudLayout.clampSizePercent(size.widthPercent),
+                          backgroundColor: spec.backgroundColor),
+              let session = session(withID: sessionID) else { return false }
+        session.hudSpec = spec
+        session.hudFile = file
+        session.hudHeightPercent = size.heightPercent
+        return true
+    }
+
+    /// Rewrites a live HUD's message and size in place: the surface stays mounted and the helper re-reads
+    /// its body file on the next tick, so the panel changes with no re-spawn and no blink. The file path is
+    /// not an argument — an update rewrites the path `openHud` already gave the running helper, per
+    /// `HudLayout.renderedBody`. The background color is not an argument either in practice: the factory
+    /// reads it at creation, so the LIVE panel's color is carried into the stored spec and `spec`'s own is
+    /// dropped. Only a replacing `openHud` changes the color, and the read-back keeps naming what the panel
+    /// actually paints. False with no HUD up, which is the only failure: `resizeOverlay` refuses an empty
+    /// slot alone, and a live HUD occupies one.
+    @discardableResult public func updateHud(_ sessionID: UUID, spec: HudSpec, size: HudPanelSize) -> Bool {
+        guard let session = session(withID: sessionID), let live = session.hudSpec,
+              session.hudActive else { return false }
+        session.hudSpec = spec.withBackgroundColor(live.backgroundColor)
+        session.hudHeightPercent = size.heightPercent
+        resizeOverlay(sessionID, sizePercent: size.widthPercent)
+        return true
+    }
+
+    /// Closes a HUD through the ordinary overlay teardown. Refused when the slot holds a caller's PROGRAM,
+    /// so `session.hud.close` can never kill a running overlay. False with no HUD up.
+    @discardableResult public func closeHud(_ sessionID: UUID) -> Bool {
+        guard let session = session(withID: sessionID), session.hudActive else { return false }
+        return closeOverlay(sessionID)
     }
 
     /// Opens a pane-scoped overlay covering `pane` only, leaving the sibling pane live and interactive.

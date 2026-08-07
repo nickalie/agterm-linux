@@ -144,13 +144,25 @@ struct WindowAccessor: NSViewRepresentable {
                     // flush cwd drift before dropping the store — AppStore doesn't save on a live `cd`, so a
                     // reopened window would load a stale snapshot. skipped once the window is no longer open:
                     // a delete already dropped the store and removed the per-window file, so this resurrects it.
-                    if library.isOpen(windowID) { store.save() }
+                    if library.isOpen(windowID) {
+                        // restore-running-command: capture while the surfaces below are still alive. Skipped
+                        // under termination — the quit-time capture already ran, and a re-read assigns
+                        // unconditionally, so a foreground that exited since would overwrite it with nil.
+                        // `openIDs()` is read before `closeWindow` runs, so it scopes this to the app-exit
+                        // close. Contract in `.claude/rules/settings.md`.
+                        if !library.isTerminating, library.openIDs() == [windowID],
+                           GhosttyApp.shared.restoreRunningCommand {
+                            AppDelegate.captureForegroundCommands(sessions: store.workspaces.flatMap(\.sessions))
+                        }
+                        store.save()
+                    }
                     for session in store.workspaces.flatMap(\.sessions) {
                         session.surface?.teardown()
                         session.splitSurface?.teardown()
                         session.overlaySurface?.teardown()
                         session.teardownPaneOverlays()
                         session.scratchSurface?.teardown()
+                        session.discardHudBody() // an unrealized HUD has no teardown to delete its body file
                     }
                     library.closeWindow(windowID)
                     // closing a window drops its (unobserved) store, so the Dock badge's observation won't

@@ -102,6 +102,12 @@ concurrency before changing the bridge.
 - Manual Debug UI work uses a separate `open -n` instance with isolated state and short socket. Address
   its CLI with `--socket` after the subcommand. Stop only its known PID with SIGTERM; clean quit triggers
   the visible quit-confirmation alert. Use clean quit only when testing its final cwd/running-command flush.
+- Never run the Help ▸ Install installers (agent hooks, CLI, agent skill) from a Debug or worktree
+  instance, and never invoke `AgentHooksInstaller` in a manual run. They write `~/.config/agterm/`,
+  `~/.claude/settings.json`, and `~/.codex/`, which `AGTERM_STATE_DIR` does not isolate, and bake
+  `Bundle.main`'s `agtermctl` path into the installed wrappers. A Debug install silently repoints the
+  user's live hooks at DerivedData, and removing the worktree leaves them dead with no error.
+  Verify installer behavior through `agtermCore` tests, or redeploy Release and reinstall from it.
 - Unix socket paths cap near 104 bytes. A long scratch path lets the app launch while control bind fails.
 - Use absolute repo-root paths for existence checks. Tool cwd persists across calls and often drifts into
   `agtermCore`.
@@ -133,6 +139,14 @@ concurrency before changing the bridge.
   `ghostty_app_tick`; RENDER calls `renderNow`. Never restore the rejected continuous 120Hz poll or use
   `assumeIsolated`.
 - `close_surface_cb` only recovers the view and dispatches; it never frees synchronously.
+- The session-wide overlay slot holds either a caller's program or a HUD. Raw `overlayActive` answers only
+  "the slot is occupied"; every layer asking "is a program covering this session" reads
+  `Session.programOverlayActive` instead. Deck gates, focus routing, zoom, and scratch focus all turn on
+  that distinction, so never spell the predicate inline. `control-api.md` lists the sites.
+- A long-lived process spawned into a surface needs a stop condition of its own. A hard-killed app runs no
+  teardown, and no SIGHUP reaches the process because the pty's session leader is the surviving `login`, so
+  it outlives the app in whatever loop it was in. `hud.sh` takes the app's pid through its input file and
+  exits on a builtin `kill -0`.
 
 ## Cross-surface contracts
 

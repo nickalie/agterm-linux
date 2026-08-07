@@ -392,6 +392,63 @@ struct SessionTests {
         #expect(session.fullOverlayActive == false)
     }
 
+    @Test func coverFlagsAcrossTheFourOverlaySlotStates() {
+        let session = Session(initialCwd: "/repo")
+        #expect(session.hudActive == false)
+        #expect(session.fullOverlayActive == false)
+        #expect(session.programOverlayActive == false)
+
+        session.overlayActive = true
+        session.overlaySizePercent = 40
+        #expect(session.hudActive == false)
+        #expect(session.fullOverlayActive == false)
+        #expect(session.programOverlayActive == true)
+
+        session.hudSpec = HudSpec(message: "gathering options")
+        #expect(session.hudActive == true)
+        #expect(session.fullOverlayActive == false)
+        #expect(session.programOverlayActive == false)
+
+        session.hudSpec = nil
+        session.overlaySizePercent = nil
+        #expect(session.hudActive == false)
+        #expect(session.fullOverlayActive == true)
+        #expect(session.programOverlayActive == true)
+    }
+
+    @Test func hudFlagsNeedTheSlotOccupied() {
+        let session = Session(initialCwd: "/repo")
+        session.hudSpec = HudSpec(message: "stale")
+        #expect(session.hudActive == false)
+        #expect(session.fullOverlayActive == false)
+    }
+
+    @Test func aSizelessHudStillCoversNothing() {
+        // openHud always sets a percent; the defensive term keeps a HUD out of the full-cover path anyway,
+        // since hiding the panes behind a message would defeat the passivity the whole feature is for.
+        let session = Session(initialCwd: "/repo")
+        session.overlayActive = true
+        session.hudSpec = HudSpec(message: "working")
+        #expect(session.hudActive == true)
+        #expect(session.fullOverlayActive == false)
+        #expect(session.programOverlayActive == false)
+    }
+
+    @Test func programOverlayActiveSpansBothCoverageVariantsButNeverAHud() {
+        let session = Session(initialCwd: "/repo")
+        #expect(session.programOverlayActive == false)
+        session.overlayActive = true
+        #expect(session.programOverlayActive == true)
+        session.overlaySizePercent = 40
+        #expect(session.programOverlayActive == true)
+        session.hudSpec = HudSpec(message: "gathering options")
+        #expect(session.programOverlayActive == false)
+        session.hudSpec = nil
+        #expect(session.programOverlayActive == true)
+        session.overlayActive = false
+        #expect(session.programOverlayActive == false)
+    }
+
     @Test func paneRoleResolvesTokenToItsCurrentSlot() {
         let session = Session(initialCwd: "/repo")
         session.surface = FakeSurface(paneToken: "main-tok")
@@ -454,6 +511,23 @@ struct SessionTests {
         session.pendingRestoreCommand = "claude --resume main"
         #expect(session.takePendingRestoreOverride(pane: .scratch) == nil)
         #expect(session.takePendingRestoreOverride(pane: .left) == "claude --resume main")
+    }
+
+    @Test func clearPendingForegroundCommandsDropsBothCapturesAndKeepsTheRestorePins() {
+        // what restore.clear needs: the launch parks captures in the pending slots until each surface
+        // mounts, so clearing only the persisted fields would answer ok and still let them run. The
+        // session.restore pins are sticky and must survive.
+        let session = Session(initialCwd: "/repo")
+        session.pendingForegroundCommand = ["tee", "/tmp/m"]
+        session.pendingSplitForegroundCommand = ["tail", "-f", "/var/log/x"]
+        session.restoreCommand = "claude --resume main"
+        session.pendingRestoreCommand = session.restoreCommand
+
+        session.clearPendingForegroundCommands()
+        #expect(session.takePendingForegroundCommand(pane: .left) == nil)
+        #expect(session.takePendingForegroundCommand(pane: .right) == nil)
+        #expect(session.takePendingRestoreOverride(pane: .left) == "claude --resume main")
+        #expect(session.restoreCommand == "claude --resume main")
     }
 
     @Test func clearPendingRestoreOverridesDropsBothPayloadsAndKeepsThePins() {
@@ -841,6 +915,56 @@ struct SessionTests {
         session.scratchActive = true
         #expect(session.focusTarget(wantSplit: false) === scratch)
         #expect(session.focusTarget(wantSplit: true) === scratch)
+    }
+
+    // the passivity property one layer below the deck's exemptions: every app focus-routing site reads
+    // `topmostSurface`, so a HUD reachable through it takes first responder off the session it describes.
+    @Test func topmostSurfaceSkipsAHudButNotTheProgramSharingItsSlot() {
+        let session = Session(initialCwd: "/repo")
+        let primary = FakeSurface(), scratch = FakeSurface(), overlay = FakeSurface()
+        session.surface = primary
+        session.scratchSurface = scratch
+        session.overlaySurface = overlay
+        session.overlayActive = true
+        session.overlaySizePercent = 30
+        session.hudSpec = HudSpec(message: "gathering options")
+
+        #expect(session.topmostSurface === primary)
+        session.scratchActive = true
+        #expect(session.topmostSurface === scratch, "a HUD renders above the scratch but never owns focus")
+        session.hudSpec = nil
+        #expect(session.topmostSurface === overlay)
+    }
+
+    @Test func focusTargetReachesTheRequestedPaneUnderAHud() {
+        let session = Session(initialCwd: "/repo")
+        let primary = FakeSurface(), split = FakeSurface(), overlay = FakeSurface()
+        session.surface = primary
+        session.splitSurface = split
+        session.isSplit = true
+        session.overlaySurface = overlay
+        session.overlayActive = true
+        session.hudSpec = HudSpec(message: "gathering options")
+
+        #expect(session.focusTarget(wantSplit: true) === split)
+        #expect(session.focusTarget(wantSplit: false) === primary)
+        session.hudSpec = nil
+        #expect(session.focusTarget(wantSplit: true) === overlay, "a program overlay hides the requested pane")
+    }
+
+    @Test func onScreenSurfaceKeepsTheScratchUnderAHud() {
+        let session = Session(initialCwd: "/repo")
+        let primary = FakeSurface(), scratch = FakeSurface(), overlay = FakeSurface()
+        session.surface = primary
+        session.scratchSurface = scratch
+        session.overlaySurface = overlay
+        session.scratchActive = true
+        session.overlayActive = true
+        session.hudSpec = HudSpec(message: "gathering options")
+
+        #expect(session.onScreenSurface === scratch, "session.text and ⌘F must not fall to the hidden pane")
+        session.hudSpec = nil
+        #expect(session.onScreenSurface === primary)
     }
 
     @Test func focusTargetIsNilWhileTheRequestedPanesOverlayHasNotRealized() {

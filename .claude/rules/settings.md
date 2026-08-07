@@ -19,14 +19,31 @@ paths:
 - Theme slots and following are owned by the theme-picker rule. `ToolbarMode` is
   `normal|compact|hidden`, stored raw; nil defaults compact. Normal adds cwd, hidden removes titlebar and
   traffic lights but leaves an invisible roughly 3-point drag strip above the first row at padding 6.
+  Hidden also drops the title/terminal hairline both columns draw: `titlebarHeight` is 0 there, so the line
+  would sit on the window's top edge separating nothing and read as a rendering artifact.
   `effectiveToolbarMode` falls back through legacy `compactToolbar` (`false` = normal, nil/true = compact);
   writing a mode clears the legacy field.
 - Default-on nil fields are `notificationsEnabled`, `notificationBadgeEnabled`, `rightClickPaste`, and
   `workspaceRowClickExpands`, whose mirror gates the sidebar row-click toggle only ([[sidebar]]).
   Default-off nil fields include attention button, Dock bounce, restore commands, global config
   inheritance, close confirmation, auto-follow, hidden inactive sidebars, and interface hiding.
-- `sidebarFontSize` is 9...20, default 13; row height is clamped size + 15, so 13 gives 28. Icons/status
-  glyphs stay fixed. Unfocused-terminal mute and sidebar tint are 0...10 with neutral/default 5.
+- `sidebarFontSize` and `interfaceFontSize` are separate settings, both 9...20 default 13, read through
+  `effectiveSidebarFontSize`/`effectiveInterfaceFontSize`. Neither falls back to the other: the sidebar
+  is a density knob, the palette a readability one.
+  `sidebarFontSize` drives sidebar rows and their height (clamped size + 15, so 13 gives 28).
+  `interfaceFontSize` drives the palette/picker, the session switcher, and the title-bar popover rows
+  that share `SessionSwitcherRow`; `InterfaceMetrics` derives the secondary (subtitle/badge) and
+  shortcut sizes plus the panel scale from it, anchored so 13 reproduces the previously hardcoded
+  `.caption`/`.callout` and the 520x320 palette, with derived text floored at 8pt. Panel widths and
+  heights are then fitted to the window (`fittedPanelWidth`, `panelOffset`, `fittedPanelHeight`): the
+  scaled width and the centering offset each grow unbounded and compound, and a panel wider than the
+  window less the inset clips at the right edge. Never hand a height cap to `.frame(maxHeight:)` around
+  a panel: a `ScrollView` renders at the height it is offered, and a stack centers inside it and drops
+  down the window. Measure the content and set an exact height (`measuredPanelHeight`), or pass
+  `alignment: .top`. Neither is testable at the view layer — hosted tests do not render SwiftUI and
+  XCUITest cannot hold Ctrl for the switcher — so verify these by eye.
+  Status glyphs stay fixed for both settings; the palette's search icon scales with the field it sits in.
+  Unfocused-terminal mute and sidebar tint are 0...10 with neutral/default 5.
   `muteOpacity` maps 0/5/10 to 0/0.4/0.8. `sidebarShiftAmount` maps the endpoints to signed +/-0.30;
   below 5 uses white, above 5 black, behind the transparent sidebar only, never the title strip/text.
 - `ghosttyConfigLines()` emits raw `key = value` with no quoting, including spaced names such as
@@ -59,7 +76,7 @@ paths:
   contract, so freeing it risks a crash and the rare leak is accepted.
 - `.agtermAppearanceChanged` is required because terminal color is not observable; it updates
   `terminalColor`, quick-terminal backing, title/window appearance, and non-observable chrome mirrors.
-- Settings is a 540x590 six-tab SwiftUI scene with explicit selection defaulting General, preventing
+- Settings is a 540x640 six-tab SwiftUI scene with explicit selection defaulting General, preventing
   `com_apple_SwiftUI_Settings_selectedTabIndex` persistence. General holds Mouse, Sessions, and Ghostty
   Config. Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row plus
   Multiple Windows. Notifications holds banner/badge/attention/bounce/sound. Agent Status holds
@@ -102,12 +119,37 @@ paths:
   libghostty diagnostics across all sources, clear all session zoom, post appearance change, and notify
   non-zero diagnostics. A config-directory change reloads both co-located files. Launch also reports
   cached diagnostics.
-- **Restore running commands is opt-in and clean-quit only.** Before `saveAllOpen()`,
-  `applicationWillTerminate` captures each visible main/split foreground argv through
-  `ghostty_surface_foreground_pid`, `sysctl(KERN_PROCARGS2)`, and host-free parsing. Capture no hidden
-  split. A known shell with only flags is idle and omitted; scripts/payload args remain, including
-  `/bin/sh <script>`. Strip login `-` before shell recognition. Force quit preserves snapshots/cwd but
-  skips command capture.
+- **Restore running commands is opt-in, and both capture and replay are exit-scoped.**
+  `AppDelegate.captureForegroundCommands` runs at two points: `applicationWillTerminate` before
+  `saveAllOpen()`, and the LAST window's `willClose` before its surface teardown, which precedes
+  `applicationWillTerminate` and is therefore the only point where a close-the-last-window exit's
+  commands are still readable.
+  Guarded by `openIDs() == [windowID]`, skipped under `isTerminating`.
+  A NON-last close captures nothing: a launch restore can't tell that window's file from one open at
+  exit, so its argv could replay via the never-windowless reopen fallback.
+  Argv comes from `ghostty_surface_foreground_pid`, `sysctl(KERN_PROCARGS2)`, and host-free parsing.
+  Capture no hidden split.
+  Strip login `-` before shell recognition; a known shell with only flags is idle and omitted, while
+  scripts/payload args remain, including `/bin/sh <script>`.
+  Force quit preserves snapshots/cwd but skips capture.
+  Replay arms ONLY on a launch restore: `session(from:launchRestore:)` copies
+  `foregroundCommand`/`splitForegroundCommand` (like the pending override) under `launchRestore` alone,
+  so a mid-run window reopen or Reopen Closed Item comes back a plain shell.
+  Consumption is one-shot AND durable, and that rests on WHERE the launch arms it.
+  `session(from:launchRestore:)` seeds the TRANSIENT `pendingForegroundCommand`/
+  `pendingSplitForegroundCommand`, which `snapshot()` does not serialize, and leaves the persisted fields
+  nil; `loadStore` strips the file in the same step.
+  So no save landing between arming and the surface spawning can write the argv back — several do land
+  there (`applyInactiveWindowSidebarHiding`, the debounced save `reselectIfSelectionHidden` schedules),
+  and arming the persisted fields instead would let any of them resurrect it.
+  A crash can then cost a restore but never repeat one; a failed strip disarms the pending slots rather
+  than leaving a replay nothing recorded.
+  Anything else that must cancel an armed replay clears those slots too, never the persisted fields:
+  `recoverOrphanedWindows`, `Session.clearPendingRestoreOverrides` on the soft-close round trip, and
+  `restore.clear`, which the socket can receive before the later windows' decks have mounted.
+  Against STALE files from older builds, `loadStore` also rewrites a snapshot that carried captures on a
+  mid-run reopen, and `recoverOrphanedWindows` drops captures while the sticky override still arms
+  (a corrupt index must not re-execute a closed window's last command).
 - Restore only when the toggle is on and basename is absent from user
   `restore-denylist.conf`, seeded with `tmux`, `screen`, and `zellij`. Feed captured argv once through
   shell-quoted `config.initial_input` so exit returns to the shell, then nil it. Only one foreground

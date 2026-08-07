@@ -88,8 +88,12 @@ agterm's bundled ghostty defaults are the **fallback**, binding all three to the
 (`super+key_c`/`super+key_v`/`super+key_a`), matched by keycode regardless of the character the layout
 prints. They fire whenever the menu equivalent does not: on a Russian/Greek/etc. layout the physical C key
 yields `с`, so the menu's ⌘C never matches and the keycode bind runs instead; likewise a ⌘C with no
-selection leaves the menu item disabled, so the key falls through (and ghostty's `performable:` prefix makes
-it a no-op). This is why copy, paste, and select-all all keep working on a non-Latin layout. (ghostty's own
+selection, or a ⌘V with nothing pasteable, leaves the menu item disabled and reaches the bind on ANY
+layout. The three binds deliberately omit ghostty's `performable:` prefix so they always consume the key,
+and one that cannot act simply does nothing. With that prefix the unperformed press fell through to key
+encoding — invisible under legacy encoding, which drops ⌘ chords on macOS, but the kitty keyboard protocol
+reports them and the program renders a stray `^[[…u` as text. This is why copy, paste, and select-all all
+keep working on a non-Latin layout. (ghostty's own
 `super+c`/`super+v`/`super+a` match the produced CHARACTER, so alone they would miss there — `super+key_a`
 in particular exists because without it ⌘A would silently do nothing on a Cyrillic layout.)
 
@@ -173,6 +177,18 @@ mishandles it. agterm emits correct paired focus-in/focus-out and is already mac
 refocus click is not forwarded into the pty), so the terminal is not at fault. Tracked as
 anthropics/claude-code#72188 (mouse-click variant #72273). Workaround: answer before switching away, or
 `Esc` the stuck prompt and let it re-ask.
+
+### "⌘-hover does not underline links inside tmux or vim"
+
+By design, NOT a bug. Do not file an agterm issue for it. libghostty detects links only while the
+foreground program has mouse reporting OFF, so a program that captures the mouse takes link handling with
+it: ⌘-hover stops underlining, the pointer stays a text bar, and ⌘-click opens nothing, all four together
+and only inside that program. Ghostty.app behaves the same. It is per-program, not per-category:
+`tmux` with `mouse on` and stock `vim` (`defaults.vim` sets `mouse=a`) suppress it, while an agent CLI
+that never enables mouse reporting keeps links working. Workaround: hold shift too (⌘⇧-hover, ⌘⇧-click).
+A program can claim shift via `XTSHIFTESCAPE`, so `mouse-shift-capture = never` in
+`~/.config/agterm/ghostty.conf` makes shift always win; `mouse-reporting = false` there turns reporting
+off for every program, trading in-program mouse support for always-on selection and links.
 
 ## Reporting: decide bug vs unsupported FIRST
 

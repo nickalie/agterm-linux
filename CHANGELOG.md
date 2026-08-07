@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.21.0 - 2026-08-06
+
+### New Features
+
+- the command palette, the control-API picker and the Ctrl-Tab switcher rendered at a hardcoded 13pt with no way to change them. A new Settings ▸ Interface font size (9...20, default 13) drives all three plus the title-bar popover rows, separate from the sidebar's own size and with no fallback between them, since the sidebar is a density knob and the palette a readability one. All three now center over the terminal area rather than the whole window, which read as off-center whenever the sidebar was up, and each panel is bounded against the window so a cramped one degrades to whole-window centering instead of clipping #367 @umputun
+- `session.hud` posts a small floating panel over a session while an agent prepares something slow: computing picker items, spawning an overlay program, waiting on a network call. It shows a message, an optional detail line and an optional spinner, and updates or closes from a later call. The panel is passive, so the session keeps first responder and typing into the terminal underneath still works #361 @umputun
+
+### Improved
+
+- a fish port of the claude-session-resume cookbook recipe, so a fish user gets the same per-tab conversation resume the existing versions give #365 @Arelav
+- a cookbook recipe that opens Claude's replies in revdiff for inline annotation and sends the notes back #364 @p4elkin
+
+### Bug Fixes
+
+- a dark launch with a conditional `theme = light:X,dark:Y` spawned every restored surface with no `AGTERM_*` variables, no restore replay and no `session new --command`; only the cwd survived. The renderer rebuilds a surface's config whenever the app's conditional state disagrees with the config's, and that rebuild replays the config files alone, dropping the per-surface environment, initial input and command the host set. A host-built config always resolves light while the app is already dark, so the two disagree at launch and agree later, which is why this looked specific to restore. The app config is now re-sided before any scene mounts #378 @umputun
+- with Restore running commands on restart enabled, quitting by closing the window lost every captured command and each pane came back a plain shell: the close tore each surface down before the quit-time capture could read it, so the save persisted nulls. ⌘Q was unaffected. Closing a window that was not the last captured nothing at all #370 @i-kozlov
+- a captured foreground command could replay on more than one launch, re-running the program every time until it was cleared by hand a8b5252 @umputun
+- exiting by closing every window brought back the wrong window on the next launch: a multi-window user got window 1 rather than the one he was working in, because closing the last window dropped the record of which was frontmost #377 @umputun
+- ⌘D, the title-bar split button, View ▸ Split and the palette each flipped the split behind a shown scratch pane. The screen could not change, so the only sign was the glyph moving, and the layout you came back to was not the one you left. The press now dismisses the scratch, the same cover-first rule ⌘W already uses, and a second press splits #376 @umputun
+- ⌘C with nothing selected typed a stray key report into the running program, which shows up in Claude Code and other TUIs that turn the kitty keyboard protocol on. The Edit menu disables Copy without a selection, so the press reached the key binding, failed to perform and fell through to key encoding. It is not layout-specific, contrary to how the report scoped it #375 @umputun
+- with Settings ▸ Appearance ▸ Window ▸ Toolbar set to Hidden, a 1px line ran across the top edge of the window, most visible in native fullscreen on a notched display where it separated the black band from the terminal. It is the separator that belongs under the custom titlebar row, which has no height in that mode, and the dashboard drew its own copy in the same place #379 @umputun
+- an unrecognized value in `workspaces.json`, written by a newer build or a hand edit, failed the whole snapshot decode, and the recovery path starts fresh: every workspace and session was wiped over one non-essential display field. Each optional now drops to nil on its own instead of taking the tree with it #363 @x9x9x9x9x9x91
+- a non-interactive fish `claude` call did not pass through to the real binary, so anything scripting it broke under the session-resume wrapper #366 @Arelav
+
 ## v0.20.2 - 2026-08-03
 
 ### Improved

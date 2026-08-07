@@ -230,6 +230,22 @@ final class PersistenceTests {
         #expect(app.sidebarMode == .tree)
     }
 
+    @Test func malformedSidebarModeDropsToNilKeepingTree() throws {
+        // an invalid sidebarMode (an unknown raw value from a newer build, a wrong JSON type) must drop
+        // to nil lossily, never fail the whole Snapshot decode and wipe the tree on the next save.
+        let ws = UUID()
+        let session = UUID()
+        let tree = #""selectedSessionID": "\#(session.uuidString)", "workspaces": "# +
+            #"[ { "id": "\#(ws.uuidString)", "name": "work", "sessions": [ { "id": "\#(session.uuidString)", "cwd": "/a" } ] } ]"#
+        for bad in [#""sidebarMode": "hologram""#, #""sidebarMode": 42"#] {
+            try Data(#"{ "version": 1, \#(bad), \#(tree) }"#.utf8).write(to: fileURL)
+            let loaded = store.load()
+            #expect(loaded.workspaces.map(\.id) == [ws])
+            #expect(loaded.selectedSessionID == session)
+            #expect(loaded.sidebarMode == nil)
+        }
+    }
+
     @Test func focusedWorkspacePersistsAndRestores() {
         let app = AppStore(persistence: store)
         let work = app.addWorkspace(name: "work")
@@ -350,6 +366,81 @@ final class PersistenceTests {
             #expect(loaded.selectedSessionID == session)
             #expect(loaded.sessionRecency == nil)
         }
+    }
+
+    @Test func malformedFocusedWorkspaceIDsDropsToNilKeepingTree() throws {
+        let ws = UUID()
+        let session = UUID()
+        let tree = #""selectedSessionID": "\#(session.uuidString)", "workspaces": "# +
+            #"[ { "id": "\#(ws.uuidString)", "name": "work", "sessions": [ { "id": "\#(session.uuidString)", "cwd": "/a" } ] } ]"#
+        for bad in [#""focusedWorkspaceIDs": ["not-a-uuid"]"#, #""focusedWorkspaceIDs": 42"#] {
+            try Data(#"{ "version": 1, \#(bad), \#(tree) }"#.utf8).write(to: fileURL)
+            let loaded = store.load()
+            #expect(loaded.workspaces.map(\.id) == [ws])
+            #expect(loaded.selectedSessionID == session)
+            #expect(loaded.focusedWorkspaceIDs == nil)
+        }
+    }
+
+    @Test func malformedOptionalScalarsDropToNilKeepingTree() throws {
+        let ws = UUID()
+        let session = UUID()
+        let tree = #""workspaces": "# +
+            #"[ { "id": "\#(ws.uuidString)", "name": "work", "sessions": [ { "id": "\#(session.uuidString)", "cwd": "/a" } ] } ]"#
+        // each bad value pairs with the field it must have nilled: a guard that recovered to a wrong
+        // non-nil default would keep the tree alive and pass a tree-only assertion.
+        let cases: [(bad: String, nilled: (Snapshot) -> Bool)] = [
+            (#""selectedSessionID": "not-a-uuid""#, { $0.selectedSessionID == nil }),
+            (#""sidebarWidth": "wide""#, { $0.sidebarWidth == nil }),
+            (#""sidebarVisible": "yes""#, { $0.sidebarVisible == nil }),
+            (#""focusedWorkspaceID": "not-a-uuid""#, { $0.focusedWorkspaceIDs == nil && $0.focusEnabled == nil }),
+            (#""focusEnabled": 42"#, { $0.focusEnabled == nil }),
+        ]
+        for (bad, nilled) in cases {
+            try Data(#"{ "version": 1, \#(bad), \#(tree) }"#.utf8).write(to: fileURL)
+            let loaded = store.load()
+            #expect(loaded.workspaces.map(\.id) == [ws], "\(bad) wiped the tree")
+            #expect(loaded.workspaces.first?.sessions.map(\.id) == [session], "\(bad) wiped the sessions")
+            #expect(nilled(loaded), "\(bad) did not drop its field to nil")
+        }
+    }
+
+    @Test func malformedSessionAndWorkspaceOptionalsDropToNilKeepingTree() throws {
+        let ws = UUID()
+        let session = UUID()
+        for bad in [#""fontSize": "12""#, #""isSplit": 1"#, #""splitRatio": "half""#, #""flagged": "true""#,
+                    #""foregroundCommand": "vim""#, #""commandWait": "no""#, #""customName": 7"#,
+                    #""restoreCommand": []"#, #""splitCwd": 3"#, #""splitForegroundCommand": "vim""#,
+                    #""initialCommand": ["vim"]"#, #""splitRestoreCommand": 0"#,
+                    #""backgroundWatermark": "none""#] {
+            let tree = #""workspaces": [ { "id": "\#(ws.uuidString)", "name": "work", "sessions": "# +
+                #"[ { "id": "\#(session.uuidString)", "cwd": "/a", \#(bad) } ] } ]"#
+            try Data(#"{ "version": 1, \#(tree) }"#.utf8).write(to: fileURL)
+            let loaded = store.load()
+            #expect(loaded.workspaces.first?.sessions.map(\.id) == [session], "\(bad) wiped the tree")
+        }
+        let tree = #""workspaces": [ { "id": "\#(ws.uuidString)", "name": "work", "collapsed": "yes", "# +
+            #""sessions": [ { "id": "\#(session.uuidString)", "cwd": "/a" } ] } ]"#
+        try Data(#"{ "version": 1, \#(tree) }"#.utf8).write(to: fileURL)
+        let loaded = store.load()
+        #expect(loaded.workspaces.map(\.id) == [ws])
+        #expect(loaded.workspaces.first?.collapsed == nil)
+    }
+
+    @Test func malformedFocusSetLeavesLegacyKeyUnmigrated() throws {
+        // a failed focusedWorkspaceIDs decode must not read as an absent key: migrating here would take
+        // the legacy id and force focus on, overriding the explicit focusEnabled: false in the same file.
+        let ws = UUID()
+        let session = UUID()
+        let legacy = UUID()
+        let tree = #""workspaces": "# +
+            #"[ { "id": "\#(ws.uuidString)", "name": "work", "sessions": [ { "id": "\#(session.uuidString)", "cwd": "/a" } ] } ]"#
+        let keys = #""focusedWorkspaceID": "\#(legacy.uuidString)", "focusedWorkspaceIDs": 42, "focusEnabled": false"#
+        try Data(#"{ "version": 1, \#(keys), \#(tree) }"#.utf8).write(to: fileURL)
+        let loaded = store.load()
+        #expect(loaded.workspaces.map(\.id) == [ws])
+        #expect(loaded.focusedWorkspaceIDs == nil)
+        #expect(loaded.focusEnabled == false)
     }
 
     @Test func restoreInsertsAbsentSelectionAtFront() {

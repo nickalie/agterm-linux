@@ -58,6 +58,8 @@ extension ControlServer: ControlActions {
         }
     }
 
+    /// Closes a HUD too, as a courtesy: the slot is shared, so `closeOverlay` tears either occupant down and
+    /// discards the HUD state and its body file with it.
     func closeSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
             let closed = pane.map { store.closePaneOverlay(id, pane: $0) } ?? store.closeOverlay(id)
@@ -68,10 +70,27 @@ extension ControlServer: ControlActions {
         }
     }
 
+    /// A HUD resizes through the same slot and field as any floating panel, but never to FULL, which would
+    /// make the message cover the session it is about. The percent reaches its WIDTH only — its height stays
+    /// measured from the message, and the text wraps at `HudLayout.maxColumns` rather than at the panel, so
+    /// a resize cannot change how many rows it needs. A resized HUD also gets its body rewritten: the helper
+    /// centers on the grid in that file's header, so a new panel with the old header would paint the message
+    /// off-center until the next `session.hud.update`. A refused rewrite puts the size back rather than
+    /// leave the two disagreeing.
     func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
+            let session = store.session(withID: id)
+            let hud = session?.hudActive == true
+            if sizePercent == nil, hud {
+                return ControlResponse(ok: false, error: OverlayHudError.fullResize)
+            }
+            let previousSize = session?.overlaySizePercent
             guard store.resizeOverlay(id, sizePercent: sizePercent) else {
                 return ControlResponse(ok: false, error: "no overlay")
+            }
+            if hud, let session, !self.writeHudBody(session, pane: self.paneMetrics(for: session)) {
+                store.resizeOverlay(id, sizePercent: previousSize)
+                return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
@@ -81,6 +100,11 @@ extension ControlServer: ControlActions {
         resolver.resolveSession(target, window: window) { store, id in
             guard let session = store.session(withID: id) else {
                 return ControlResponse(ok: false, error: "no such session")
+            }
+            // the app's painter is not the caller's program: without this the shared slot would answer
+            // "overlay still running" for a HUD that will never report a status.
+            if pane == nil, session.hudActive {
+                return ControlResponse(ok: false, error: OverlayHudError.noResult)
             }
             let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
                 ?? (session.overlayActive, session.overlayExitCode)
