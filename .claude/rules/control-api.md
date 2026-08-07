@@ -307,6 +307,14 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   ⌘W, session/workspace/window teardown — so a HUD closed before its surface realized cannot strand the
   message text in `/tmp`. An update carries the OPEN's background color forward, the factory reading it once
   at creation, so `hud.backgroundColor` never names a color the panel will not paint.
+  **Linux adapter:** the helper is staged at `<bundle>/share/agterm/hud/hud.sh` by `stage-linux.sh` and
+  resolved by `AppController.hudHelperCandidates()`, which falls back to the repository copy for a dev run.
+  The cell is measured through Pango rather than CoreText, and the padding is reported as ZERO: Linux emits
+  no `window-padding-*`, so the value is libghostty's own default and the app does not know it.
+  Passivity is spelled with the SAME `Session.programOverlayActive` predicate as macOS, at
+  `searchTargetSurface`, the deck's focus routing in `showActive`, the notification reveal, and
+  `updatePaneDim`'s backdrop; the frame itself takes `gtk_widget_set_can_target(false)` in place of
+  `viewOnly`. `applyFloatingOverlayGeometry` is where a panel's two axes stop being one percent.
 - The header's grid is `HudLayout.paintGrid` — the PANEL's own cells (`panelGrid`: the effective percent of
   the pane, less `window-padding-*`, over the measured cell), NOT `HudLayout.box`, which only decides the
   size. Both now measure the same message, so the two usually agree, but the panel is whole CELLS of a
@@ -320,6 +328,11 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `HudLayout.cellCount` (Unicode scalars, precomposed first) rather than `String.count`, whose grapheme
   clusters disagree on every combining mark and ZWJ emoji. Neither side counts display columns, so a
   double-width glyph overflows the frame — accepted, not fixed.
+  Both halves of that are PROBED rather than assumed, because neither holds off macOS: glibc rejects the
+  bare `UTF-8` name, and dash — the `/bin/sh` on Debian and Ubuntu — counts bytes under every locale.
+  `cellcount` counts UTF-8 continuation bytes with builtins wherever the probe comes up empty, so a tick
+  still costs no fork. Do NOT re-exec a shell that can count instead: `exec` leaves Foundation's `Process`
+  waiting on a child that never reports, which wedges every teardown and `HudHelperTests` with it.
 - It skips a repaint whose frame is byte-identical to the last, so a spinner-less panel writes once and
   stops waking the renderer, and traps WINCH to invalidate that cache. This is a cache, not a measurement:
   the box still comes only from the body file.

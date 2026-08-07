@@ -430,8 +430,9 @@ The same recently-used history decides where you land when you close the session
 On Linux, press **Ctrl+,** or choose **Preferences…** from the command palette.
 Both routes remain available when the toolbar is hidden.
 The GTK Preferences dialog has **General**, **Appearance**, **Interface**, **Notifications**, **Agent Status**, **Key Mapping**, and **Integrations** pages.
-Common options use native controls and apply live: mouse behavior, whether clicking a workspace row expands or collapses it (on by default; the disclosure triangle toggles either way), new-session directories, command restoration, close behavior, font and light/dark themes, terminal opacity, toolbar mode, sidebar tint and text size, notifications, status colors and desktop bell, and auto-follow behavior.
-The mute strength covers the inactive half of a split and the session left visible around a floating overlay or the quick terminal.
+Common options use native controls and apply live: mouse behavior, whether clicking a workspace row expands or collapses it (on by default; the disclosure triangle toggles either way), new-session directories, command restoration, close behavior, font and light/dark themes, terminal opacity, toolbar mode, sidebar tint and text size, the palette and switcher text size, notifications, status colors and desktop bell, and auto-follow behavior.
+The palette size covers the command palette, the `agtermctl pick` picker, and the Ctrl+Tab switcher, and their panels grow with it so the same number of rows stays visible; the sidebar keeps its own independent size.
+The mute strength covers the inactive half of a split and the session left visible around a floating overlay or the quick terminal, never a HUD — a message about a session leaves it lit and typable.
 The Key Mapping page shows the active path and parse diagnostics and can open or reload `keymap.conf`.
 
 The first launch on a machine opens a welcome dialog naming the optional integrations and offering the agent skill and the agent status hooks; it never appears again, and each button runs the normal Preferences ▸ Integrations flow, which previews the exact file plan before applying it.
