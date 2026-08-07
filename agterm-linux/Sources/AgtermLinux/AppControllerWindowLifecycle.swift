@@ -89,7 +89,14 @@ extension AppController {
         autoFollowCoordinator.stop()
         let w = gtk_widget_get_width(W(window)), h = gtk_widget_get_height(W(window))
         if w > 0, h > 0 { library.setGeometry(WindowGeometry.Size(width: Double(w), height: Double(h)), forWindow: windowID) }
-        if linuxSettingsStore().load().restoreRunningCommand ?? false { captureForegroundCommands() }
+        // Only the APP-EXIT close captures: closing the last window tears its surfaces down before the
+        // shutdown handler runs, so without this the quit-time capture finds nothing. A non-last close has
+        // no correct consumer — the mid-run reopen is gated on launch restore, and a launch cannot tell a
+        // deliberately-closed window's file from one that was open at exit — so capturing there would replay
+        // a stale command on the next start (upstream #370).
+        if library.openIDs() == [windowID], linuxSettingsStore().load().restoreRunningCommand ?? false {
+            captureForegroundCommands()
+        }
         store.save()
         quickSurface?.teardown()
         quickSurface = nil
