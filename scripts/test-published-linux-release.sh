@@ -15,12 +15,16 @@ payloads=(
   agterm-v0.14.0-x86_64.AppImage
 )
 
-cat > "$WORK/gh" <<'EOF'
+# The verifier resolves the repository from GITHUB_REPOSITORY, which Actions sets to whatever fork the
+# job runs in, so the fixture pins it rather than asserting one owner's name.
+export GITHUB_REPOSITORY="melonamin/agterm-linux"
+
+cat > "$WORK/gh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1 $2" == "attestation verify" ]]
-[[ "$4" == "--repo" && "$5" == "melonamin/agterm-linux" ]]
-[[ "$(basename "$3")" != "${AGTERM_TEST_FAIL_ASSET:-}" ]]
+[[ "\$1 \$2" == "attestation verify" ]]
+[[ "\$4" == "--repo" && "\$5" == "$GITHUB_REPOSITORY" ]]
+[[ "\$(basename "\$3")" != "\${AGTERM_TEST_FAIL_ASSET:-}" ]]
 EOF
 chmod 0755 "$WORK/gh"
 
