@@ -322,6 +322,10 @@ let onCtxRename: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void =
     MainActor.assumeIsolated { controllerForWidget(button)?.contextRename() }
 }
 
+let onCtxCopyName: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
+    MainActor.assumeIsolated { controllerForWidget(button)?.contextCopyName() }
+}
+
 let onCtxDuplicate: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
     MainActor.assumeIsolated { controllerForWidget(button)?.contextDuplicate() }
 }
@@ -367,6 +371,10 @@ let onWorkspaceRightClick: @MainActor @convention(c) (OpaquePointer?, Int32, Dou
 
 let onCtxWorkspaceRename: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
     MainActor.assumeIsolated { controllerForWidget(button)?.contextWorkspaceRename() }
+}
+
+let onCtxWorkspaceCopyName: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
+    MainActor.assumeIsolated { controllerForWidget(button)?.contextWorkspaceCopyName() }
 }
 
 let onCtxWorkspaceFocus: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in

@@ -66,6 +66,8 @@ paths:
 - Copy Name writes `Session.displayName`, or the workspace name, to `NSPasteboard.general`. A blank
   workspace name and a vanished row both count as absent, and nothing to copy leaves the pasteboard
   untouched rather than clearing it. No control form — see `control-api.md`.
+  **Linux adapter:** the same two items on the GTK popovers, writing the display clipboard
+  (`gdk_clipboard_set_text`) rather than the primary selection, since this is an explicit copy.
 - Rename, Copy Name, Duplicate Session, and Reveal in Finder appear only for one target. Duplicate inserts a fresh
   login-shell session immediately after the source in the same workspace, using only
   `Session.focusedCwd`. It does not copy name, command, panes, status, flag, font size, or watermark.

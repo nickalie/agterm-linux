@@ -44,6 +44,9 @@ extension AppController {
         if targets.count == 1 {
             addContextButton(box, "Rename",
                              unsafeBitCast(onCtxRename as @convention(c) (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
+            addContextButton(box, "Copy Name",
+                             unsafeBitCast(onCtxCopyName as @convention(c) (OpaquePointer?, gpointer?) -> Void,
+                                           to: GCallback.self))
             addContextButton(box, "Duplicate Session",
                              unsafeBitCast(onCtxDuplicate as @convention(c) (OpaquePointer?, gpointer?) -> Void,
                                            to: GCallback.self))
@@ -131,6 +134,30 @@ extension AppController {
         startRenameActive()
     }
 
+    /// Puts the clicked row's name on the clipboard — `Session.displayName`, so it agrees with the row.
+    /// A row gone between the right-click and the choice leaves the clipboard as the user had it.
+    func contextCopyName() {
+        guard let id = contextMenuSession else { return }
+        dismissContextMenu()
+        guard let name = store.session(withID: id)?.displayName else { return }
+        setClipboardText(name)
+    }
+
+    func contextWorkspaceCopyName() {
+        guard let id = contextMenuWorkspace else { return }
+        dismissContextMenu()
+        guard let name = store.workspaceName(id) else { return }
+        setClipboardText(name)
+    }
+
+    /// The system clipboard, not the primary selection: this is an explicit copy, the same target
+    /// ⌘C-equivalent terminal copies write.
+    private func setClipboardText(_ text: String) {
+        guard let display = gdk_display_get_default(),
+              let clipboard = gdk_display_get_clipboard(display) else { return }
+        text.withCString { gdk_clipboard_set_text(clipboard, $0) }
+    }
+
     func contextDuplicate() {
         guard let id = contextMenuSession else { return }
         dismissContextMenu()
@@ -164,6 +191,9 @@ extension AppController {
                          unsafeBitCast(onCtxWorkspaceFocusMembership as @convention(c)
                             (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
         addContextButton(box, "Rename", unsafeBitCast(onCtxWorkspaceRename as @convention(c) (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
+        addContextButton(box, "Copy Name",
+                         unsafeBitCast(onCtxWorkspaceCopyName as @convention(c)
+                            (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
         if store.canRemoveWorkspace {
             addContextButton(box, "Delete Workspace", unsafeBitCast(onCtxWorkspaceDelete as @convention(c) (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
         }
