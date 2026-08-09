@@ -1461,7 +1461,7 @@ struct AppStoreTests {
                                ])
         ])
         #expect(tree.workspaces[1].sessions == [
-            ControlSessionNode(id: b.id.uuidString, name: "remote:~/b", cwd: "/live/b",
+            ControlSessionNode(id: b.id.uuidString, name: "b", cwd: "/live/b",
                                title: "remote:~/b", active: true, split: true,
                                splitFocused: false,
                                overlay: true, scratch: true, flagged: true,

@@ -41,6 +41,9 @@ final class SidebarStatusBlinkTests: XCTestCase {
     func testTitleChangeDoesNotRestartTheStatusBlink() throws {
         try XCTSkipIf(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                       "Reduce Motion suppresses the blink this test pins")
+        // a title change only reaches the row while the terminal title is what names the session.
+        SessionNaming.usesTerminalTitle = true
+        defer { SessionNaming.usesTerminalTitle = false }
         let store = try XCTUnwrap(library.activeStore)
         let session = try XCTUnwrap(store.activeSession)
         buildSidebar(for: store)

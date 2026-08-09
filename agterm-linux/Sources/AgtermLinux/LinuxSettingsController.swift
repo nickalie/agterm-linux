@@ -77,6 +77,17 @@ extension AppController {
         for controller in gWindows.values { controller.applyToolbarMode() }
     }
 
+    /// Names are not observed through the GTK sidebar, so the mirror flip is followed by an explicit
+    /// per-window refresh of both surfaces that render one: the rows and the window title.
+    func setSessionNameFromTerminalTitle(_ enabled: Bool) {
+        persist(\.sessionNameFromTerminalTitle, enabled ? true : nil)
+        SessionNaming.usesTerminalTitle = enabled
+        for controller in gWindows.values {
+            controller.rebuildSidebar()
+            controller.updateTitle()
+        }
+    }
+
     func setRestoreRunningCommand(_ enabled: Bool) { persist(\.restoreRunningCommand, enabled ? true : nil) }
     func setConfirmCloseSession(_ enabled: Bool) { persist(\.confirmCloseSession, enabled ? true : nil) }
     func setCloseGraceUndo(_ enabled: Bool) { persist(\.closeGraceUndoEnabled, enabled ? nil : false) }

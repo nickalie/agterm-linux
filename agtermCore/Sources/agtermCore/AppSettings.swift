@@ -264,6 +264,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// collapses its own; nil = off. Visibility then follows window focus, so a manual per-window hide is
     /// transient — the frontmost window re-shows its sidebar on refocus.
     public var autoHideSidebarInactiveWindows: Bool?
+    /// Whether an unnamed session takes its name from the focused pane's OSC terminal title instead of its
+    /// directory basename; nil/false = off. Read through the `SessionNaming.usesTerminalTitle` mirror, which
+    /// `Session.displayName` consults. On, a remote host over SSH names the row — and so does any TUI that
+    /// titles the terminal after its own state.
+    public var sessionNameFromTerminalTitle: Bool?
     /// Whether the first-launch pointer at the Help menu extras has been shown; nil/false = not yet.
     /// Written once, by the launch that shows it. See `FirstRunWelcome`.
     public var welcomeShown: Bool?
@@ -288,7 +293,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 autoFollowStayOnActive: Bool? = nil, sidebarFontSize: Double? = nil,
                 interfaceFontSize: Double? = nil,
                 hiddenInterfaceElements: [String]? = nil,
-                autoHideSidebarInactiveWindows: Bool? = nil, welcomeShown: Bool? = nil) {
+                autoHideSidebarInactiveWindows: Bool? = nil,
+                sessionNameFromTerminalTitle: Bool? = nil, welcomeShown: Bool? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.theme = theme
@@ -328,6 +334,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.interfaceFontSize = interfaceFontSize
         self.hiddenInterfaceElements = hiddenInterfaceElements
         self.autoHideSidebarInactiveWindows = autoHideSidebarInactiveWindows
+        self.sessionNameFromTerminalTitle = sessionNameFromTerminalTitle
         self.welcomeShown = welcomeShown
     }
 

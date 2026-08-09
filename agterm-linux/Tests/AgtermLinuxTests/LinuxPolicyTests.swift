@@ -49,6 +49,9 @@ struct LinuxPolicyTests {
         #expect(ConfigPaths.starterGhosttyConfig().contains("agterm-scoped ghostty config"))
         #expect(ConfigPaths.starterRestoreDenylist().contains("tmux\nscreen\nzellij"))
         #expect(GhosttyDefaults.baseConfLines.contains("cursor-click-to-move = false"))
+        // without no-title the shell re-titles every prompt with the abbreviated cwd, which then stands in
+        // for the cwd on line two and, under `sessionNameFromTerminalTitle`, for the session name.
+        #expect(GhosttyDefaults.baseConfLines.contains("shell-integration-features = no-title"))
         #expect("  value\n".linuxTrimmedOrNil == "value")
         #expect(" \n".linuxTrimmedOrNil == nil)
     }

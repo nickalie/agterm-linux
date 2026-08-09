@@ -172,6 +172,15 @@ paths:
 - `notificationSoundName` is nil/empty silent. Mirror it to `NotificationManager`; it attaches to
   delivered banners in OSC/control paths and follows notification authorization/Focus. Picker None maps
   nil and previews.
+- `sessionNameFromTerminalTitle` defaults off: an unnamed session is named after its cwd basename, so a TUI
+  or agent that titles the terminal after its own state cannot rename the sidebar row.
+  Its mirror is `SessionNaming.usesTerminalTitle`, the process-global seam `Session.displayName` reads —
+  `Session` owns no settings reference and `displayName` is read from dozens of sites.
+  The mirror is not observed, so a flip needs an explicit name refresh: macOS rides
+  `.agtermAppearanceChanged` (the sidebar reconcile), Linux rebuilds each window's sidebar and title.
+  Push it at launch as well (macOS `SettingsModel.init`, Linux `activateApplication` before the first
+  store restores), or restored rows render under the wrong policy.
+  The title itself is unaffected: it still reaches `tree`'s `title` field and line two (`subtitleDetail`).
 - `confirmCloseSession` defaults off and is read on demand, without a mirror. Prompt only for GUI active
   close and sidebar row close; skip under XCUITest. Control `session.close` must never prompt.
 - `hiddenInterfaceElements` stores raw names and preserves unknown values while toggling known ones; empty

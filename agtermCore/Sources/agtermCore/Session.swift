@@ -373,16 +373,18 @@ public final class Session: Identifiable {
         self.customName = customName
     }
 
-    /// The sidebar label: a non-blank `customName` (a manual rename) wins; else the focused pane's non-blank
-    /// terminal title; else the basename of `focusedCwd`, falling back to `initialCwd`. Name and title are
-    /// both trimmed, so a whitespace-only value falls through — `AppStore.renameSession` clears a blank name
-    /// to nil, so one can only arrive via a hand-edited snapshot.
+    /// The sidebar label: a non-blank `customName` (a manual rename) wins; else the basename of `focusedCwd`,
+    /// falling back to `initialCwd`. The focused pane's non-blank terminal title comes first instead when
+    /// `SessionNaming.usesTerminalTitle` is on — off by default, so a TUI or agent that titles the terminal
+    /// after its own state cannot rename the row out from under the user. Name and title are both trimmed, so
+    /// a whitespace-only value falls through — `AppStore.renameSession` clears a blank name to nil, so one
+    /// can only arrive via a hand-edited snapshot.
     ///
     /// Basename pins: root `/` → `/` (free from `lastPathComponent`); a trailing slash is ignored (`/a/b/` →
     /// `b`); an empty path → `~`, the home shorthand, since no sensible component exists.
     public var displayName: String {
         if let trimmed = customName?.trimmedOrNil { return trimmed }
-        if let title = focusedOscTitle?.trimmedOrNil { return title }
+        if SessionNaming.usesTerminalTitle, let title = focusedOscTitle?.trimmedOrNil { return title }
         let path = focusedCwd
         if path.isEmpty { return "~" }
         return (path as NSString).lastPathComponent
@@ -406,8 +408,9 @@ public final class Session: Identifiable {
     /// title bar: the focused pane's terminal title unless that is already the `displayName` (so it ADDS
     /// context), else the focused cwd. Over SSH the remote sets the OSC title to `user@host:dir` while local
     /// OSC 7 stops, freezing `currentCwd` at a stale local path — so preferring the title surfaces the remote
-    /// location. An unnamed session already shows the title as line 1, so this falls through to the cwd; a
-    /// plain local session has no title (local auto-title is suppressed), so this is the cwd too.
+    /// location. Under `SessionNaming.usesTerminalTitle` an unnamed session already shows the title as line
+    /// 1, so this falls through to the cwd; a plain local session has no title (local auto-title is
+    /// suppressed), so this is the cwd too.
     public var subtitleDetail: String {
         if let title = focusedOscTitle?.trimmedOrNil, title != displayName { return title }
         return focusedCwd

@@ -116,6 +116,9 @@ private struct GeneralSettingsView: View {
                             .accessibilityIdentifier("settings-new-session-choose")
                     }
                 }
+                Toggle("Name sessions after the terminal title", isOn: sessionNameFromTerminalTitle)
+                    .accessibilityIdentifier("settings-session-name-from-title")
+                SettingHint("Otherwise an unnamed session is named after its directory.")
                 Toggle("Restore running commands on restart", isOn: restoreRunningCommand)
                     .accessibilityIdentifier("settings-restore-running-command")
                 Toggle("Confirm before closing a session", isOn: confirmCloseSession)
@@ -132,6 +135,11 @@ private struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private var sessionNameFromTerminalTitle: Binding<Bool> {
+        Binding(get: { model.settings.sessionNameFromTerminalTitle ?? false },
+                set: { model.setSessionNameFromTerminalTitle($0 ? true : nil) })
     }
 
     private var restoreRunningCommand: Binding<Bool> {

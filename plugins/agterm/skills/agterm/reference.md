@@ -103,7 +103,8 @@ SIGTERM use normal process behavior.
 
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
 `id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
-when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
+when none reported; distinct from `name`, the derived sidebar label, which ignores the title unless the
+user turned on "Name sessions after the terminal title"), `active` (selected),
 `split` (split shown), `splitRatio` (the left-pane fraction 0.05–0.95 of a session that HAS a split —
 shown or hidden; omitted when there's no split or the ratio was never explicitly set (divider at the
 default 0.5) — the read side
@@ -1020,7 +1021,9 @@ for untrusted content). A remote host can set the session title (OSC) and workin
 so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECTION}`; use the quoted
 `$AGT_*` form for any of them:
 
-- `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (the focused pane's terminal title, remote-settable via OSC).
+- `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (a custom name, else its
+  directory basename — or the focused pane's terminal title when the user turned on "Name sessions after
+  the terminal title", which makes it remote-settable via OSC).
 - `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the focused pane's working directory.
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
 - `{AGT_PANE}` / `$AGT_PANE` — the pane the command fired from: `left` (main), `right` (split), or

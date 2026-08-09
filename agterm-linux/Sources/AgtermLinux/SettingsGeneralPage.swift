@@ -54,6 +54,14 @@ extension AppController {
             cast(sessions),
             W(
                 preferencesSwitch(
+                    "Name sessions after the terminal title",
+                    subtitle: "Otherwise an unnamed session is named after its directory",
+                    active: settings.sessionNameFromTerminalTitle ?? false,
+                    handler: unsafeBitCast(onSettingsSessionNameFromTitle, to: GCallback.self))))
+        adw_preferences_group_add(
+            cast(sessions),
+            W(
+                preferencesSwitch(
                     "Restore running commands on restart",
                     subtitle: "Re-run each pane's foreground command on the next launch",
                     active: settings.restoreRunningCommand ?? false,
@@ -124,6 +132,11 @@ private let onSettingsRightClickPaste: @MainActor @convention(c) (OpaquePointer?
 private let onSettingsWorkspaceRowClick: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated {
         controllerForWidget(row)?.setWorkspaceRowClickExpands(adw_switch_row_get_active(row) != 0)
+    }
+}
+private let onSettingsSessionNameFromTitle: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        controllerForWidget(row)?.setSessionNameFromTerminalTitle(adw_switch_row_get_active(row) != 0)
     }
 }
 private let onSettingsRestoreCommand: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in

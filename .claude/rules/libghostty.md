@@ -176,8 +176,10 @@ paths:
 
 - Defaults load before user config and set `cursor-style = block` plus
   `shell-integration-features = no-cursor,no-title`. `no-cursor` prevents prompt DECSCUSR bar resets;
-  `no-title` prevents abbreviated local cwd OSC 2 from overriding sidebar names. User/remote OSC titles
-  still work, and OSC 7 is unaffected.
+  `no-title` keeps the abbreviated local cwd OSC 2 off line two and out of the sidebar name under
+  `sessionNameFromTerminalTitle`. User/remote OSC titles still work, and OSC 7 is unaffected.
+  Linux carries `no-title` only (`GhosttyDefaults.baseConfLines`), so its prompt cursor still follows the
+  shell integration.
 - A one-shot local OSC 2 is cleared by the next prompt. Hold the shell with
   `printf '\033]2;X\007'; cat` to test; SSH works because it blocks the local prompt cycle.
 - `liveFocus` is key window and first responder. The key gate is essential because AppKit retains one

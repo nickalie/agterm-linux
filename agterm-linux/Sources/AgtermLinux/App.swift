@@ -77,8 +77,10 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     g_action_map_add_action(app, revealAction)
     // Decide the first-run welcome BEFORE anything writes state: opening a window seeds a session and
     // saves `windows/<id>.json`, which `hasPriorState` would then read as a previous launch.
-    let welcomeDue = WelcomeDialog.isDue(stateDirectory: linuxStateDirectory(),
-                                         settings: linuxSettingsStore().load())
+    let launchSettings = linuxSettingsStore().load()
+    let welcomeDue = WelcomeDialog.isDue(stateDirectory: linuxStateDirectory(), settings: launchSettings)
+    // before the first store restores a session, so a restored row never renders under the wrong policy.
+    SessionNaming.usesTerminalTitle = launchSettings.sessionNameFromTerminalTitle ?? false
     gLibrary = WindowLibrary(directory: linuxStateDirectory())
     ensureStarterFiles()
     installAppCSS()

@@ -73,6 +73,16 @@ final class TimerRecorder {
     return try body(recorder)
 }
 
+/// Runs `body` with the OSC-title naming policy ON (`Session.displayName` prefers the terminal title).
+/// The seam is process-global and swift-testing runs in parallel, so the swap window must contain no
+/// `await` — the synchronous closure makes that unrepresentable, exactly as `withFakeMainTimer` does.
+@MainActor func withTerminalTitleNaming<R>(_ body: () throws -> R) rethrows -> R {
+    let original = SessionNaming.usesTerminalTitle
+    defer { SessionNaming.usesTerminalTitle = original }
+    SessionNaming.usesTerminalTitle = true
+    return try body()
+}
+
 final class SpySurface: TerminalSurface {
     var teardownCount = 0
     var promotedCount = 0

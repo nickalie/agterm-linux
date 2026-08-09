@@ -54,31 +54,45 @@ struct SessionTests {
         #expect(session.displayName == "build")
     }
 
-    @Test func oscTitleOverridesCwd() {
+    @Test func oscTitleLeavesCwdNameAloneByDefault() {
         let session = Session(initialCwd: "/Users/user/dev/foo")
+        session.oscTitle = "✳ fixing the parser"
         #expect(session.displayName == "foo")
-        session.oscTitle = "user@web1: ~/srv"
-        #expect(session.displayName == "user@web1: ~/srv")
+    }
+
+    @Test func oscTitleOverridesCwdUnderTitleNaming() {
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/Users/user/dev/foo")
+            #expect(session.displayName == "foo")
+            session.oscTitle = "user@web1: ~/srv"
+            #expect(session.displayName == "user@web1: ~/srv")
+        }
     }
 
     @Test func customNameOverridesOscTitle() {
-        let session = Session(initialCwd: "/Users/user/dev/foo", customName: "build")
-        session.oscTitle = "user@web1: ~/srv"
-        #expect(session.displayName == "build")
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/Users/user/dev/foo", customName: "build")
+            session.oscTitle = "user@web1: ~/srv"
+            #expect(session.displayName == "build")
+        }
     }
 
     @Test func blankOscTitleFallsBackToCwd() {
-        let session = Session(initialCwd: "/Users/user/dev/foo")
-        session.oscTitle = "   \t"
-        #expect(session.displayName == "foo")
-        session.oscTitle = ""
-        #expect(session.displayName == "foo")
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/Users/user/dev/foo")
+            session.oscTitle = "   \t"
+            #expect(session.displayName == "foo")
+            session.oscTitle = ""
+            #expect(session.displayName == "foo")
+        }
     }
 
     @Test func paddedOscTitleDisplaysTrimmed() {
-        let session = Session(initialCwd: "/Users/user/dev/foo")
-        session.oscTitle = "  web1  "
-        #expect(session.displayName == "web1")
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/Users/user/dev/foo")
+            session.oscTitle = "  web1  "
+            #expect(session.displayName == "web1")
+        }
     }
 
     @Test func subtitleDetailPrefersTitleForNamedSession() {
@@ -124,11 +138,22 @@ struct SessionTests {
     }
 
     @Test func subtitleDetailUsesCwdWhenTitleIsAlreadyDisplayName() {
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/Users/user")
+            session.currentCwd = "/Users/user"
+            session.oscTitle = "user@web1: ~"
+            #expect(session.displayName == "user@web1: ~")
+            #expect(session.subtitleDetail == "/Users/user")
+        }
+    }
+
+    @Test func subtitleDetailKeepsTitleForCwdNamedSession() {
+        // with title naming off the row reads `user`, so the title is what line two still has to add.
         let session = Session(initialCwd: "/Users/user")
         session.currentCwd = "/Users/user"
         session.oscTitle = "user@web1: ~"
-        #expect(session.displayName == "user@web1: ~")
-        #expect(session.subtitleDetail == "/Users/user")
+        #expect(session.displayName == "user")
+        #expect(session.subtitleDetail == "user@web1: ~")
     }
 
     @Test func subtitleDetailUsesCwdForPlainLocalSession() {
@@ -188,14 +213,16 @@ struct SessionTests {
     }
 
     @Test func focusedPaneTitleWins() {
-        let session = Session(initialCwd: "/repo")
-        session.isSplit = true
-        session.splitSurface = FakeSurface() // a focused split always has a live split surface
-        session.oscTitle = "primary-title"
-        session.splitTitle = "split-title"
-        #expect(session.displayName == "primary-title")
-        session.splitFocused = true
-        #expect(session.displayName == "split-title")
+        withTerminalTitleNaming {
+            let session = Session(initialCwd: "/repo")
+            session.isSplit = true
+            session.splitSurface = FakeSurface() // a focused split always has a live split surface
+            session.oscTitle = "primary-title"
+            session.splitTitle = "split-title"
+            #expect(session.displayName == "primary-title")
+            session.splitFocused = true
+            #expect(session.displayName == "split-title")
+        }
     }
 
     @Test func customNameWinsOverFocusedSplitPane() {

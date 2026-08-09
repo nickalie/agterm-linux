@@ -212,6 +212,17 @@ struct AppSettingsTests {
             == ["mouse-scroll-multiplier = 3", "right-click-action = paste"])
     }
 
+    @Test func sessionNameFromTerminalTitleRoundTripsAndIsNotAConfigLine() throws {
+        #expect(AppSettings().sessionNameFromTerminalTitle == nil)
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONEncoder().encode(AppSettings(sessionNameFromTerminalTitle: true)))
+        #expect(decoded.sessionNameFromTerminalTitle == true)
+        let legacy = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"theme":"Nord"}"#.utf8))
+        #expect(legacy.sessionNameFromTerminalTitle == nil)
+        #expect(AppSettings(sessionNameFromTerminalTitle: true).ghosttyConfigLines()
+            == ["mouse-scroll-multiplier = 3", "right-click-action = paste"])
+    }
+
     @Test func confirmCloseSessionRoundTripsAndIsNotAConfigLine() throws {
         let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(AppSettings(confirmCloseSession: true)))
         #expect(decoded.confirmCloseSession == true)
