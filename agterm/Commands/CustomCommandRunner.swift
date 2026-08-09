@@ -78,7 +78,8 @@ final class CustomCommandRunner {
     private static let escapeKeyCode: UInt16 = 53
 
     /// Feed one key event to the matcher; returns whether it was consumed (so the caller drops it). Esc while
-    /// armed resets, `.fired` runs, `.armed` arms the leader timer — all consumed; `.unmatched` passes through.
+    /// armed resets, `.fired` runs, `.armed` arms the leader timer, and `toggle_fullscreen`'s chord toggles
+    /// full screen without reaching the matcher at all — all consumed; `.unmatched` passes through.
     ///
     /// Acts when the key window's first responder is a terminal surface (context from that surface), or when
     /// the key window is an agterm terminal window whose focus is NOT on a text field — including one emptied
@@ -86,8 +87,16 @@ final class CustomCommandRunner {
     /// search) so a bound chord never eats those keystrokes, and for an auxiliary window focused off a text
     /// field. A key repeat is ignored, so a held-down shortcut spawns one process, not one per OS repeat.
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        guard !event.isARepeat else { return false }
         guard let keyWindow = NSApp.keyWindow else { return false }
+        return handleKeyDown(event, in: keyWindow)
+    }
+
+    /// Everything after the key-window lookup, split out so a test can supply the window: a hosted test's
+    /// own window never becomes `NSApp.keyWindow` (the app is not active), so `handleKeyDown(_:)` returns at
+    /// that guard and none of this runs. Internal for that reason alone, like
+    /// `ControlServer.collectKeyEquivalents`.
+    func handleKeyDown(_ event: NSEvent, in keyWindow: NSWindow) -> Bool {
+        guard !event.isARepeat else { return false }
         let responder = keyWindow.firstResponder
         // a focused text field is the window's NSText field editor and must keep its keystrokes: drop the
         // half-typed leader, pass through.
@@ -118,6 +127,14 @@ final class CustomCommandRunner {
         guard let chord = chord(from: event) else {
             // a key with no usable base (e.g. a bare modifier) can't advance; while armed, keep waiting.
             return false
+        }
+        // `toggle_fullscreen` is the one built-in with no menu item to carry its equivalent: AppKit appends
+        // the only full screen item there is, at menu-display time, and an item of agterm's own beside it is
+        // the duplicate this avoids. So the rebindable chord is matched here instead. A half-typed leader
+        // sequence still wins, exactly as it does over a custom command sharing its first chord.
+        if !commandEngine.isArmed, chord == settings.keymap.equivalent(for: .toggleFullscreen) {
+            keyWindow.toggleFullScreen(nil)
+            return true
         }
         switch commandEngine.advance(chord) {
         case .fired(let command):
@@ -284,14 +301,19 @@ final class CustomCommandRunner {
     }
 
     /// Spawn the expanded command as a detached `/bin/sh -c`, exporting `$AGT_*` over the app environment and
-    /// running in the session's cwd. A spawn error or non-zero exit posts a failure banner; no output
-    /// capture, no success banner.
+    /// running in the session's cwd. `PATH` is widened first (`CommandPath`): the app's own is launchd's, and
+    /// `sh -c` runs no profile, so a bare `agtermctl` would exit 127. A spawn error or non-zero exit posts a
+    /// failure banner; no output capture, no success banner.
     private func spawn(_ command: CustomCommand, context: CommandContext) {
         let line = context.expand(command.command)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", line]
-        process.environment = ProcessInfo.processInfo.environment.merging(context.environment()) { _, new in new }
+        var environment = ProcessInfo.processInfo.environment.merging(context.environment()) { _, new in new }
+        environment["PATH"] = CommandPath.widened(environment["PATH"],
+                                                  bundledCLIDirectory: CLIInstaller.bundledTool?
+                                                      .deletingLastPathComponent().path)
+        process.environment = environment
         // fire-and-forget: pin stdio to /dev/null rather than inherit the app's fds, which vary by launch.
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice

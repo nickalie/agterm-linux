@@ -262,6 +262,7 @@ public final class AppStore {
                                           cwd: session.effectiveCwd, title: session.oscTitle,
                                           active: session.id == activeID,
                                           split: session.isSplit,
+                                          hasSplit: session.hasSplit ? true : nil,
                                           splitRatio: session.hasSplit ? session.splitRatio : nil,
                                           splitFocused: session.hasSplit ? session.splitFocused : nil,
                                           overlay: session.programOverlayActive,
@@ -317,7 +318,8 @@ public final class AppStore {
         guard session.hudActive, let spec = session.hudSpec else { return nil }
         return ControlHudNode(message: spec.message, detail: spec.detail,
                               spinner: spec.spinner?.rawValue ?? HudSpinner.noneName,
-                              backgroundColor: spec.backgroundColor, sizePercent: session.overlaySizePercent,
+                              backgroundColor: spec.backgroundColor, textColor: spec.textColor,
+                              sizePercent: session.overlaySizePercent,
                               heightPercent: session.hudHeightPercent, position: spec.position.rawValue)
     }
 

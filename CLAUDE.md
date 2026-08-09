@@ -88,6 +88,13 @@ concurrency before changing the bridge.
 - `make deploy` copies Release to `~/Applications`, whose app, PATH CLI, and installed hooks shadow Debug.
   Test fresh CLI/hooks with the Debug binary or redeploy and reinstall them. Debug uses
   `com.umputun.agterm.debug`, distinct from Release, but state/socket paths still require isolation.
+- Launching ANY second instance without `AGTERM_STATE_DIR` does not merely share state, it takes the
+  running app's control socket away for good. `ControlServer.start` unlinks the resolved path
+  unconditionally before binding, and cannot tell a live socket from one a force-quit left behind. The
+  first instance keeps its listening fd and never learns, so it stays alive and unreachable; the second
+  one's `stop()` unlinks again, leaving no path at all. Only a restart of the deployed app recovers it.
+- Diagnose that state with `lsof -p <pid> | grep agterm.sock`: an fd on a socket path that `ls` cannot
+  find means the socket was orphaned, which is a different fault from a window scene that never bound one.
 
 ## Protect the live terminal
 
@@ -166,7 +173,11 @@ concurrency before changing the bridge.
   Review asks only three things: it does no harm, deliberately or accidentally; it does what it claims;
   and it follows `cookbook/CONTRIBUTING.md`.
   Edge cases, minor bugs, and other small findings never block the PR: approve and merge, leaving a note
-  for the contributor.
+  for the contributor. That note is where a recipe finding ends: never file it in `docs/backlog/`, which
+  is for code the project owns, and never edit a recipe's prose unprompted.
+- agterm runs only on macOS, so POSIX portability is never a finding by itself. A shellcheck SC3xxx on a
+  recipe is a CI lint gate, not a runtime defect: `/bin/sh` there is bash 3.2 and `printf %q` works.
+  Never propose a bash shebang as the fix; the mac shell is zsh, and CI's `.zsh` path is `zsh -n`.
 
 ## Website
 

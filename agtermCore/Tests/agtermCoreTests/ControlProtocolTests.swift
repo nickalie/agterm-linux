@@ -907,6 +907,26 @@ struct ControlProtocolTests {
         #expect(decoded.splitFocused == nil)
     }
 
+    @Test func treeSessionNodeRoundTripsWithHasSplit() throws {
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false,
+                                         hasSplit: true, splitRatio: 0.35, splitFocused: true)
+        let response = ControlResponse(ok: true, result: ControlResult(tree: ControlTree(
+            workspaces: [ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])])))
+        let decoded = try roundTrip(response)
+        #expect(decoded == response)
+        let node = decoded.result?.tree?.workspaces.first?.sessions.first
+        #expect(node?.hasSplit == true)
+        #expect(node?.split == false)
+    }
+
+    @Test func treeSessionNodeOmitsHasSplitWhenNil() throws {
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false)
+        let json = String(data: try JSONEncoder().encode(session), encoding: .utf8) ?? ""
+        #expect(!json.contains("hasSplit"), "a session with no split must omit hasSplit; got \(json)")
+        let decoded = try JSONDecoder().decode(ControlSessionNode.self, from: Data(json.utf8))
+        #expect(decoded.hasSplit == nil)
+    }
+
     @Test func treeSessionNodeRoundTripsWithSurfaces() throws {
         let surfaces = [
             ControlSurfaceNode(id: "surface:s1:left", kind: "left", active: true, visible: true),

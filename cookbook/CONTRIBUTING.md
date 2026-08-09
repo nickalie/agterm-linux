@@ -51,13 +51,22 @@ When you are porting someone else's work, credit him by name with a link to his 
 
 ## Index row
 
-Add a row to the table in [README.md](README.md) in the same pull request:
+Add a row to [README.md](README.md) in the same pull request:
 
 | recipe | what it does | needs |
 |---|---|---|
 | [project-switcher](project-switcher/) | show only one project's workspaces | 0.18.0, jq |
 
-CI compares the directory set against the index in both directions, so a directory with no row fails, and a row pointing at a directory that does not exist fails too. The check matches the link by its trailing slash, so keep it.
+The index is split into four tables, grouped by what the reader is trying to do, alphabetical within each. Pick the one that matches the goal rather than the tool, since the agent a recipe needs is already in its *needs* column:
+
+- **Workspaces and projects** — arranging workspaces, windows, and where a session opens.
+- **Sessions across restarts** — a tab coming back to what it was running.
+- **Agent status and workflows** — reporting what an agent is doing, or driving one from a chord.
+- **Panes, pickers and input** — splits, overlays, dashboards, and getting text into the shell.
+
+A recipe that genuinely fits two goes in the one its *What it does* line leads with. If none fits, say so in the pull request rather than forcing it: a fifth group is a fair outcome.
+
+CI compares the directory set against the index in both directions, so a directory with no row fails, and a row pointing at a directory that does not exist fails too. It reads every table, so which one you pick does not affect the check. The check matches the link by its trailing slash, so keep it.
 
 ## Rules for the scripts
 

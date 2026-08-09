@@ -16,10 +16,15 @@ paths:
   `coverage`, the only Swift-gated Linux job, downloads it for best-effort Coveralls.
   `lint` installs SwiftLint and runs `swiftlint lint --strict`; every warning fails.
 - `build` restores the libghostty/resource `actions/cache` keyed by `hashFiles('scripts/setup.sh')`,
-  installs xcodegen, runs Release `scripts/build.sh`, then Debug `scripts/test-app.sh`. Editing
+  installs xcodegen, runs Release `scripts/build.sh`, asserts the built `agtermctl` carries no
+  entitlements, then Debug `scripts/test-app.sh`. Editing
   `setup.sh` rebuilds libghostty. Keep both app builds: Release exercises the whole-module optimizer and
   its SIL-deserializer failure; Debug provides `ENABLE_TESTABILITY` for
   `DockMenuTests`'s `@testable import agterm`. Do not enable testability in the notarized Release app.
+- The entitlement assertion guards issue #396: `--deep` with `--entitlements` stamps the app's TCC
+  entitlements onto the bundled CLI on the user's PATH, and the build stays green. `scripts/release.sh`
+  repeats it after its Developer ID re-sign, which runs after CI's copy and is not covered by it.
+  Use `codesign -d --entitlements -`; the `:-` spelling is deprecated and warns.
 - A separate `cookbook: ["cookbook/**"]` filter gates the Linux `cookbook` job. Recipe-only changes run
   no macOS jobs. Keep `.github/workflows/ci.yml` in both filters: the inline cookbook checks must run when
   changed; its Swift membership also runs macOS jobs.

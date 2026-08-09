@@ -292,7 +292,10 @@ struct SocketClient {
             lines.append("\(mark) \(workspace.name)  [\(workspace.id)]")
             for session in workspace.sessions {
                 let smark = session.active ? "*" : " "
-                let tags = (session.split ? " (split)" : "") + (session.overlay ? " (overlay)" : "")
+                // a hidden split still owns a live pane, so it needs a tag of its own: without one it
+                // reads exactly like a session that has no split at all.
+                let splitTag = session.split ? " (split)" : (session.hasSplit == true ? " (split hidden)" : "")
+                let tags = splitTag + (session.overlay ? " (overlay)" : "")
                     + (session.scratch ? " (scratch)" : "")
                 let titleSuffix = session.title.map { "  title: \($0)" } ?? ""
                 lines.append("  \(smark) \(session.name)\(tags)  [\(session.id)]  \(session.cwd)\(titleSuffix)")

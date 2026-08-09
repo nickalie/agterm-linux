@@ -240,6 +240,10 @@ struct CommandPalette: View {
             results
         }
         .background { PalettePanelBackground() }
+        // the rounded background is drawn, not enforced: a selected or hovered bottom row fills its full
+        // square bounds and paints over the corner arc without this. the clip stays above `.shadow`, which
+        // would otherwise be clipped away with everything else outside the shape.
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.1)))
         .shadow(radius: 24)
         .accessibilityIdentifier(explicitItems == nil ? "command-palette" : "pick-palette")
@@ -335,6 +339,17 @@ private struct PaletteRow: View {
     let item: PaletteItem
     let isSelected: Bool
     let metrics: InterfaceMetrics
+    @State private var hovering = false
+
+    /// A neutral wash rather than a weaker accent: hover and the accent-tinted selection can sit on different
+    /// rows at once, so the same hue at two strengths would read as a second selection. It also has to hold up
+    /// over both panel backings, `.regularMaterial` and the opaque Reduce Transparency one.
+    private static let hoverTint = Color.primary.opacity(0.04)
+
+    private var rowTint: Color {
+        if isSelected { return Color.accentColor.opacity(0.25) }
+        return hovering ? Self.hoverTint : .clear
+    }
 
     var body: some View {
         HStack {
@@ -370,8 +385,9 @@ private struct PaletteRow: View {
         .padding(.horizontal, metrics.scaled(12))
         .padding(.vertical, metrics.scaled(6))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+        .background(rowTint)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .accessibilityIdentifier("palette-item-\(item.id)")
     }
 }

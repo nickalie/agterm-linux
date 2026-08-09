@@ -72,8 +72,10 @@ paths:
   disjoint without relying on dispatch order. Standard menu items such as ⌘Q/⌘C/⌘, remain AppKit's
   responsibility.
 - `BuiltinAction.defaultChord` is the sole built-in default. Every menu item resolves
-  override-or-default, including the six arrow actions. `undo_close` is the one keyed action delivered
-  by `UndoCloseShortcut`, not a menu equivalent, so native text undo still works.
+  override-or-default, including the six arrow actions. Two keyed actions are delivered by a monitor
+  rather than a menu equivalent: `undo_close` through `UndoCloseShortcut`, so native text undo still
+  works, and `toggle_fullscreen` through `CustomCommandRunner`, because agterm ships no full screen menu
+  item for it to ride — see [[windows]]. Both are absent from `keymap list`'s `menu` by design.
 - Write shifted symbols as `shift+<base>`: `shift+/` for `?`, `shift+=` for `+`, `shift+5` for `%`, and
   `shift+.` for `>`. `CustomCommandRunner` uses `characters(byApplyingModifiers: [])` to recover that
   base; keep `KeymapUITests.testCustomCommandShiftedSymbolFires`.
@@ -117,6 +119,12 @@ paths:
   bare tokens, but bind as `shift+=`/`shift+.`. `increase_font_size`'s stored `Chord(key:"+")` cannot
   round-trip and prints `(not expressible)` in the starter file. Ctrl-Tab and Ctrl-1/2 are reserved,
   monitor-driven, and not rebindable. Palette custom hints use raw kitty syntax, not macOS glyphs.
+- The starter file's `map` and `command` examples are literal chords that rot when a new built-in claims
+  one, as `dashboard` did to the shipped `cmd+shift+d` (issue #405). Keep
+  `ConfigPathsTests.starterKeymapExamplesApplyWhenUncommented`, which uncomments every example, requires
+  it to parse clean, and counts the chords that survive.
+  Both verbs rot: `validateCommands` clears a custom shortcut a built-in has claimed just as
+  `resolveBuiltinOverrides` drops the colliding `map`.
 - **`{AGT_X}` interpolation is intentionally raw and unquoted.** Selection, OSC title, OSC 7 pwd, and the
   session/workspace/window names and `--cwd` a caller supplies over control or the GUI can all inject
   visible shell metacharacters. `TerminalText.sanitized` strips control characters, not `;`,

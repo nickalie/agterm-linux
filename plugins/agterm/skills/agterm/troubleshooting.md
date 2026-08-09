@@ -19,8 +19,8 @@ You are inside agterm (`AGTERM_ENABLED=1`). Use:
   key equivalents the menu bar is actually dispatching. If the action's `chord` looks right but no `menu`
   entry carries it (or a different item does), the keymap is fine and the menu is the problem: SwiftUI
   rebuilds the menu only on the next app activation, so switch to another app and back, then relaunch if it
-  persists. Exception: `undo_close` (⌘Z) is delivered by a key monitor rather than a menu item, so it never
-  appears under `menu` and its absence there means nothing.
+  persists. Exceptions: `undo_close` (⌘Z) and `toggle_fullscreen` (⌃⌘F) are delivered by a key monitor
+  rather than a menu item, so they never appear under `menu` and their absence there means nothing.
 - **Ghostty settings** - `agtermctl config reload` re-reads the ghostty config and prints the diagnostic
   count (`0` = clean). The count covers every config source, not just `ghostty.conf` (libghostty does not
   record which file a diagnostic came from), so check the Console log for the offending line. `ghostty.conf`
@@ -140,6 +140,16 @@ Settings ▸ Notifications ▸ agterm), and Do Not Disturb / a Focus mode suppre
 To separate "never posted" from "posted but not shown": `tree --json` shows a rising `unseen` on the
 target session whenever the command reached the notification path, and the log above records both the
 posted and the suppressed case under the `NotificationManager` category.
+
+### "a tool cannot get a macOS permission"
+
+Programs run in a session request Automation, Camera, Contacts, Calendars, Reminders, Photos, Location,
+Bluetooth, local network and speech recognition THROUGH agterm: macOS treats agterm as the responsible app,
+so the prompt names agterm and the answer is recorded against agterm, not the tool. One grant then covers
+every program in every session with no further prompt, and a dismissed prompt is never re-offered
+(`osascript` keeps returning "Not authorized to send Apple events"). The user changes the answer in
+System Settings ▸ Privacy & Security under the matching service, e.g. Automation ▸ agterm. This is macOS
+policy, not an agterm bug: do not file it.
 
 ### "The agent-status glyph does not update"
 

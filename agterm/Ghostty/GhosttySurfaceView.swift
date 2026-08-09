@@ -191,6 +191,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             guard deckVisible != oldValue else { return }
             updateDropRegistration()
             updatePointerTracking()
+            postAccessibilityExposureChange() // one of the `axExposed` terms; tell AX if the element came or went
         }
     }
 
@@ -201,7 +202,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// `hitTest` returns nil and the surface refuses first responder; set on the cell, cleared on the slot.
     var viewOnly = false {
         didSet {
-            guard viewOnly, !oldValue else { return }
+            guard viewOnly != oldValue else { return }
+            // `axExposed`'s first term. Every term drives the exposure post rather than one implying others.
+            postAccessibilityExposureChange()
+            guard viewOnly else { return }
             // acceptsFirstResponder=false blocks only NEW grabs: a surface carrying first responder in from
             // the deck (the focused split pane at dashboard open) keeps it across the reparent and defeats
             // the key-catcher. resign here; once view-only nothing can re-grab.
@@ -250,6 +254,35 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     // IME composition state shared with GhosttySurfaceView+Input.swift (stored properties can't live in an extension).
     var _markedRange = NSRange(location: NSNotFound, length: 0)
     var _selectedRange = NSRange(location: NSNotFound, length: 0)
+    /// The in-flight composition's text. libghostty owns the preedit for RENDERING (`ghostty_surface_preedit`)
+    /// and hands nothing back, so the only way to COMMIT a live composition instead of throwing it away is to
+    /// keep our own copy — which every programmatic insert does (`commitOrDiscardComposition`). Maintained by the
+    /// three `NSTextInputClient` methods that own `_markedRange`, and always cleared with it.
+    var _markedText = ""
+
+    /// The `isAccessibilityFocused` value last announced to AX, so `postAccessibilityFocusChange` posts on
+    /// TRANSITIONS only. Every surface re-runs `updateGhosttyFocus` on any window's key change (the
+    /// `didBecomeKey`/`didResignKey` observers use `object: nil`), so an ungated post would fire once per
+    /// realized surface per key change — N notifications for one focus move.
+    var axPostedFocus = false
+
+    /// Whether a deferred focus post is already queued for this surface, so the resign+become PAIR that a
+    /// single focus move produces coalesces into one evaluation instead of two. See
+    /// `postAccessibilityFocusChange`, which schedules the hop.
+    var axFocusPostScheduled = false
+
+    /// The `axExposed` value last announced to AX, the exposure counterpart of `axPostedFocus`. Every term
+    /// of `axExposed` now has a call site (`deckVisible`/`viewOnly` didSet, surface create/destroy, window
+    /// move, and the miniaturize/hide observers), several of which can fire for a single transition, so the
+    /// latch is what keeps one flip to one `.layoutChanged`.
+    var axPostedExposed = false
+
+    /// True only for the duration of the `discardMarkedText()` call inside `commitOrDiscardComposition`,
+    /// where `insertText` refuses re-entrant input. That helper commits our copy of the composition itself
+    /// and then tears the IME session down; an input method that FINALIZES rather than abandons on that
+    /// teardown would send the same characters back through `insertText` and land them twice. Nothing else
+    /// legitimately types during that synchronous window, so dropping the re-entrant insert is safe.
+    var committingComposition = false
     var keyTextAccumulator: [String] = []
     var currentKeyEvent: NSEvent?
 
@@ -284,6 +317,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         wantsLayer = true
         setupTrackingArea()
         observeKeyWindowChanges()
+        observeWindowVisibilityChanges()
     }
 
     /// Watch every window's key transitions and re-evaluate focus on each. No filtering to my own window:
@@ -310,6 +344,26 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         }
     }
 
+    /// Watch the transitions that move `window?.isVisible`, the `axExposed` term nothing else reports.
+    /// `deckVisible` is pure MODEL state, so miniaturizing the window — or hiding the app — leaves this pane
+    /// `deckVisible == true` while AppKit reports `isVisible == false`. Without these, `axExposed` went
+    /// true → false → true across a minimize/restore with no `.layoutChanged` posted at all.
+    /// `object: nil` like the key observers: the post recomputes from THIS view's own window, so another
+    /// window's notification costs one latch compare. Tokens join `focusObservers`, so teardown is unchanged.
+    private func observeWindowVisibilityChanges() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+            NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+        ]
+        for name in names {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.postAccessibilityExposureChange() }
+            }
+            focusObservers.append(token)
+        }
+    }
+
     /// Clear the seen state (unseen badge + delivered banners) for this pane's session when agterm regains key
     /// focus on it. `liveFocus` (first responder of a key window, and a window is key only while the app is
     /// active) confines it to the focused pane of the now-key window, never a background one. Reusing
@@ -331,7 +385,9 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// responder AND that window is key — the key gate stops every window's active surface blinking at once.
     /// Reading the live responder rather than a cached flag keeps a re-hosted pane's focus true, so opening
     /// a split can't leave both panes solid.
-    private var liveFocus: Bool {
+    /// Not `private`: `+Accessibility.swift` reuses it for `isAccessibilityFocused` / the AX write guard,
+    /// the same way `currentTrackingArea` is internal so `+Tracking.swift` can reach it.
+    var liveFocus: Bool {
         guard let window else { return false }
         return window.isKeyWindow && window.firstResponder === self
     }
@@ -343,6 +399,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     func updateGhosttyFocus() {
         guard let surface else { return }
         ghostty_surface_set_focus(surface, liveFocus)
+        // `isAccessibilityFocused` mirrors `liveFocus`; AX must hear it move. This covers the key-window and
+        // (re)attach paths only — the first-responder transitions post for themselves, since they run before
+        // AppKit has updated `window.firstResponder` and never reach this method.
+        postAccessibilityFocusChange()
     }
 
     @available(*, unavailable)
@@ -516,6 +576,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             ghostty_surface_set_display_id(surface, displayID)
         }
         updateGhosttyFocus()
+        // the `surface != nil` term of `axExposed` just flipped: a pane whose creation was DEFERRED
+        // (`pendingSurfaceCreation`, a window still being presented) was absent from the a11y tree until
+        // now, so the first window after launch never announced its Terminal element.
+        postAccessibilityExposureChange()
 
         // a session carrying a background watermark (never shown, or restored from a snapshot) applies it now
         // the surface exists — deferred-size creation, the eager deck, relaunch; the scratch inherits via
@@ -618,6 +682,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         focusObservers = []
         if let surface { ghostty_surface_free(surface) }
         surface = nil
+        // the other end of the `surface != nil` term: this element just left the a11y tree, and a client
+        // holding it needs to re-resolve rather than keep writing into a closed session's pane.
+        postAccessibilityExposureChange()
+        postAccessibilityFocusChange()
         configCStrings.forEach { free($0) }
         configCStrings = []
         // the env structs only point into the freed configCStrings buffers; clear them too.
@@ -672,6 +740,11 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // above the nil-window guard: DETACHING is the transition nothing else reports. Hiding the quick
+        // terminal unmounts its view with `deckVisible`/`viewOnly`/`surface` all unchanged, so this is the
+        // only site that can clear the latch — below the guard it never ran, and the re-show then compared
+        // equal and stayed silent too.
+        postAccessibilityExposureChange()
         guard let window else { return }
         if surface == nil {
             createSurface()
@@ -768,6 +841,9 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             ghostty_surface_set_focus(surface, window?.isKeyWindow ?? false)
             if !suppressFocusChange { onFocusChange?(true) }
         }
+        // AX hears the move from here, NOT from `updateGhosttyFocus` (which this path deliberately skips):
+        // the post is deferred a run-loop turn precisely because `window.firstResponder` reads stale here.
+        postAccessibilityFocusChange()
         return result
     }
 
@@ -777,6 +853,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             ghostty_surface_set_focus(surface, false)
             if !suppressFocusChange { onFocusChange?(false) }
         }
+        postAccessibilityFocusChange() // see becomeFirstResponder; the deferred post coalesces the pair
         return result
     }
 }

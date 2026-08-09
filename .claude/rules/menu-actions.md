@@ -56,8 +56,8 @@ paths:
   Expand/Collapse Workspaces alone are disabled outside tree mode, in both menu and palette.
 - Dashboard uses Command-Shift-D, `BuiltinAction.dashboard`, and `toggleDashboard`; it toggles an MRU,
   auto-sized grid unless terminal zoom is active. Share `dashboardMembers` with control.
-- Remove AppKit's reinjected fullscreen item as described in [[windows]]. agterm's own
-  `toggle_fullscreen` remains rebindable and control-drivable.
+- The View menu carries no fullscreen item of agterm's own, and `toggle_fullscreen` rides the key monitor
+  rather than a menu shortcut; see [[windows]]. It remains rebindable and control-drivable.
 - Font shortcuts call libghostty binding actions on the key window's first-responder surface, falling back
   to the active session. Persistence still flows from cell-size callbacks.
 - `shortcutGlyph` delegates to host-free `Keymap.glyphHint`. Use it for palette hints and the ten built-in
@@ -124,6 +124,14 @@ paths:
   does not intercept). Only then close the active session. If no cover or session exists, the menu performs
   window close. Keep the cover check inside `closeActiveSession`, since a sessionless window can still show
   quick terminal.
+- The menu item diverts to a plain `performClose` when the key window is not an agterm terminal window —
+  Settings, the About panel, an open/save panel — because `applyCloseSessionChord` takes ⌘W off the stock
+  File ▸ Close item and nothing else would close them (issue #401). `WindowRegistry.contains` is the
+  predicate, as in `CustomCommandRunner`. A `nil` key window still runs the deck sequence: with every
+  window minimized the equivalent still dispatches, and `performClose` on nothing would make ⌘W silently
+  no-op. The divert is gated on `close_session` still holding ⌘W, the same condition
+  `applyCloseSessionChord` splits on: rebound off it, the stock item takes the chord back and the
+  auxiliary window closes itself, so the new chord keeps its labelled meaning.
 - All active-session close paths use host-free `closeReselectionTarget` (Discussion #147). Prefer the most
   recent survivor in three widening scopes: same workspace intersected with `navigableSessions`, all
   navigable sessions, then the whole tree. Build scopes from the post-removal tree; soft close retains
