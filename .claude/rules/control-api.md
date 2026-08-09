@@ -339,7 +339,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   Passivity is spelled with the SAME `Session.programOverlayActive` predicate as macOS, at
   `searchTargetSurface`, the deck's focus routing in `showActive`, the notification reveal, and
   `updatePaneDim`'s backdrop; the frame itself takes `gtk_widget_set_can_target(false)` in place of
-  `viewOnly`. `applyFloatingOverlayGeometry` is where a panel's two axes stop being one percent.
+  `viewOnly`. `applyFloatingOverlayGeometry` is where a panel's two axes stop being one percent, and where
+  the nine anchors resolve: GTK reaches macOS' offset-from-center through `halign`/`valign` plus the edge
+  margin on the side the band names, which lands the panel in the same place.
 - The header's grid is `HudLayout.paintGrid` — the PANEL's own cells (`panelGrid`: the effective percent of
   the pane, less `window-padding-*`, over the measured cell), NOT `HudLayout.box`, which only decides the
   size. Both now measure the same message, so the two usually agree, but the panel is whole CELLS of a

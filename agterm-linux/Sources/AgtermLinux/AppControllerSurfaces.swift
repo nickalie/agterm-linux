@@ -591,30 +591,66 @@ extension AppController {
     /// A PROGRAM overlay is one percent on both axes and never shrinks past a floor that keeps its program
     /// usable. A HUD sizes each axis separately — width from the caller or the box, height always measured
     /// from the message — and takes NO floor: flooring it is a square panel around two lines of text.
-    /// `.top`/`.bottom` hold `HudPosition.edgeMarginPercent` off the pane edge while the panel leaves room
-    /// for it, and center when it does not, so a tall panel can never overhang the pane.
+    /// An anchor off center holds `HudPosition.edgeMarginPercent` off each pane edge it names, while the
+    /// panel leaves room for it, and centers on that axis when it does not, so a panel can never overhang.
     func applyFloatingOverlayGeometry(_ frame: OpaquePointer?, session s: Session) {
         guard let frame, let overlay = deckOverlay, let pct = s.overlaySizePercent else { return }
         let dw = gtk_widget_get_width(W(overlay)), dh = gtk_widget_get_height(W(overlay))
         guard let heightPercent = s.hudHeightPercent else {
-            gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
-            gtk_widget_set_margin_top(W(frame), 0)
-            gtk_widget_set_margin_bottom(W(frame), 0)
+            centerFloatingOverlay(frame)
             gtk_widget_set_size_request(W(frame), max(Int32(240), dw * Int32(pct) / 100),
                                         max(Int32(160), dh * Int32(pct) / 100))
             return
         }
         gtk_widget_set_size_request(W(frame), dw * Int32(pct) / 100, dh * Int32(heightPercent) / 100)
-        let margin = Double(dh) * Double(HudPosition.edgeMarginPercent) / 100
-        let free = max(0, Double(dh) * Double(100 - heightPercent) / 200 - margin)
-        let position = free > 0 ? (s.hudSpec?.position ?? HudPosition.defaultPosition) : .center
-        gtk_widget_set_margin_top(W(frame), position == .top ? Int32(margin) : 0)
-        gtk_widget_set_margin_bottom(W(frame), position == .bottom ? Int32(margin) : 0)
-        switch position {
-        case .top: gtk_widget_set_valign(W(frame), GTK_ALIGN_START)
-        case .center: gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
-        case .bottom: gtk_widget_set_valign(W(frame), GTK_ALIGN_END)
+        let position = s.hudSpec?.position ?? HudPosition.defaultPosition
+        let vertical = Self.floatingOverlayAnchor(extent: dh, sizePercent: heightPercent,
+                                                  band: position.verticalBand)
+        let horizontal = Self.floatingOverlayAnchor(extent: dw, sizePercent: pct,
+                                                    band: position.horizontalBand)
+        gtk_widget_set_valign(W(frame), vertical.align(start: GTK_ALIGN_START, end: GTK_ALIGN_END))
+        gtk_widget_set_margin_top(W(frame), vertical.leadingMargin)
+        gtk_widget_set_margin_bottom(W(frame), vertical.trailingMargin)
+        gtk_widget_set_halign(W(frame), horizontal.align(start: GTK_ALIGN_START, end: GTK_ALIGN_END))
+        gtk_widget_set_margin_start(W(frame), horizontal.leadingMargin)
+        gtk_widget_set_margin_end(W(frame), horizontal.trailingMargin)
+    }
+
+    /// One axis' resolved placement. GTK reaches macOS' offset-from-center through alignment plus the edge
+    /// margin: a panel aligned to an edge with that margin sits exactly where the offset would put it.
+    struct FloatingOverlayAnchor {
+        let band: HudPosition.Band
+        let margin: Int32
+
+        var leadingMargin: Int32 { band == .leading ? margin : 0 }
+        var trailingMargin: Int32 { band == .trailing ? margin : 0 }
+
+        func align(start: GtkAlign, end: GtkAlign) -> GtkAlign {
+            switch band {
+            case .leading: return start
+            case .middle: return GTK_ALIGN_CENTER
+            case .trailing: return end
+            }
         }
+    }
+
+    /// Resolves one axis, collapsing to center when the panel and its margin do not both fit. The clamp on
+    /// either share caps it at `HudLayout.maxSizePercent`, where two margins exactly fill the rest, so the
+    /// collapse is defensive — for a panel no supported path can produce.
+    static func floatingOverlayAnchor(extent: Int32, sizePercent: Int,
+                                      band: HudPosition.Band) -> FloatingOverlayAnchor {
+        let margin = Double(extent) * Double(HudPosition.edgeMarginPercent) / 100
+        let free = Double(extent) * Double(100 - sizePercent) / 200 - margin
+        return FloatingOverlayAnchor(band: free > 0 ? band : .middle, margin: Int32(margin))
+    }
+
+    private func centerFloatingOverlay(_ frame: OpaquePointer?) {
+        gtk_widget_set_valign(W(frame), GTK_ALIGN_CENTER)
+        gtk_widget_set_halign(W(frame), GTK_ALIGN_CENTER)
+        gtk_widget_set_margin_top(W(frame), 0)
+        gtk_widget_set_margin_bottom(W(frame), 0)
+        gtk_widget_set_margin_start(W(frame), 0)
+        gtk_widget_set_margin_end(W(frame), 0)
     }
 
     /// Re-apply the live panel's geometry after `session.hud.update` or `session.overlay.resize` changed the
