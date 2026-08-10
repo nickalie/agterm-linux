@@ -70,7 +70,7 @@ enum LinuxCustomCommandProcess {
     static func launch(
         command: CustomCommand,
         context: CommandContext,
-        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        baseEnvironment: [String: String] = LinuxCommandPath.environment(),
         launcher: any LinuxProcessLaunching,
         onFailure: @escaping @Sendable (LinuxCustomCommandFailure) -> Void
     ) {

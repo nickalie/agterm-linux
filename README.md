@@ -69,6 +69,10 @@ GTK4 restores and clamps window sizes to a connected display.
 It does not expose reliable programmatic window positioning: Wayland compositors own placement, and the
 GTK4 frontend intentionally leaves x/y geometry absent on both Wayland and X11 rather than reporting
 coordinates it cannot restore.
+A custom command's `PATH` is widened the same way with Linux directories: the running executable's own
+directory — where both the tarball bundle and `install-linux.sh` put `agtermctl` — leads it, and
+`/usr/local/bin` plus `~/.local/bin` are appended. So a bare `agtermctl` works; anything else your shell
+profile adds still needs an absolute path or a login shell (`sh -lc '…'`).
 The macOS Finder, traffic-light, TCC, entitlement, notarization, Homebrew-cask, and AppKit-specific
 instructions later in this inherited document apply only to upstream agterm.
 
