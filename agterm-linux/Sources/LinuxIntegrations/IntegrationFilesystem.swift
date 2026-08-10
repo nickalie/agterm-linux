@@ -330,14 +330,13 @@ enum IntegrationFilesystem {
 
     private static func preparedData(at url: URL, relative: String, bakedCLI: String?) -> Data? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        let wrappers = [AgentHooksInstall.wrapperName, AgentHooksInstall.codexWrapperName]
-        guard wrappers.contains(relative), let bakedCLI,
+        guard AgentHooksInstall.bakedWrapperNames.contains(relative), let bakedCLI,
               let text = String(data: data, encoding: .utf8) else { return data }
         return Data(bakedCLIContents(bakedCLI, text: text).utf8)
     }
 
     private static func bakeCLIPath(_ tool: String, in destination: URL) throws {
-        for name in [AgentHooksInstall.wrapperName, AgentHooksInstall.codexWrapperName] {
+        for name in AgentHooksInstall.bakedWrapperNames {
             let url = destination.appendingPathComponent(name)
             let text = try String(contentsOf: url, encoding: .utf8)
             try AgentHooksInstall.writeFile(bakedCLIContents(tool, text: text), toPath: url.path,

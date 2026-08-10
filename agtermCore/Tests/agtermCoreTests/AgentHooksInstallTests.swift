@@ -23,7 +23,7 @@ struct AgentHooksInstallTests {
         (entry["hooks"] as? [[String: Any]])?.first?["command"] as? String
     }
 
-    @Test func mergeWhenAbsentAddsAllFourHooks() throws {
+    @Test func mergeWhenAbsentAddsEveryHook() throws {
         let result = try AgentHooksInstall.mergeClaudeSettings(existing: nil, scriptDir: scriptDir)
         #expect(result.changed)
         let evts = events(result.json)
@@ -42,6 +42,47 @@ struct AgentHooksInstallTests {
         #expect(evts["Notification"]![0]["matcher"] as? String == "permission_prompt")
         #expect(evts["UserPromptSubmit"]![0]["matcher"] == nil)
         #expect(evts["PostToolUse"]![0]["matcher"] == nil)
+    }
+
+    @Test func mergeAddsSessionRestoreHooks() throws {
+        let result = try AgentHooksInstall.mergeClaudeSettings(existing: nil, scriptDir: scriptDir)
+        let evts = events(result.json)
+        let script = scriptDir + "/" + AgentHooksInstall.claudeRestoreWrapperName
+        #expect(command(evts["SessionStart"]![0]) == "'\(script)' session-start")
+        #expect(command(evts["SessionEnd"]![0]) == "'\(script)' session-end")
+        // every start pins the live id, so no source matcher narrows which start counts
+        #expect(evts["SessionStart"]![0]["matcher"] == nil)
+        #expect(evts["SessionEnd"]![0]["matcher"] == nil)
+    }
+
+    @Test func mergeAddsRestoreHooksToAStatusOnlyInstall() throws {
+        // upgrading an install that predates the restore hooks: the status entries stay untouched and are
+        // not duplicated, and the two new events arrive
+        let statusOnly = """
+        {"hooks": {
+          "Stop": [{"hooks": [{"type": "command", "command": "'\(scriptDir)/agterm-agent-status.sh' completed --auto-reset"}]}],
+          "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "'\(scriptDir)/agterm-agent-status.sh' active --blink"}]}],
+          "PostToolUse": [{"hooks": [{"type": "command", "command": "'\(scriptDir)/agterm-agent-status.sh' active --blink"}]}],
+          "Notification": [{"matcher": "permission_prompt", "hooks": [{"type": "command", "command": "'\(scriptDir)/agterm-agent-status.sh' blocked"}]}]
+        }}
+        """
+        let result = try AgentHooksInstall.mergeClaudeSettings(existing: statusOnly, scriptDir: scriptDir)
+        #expect(result.changed)
+        let evts = events(result.json)
+        #expect(evts["Stop"]?.count == 1)
+        #expect(evts["SessionStart"]?.count == 1)
+        #expect(evts["SessionEnd"]?.count == 1)
+        #expect(try !AgentHooksInstall.mergeClaudeSettings(existing: result.json, scriptDir: scriptDir).changed)
+    }
+
+    @Test func mergeAddsRestoreHookBesideAForeignSessionStart() throws {
+        let existing = """
+        {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/usr/bin/mine.sh"}]}]}}
+        """
+        let result = try AgentHooksInstall.mergeClaudeSettings(existing: existing, scriptDir: scriptDir)
+        let commands = events(result.json)["SessionStart"]!.compactMap { command($0) }
+        #expect(commands.contains("/usr/bin/mine.sh"))
+        #expect(commands.contains { $0.hasSuffix("agterm-claude-restore.sh' session-start") })
     }
 
     @Test func mergeWhenPresentIsNoOp() throws {
@@ -106,13 +147,13 @@ struct AgentHooksInstallTests {
         // a whitespace-only file has no content to lose, so it starts fresh like an empty file
         let result = try AgentHooksInstall.mergeClaudeSettings(existing: "   \n\t\n", scriptDir: scriptDir)
         #expect(result.changed)
-        #expect(events(result.json).count == 4)
+        #expect(events(result.json).count == 6)
     }
 
     @Test func mergeHandlesEmptyExisting() throws {
         let result = try AgentHooksInstall.mergeClaudeSettings(existing: "", scriptDir: scriptDir)
         #expect(result.changed)
-        #expect(events(result.json).count == 4)
+        #expect(events(result.json).count == 6)
     }
 
     @Test func codexHooksBlockContainsAllSixEvents() {

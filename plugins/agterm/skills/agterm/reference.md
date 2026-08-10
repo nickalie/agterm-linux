@@ -1127,8 +1127,9 @@ user-edited file read at launch — there is no control command for it.
 
 For a PER-SESSION, per-pane override that pins (or suppresses) what a pane restores, use
 `session restore` (in the session section above): it wins over the captured foreground, bypasses the
-denylist, and is what a `SessionStart` hook rewrites to reattach a non-idempotent command. `restore clear`
-here is app-global and touches only the captured commands, not those overrides.
+denylist, and is what a `SessionStart` hook rewrites to reattach an agent session — agterm's installed
+Claude Code hooks already do that for `claude`. `restore clear` here is app-global and touches only the
+captured commands, not those overrides.
 
 ## Errors you may see
 

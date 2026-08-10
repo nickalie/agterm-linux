@@ -927,6 +927,8 @@ final class Fixture {
                   mode: 0o755)
         try write("#!/bin/sh\n# agterm codex wrapper\n", to: root.appendingPathComponent("agterm-codex-status.sh"),
                   mode: 0o755)
+        try write("#!/bin/sh\n# agterm claude restore\n",
+                  to: root.appendingPathComponent(AgentHooksInstall.claudeRestoreWrapperName), mode: 0o755)
         try write("# agterm shell", to: root.appendingPathComponent("shell/integration.sh"))
         try write("# agterm fish", to: root.appendingPathComponent("shell/integration.fish"))
         try write(

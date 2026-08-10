@@ -13,6 +13,14 @@ public enum AgentHooksInstall {
     /// terminal-output knowledge stays in this hook resource, outside agterm's runtime.
     public static let codexWrapperName = "agterm-codex-status.sh"
 
+    /// Claude Code session-restore adapter: it pins the live claude session id as the pane's
+    /// `session restore` override, so a restart reattaches instead of starting an empty session.
+    public static let claudeRestoreWrapperName = "agterm-claude-restore.sh"
+
+    /// The installed scripts whose `AGTERMCTL` default the installer rewrites to the bundled binary. Only a
+    /// script that CALLS the CLI belongs here; the shell/Pi/OpenCode assets resolve it their own way.
+    public static let bakedWrapperNames = [wrapperName, codexWrapperName, claudeRestoreWrapperName]
+
     /// The bundled Pi extension's path relative to the agent-status package, and its destination filename.
     public static let piExtensionRelativePath = "pi/agterm-status.ts"
     public static let piExtensionName = "agterm-status.ts"
@@ -39,17 +47,34 @@ public enum AgentHooksInstall {
     public static let rcMarkerBegin = "# >>> agterm agent-status >>>"
     public static let rcMarkerEnd = "# <<< agterm agent-status <<<"
 
-    /// The Claude Code hook events the merge installs, paired with the state (plus flags) each maps to.
-    /// `UserPromptSubmit` and `PostToolUse` both set `active` — the latter after every tool run, so the status
-    /// returns to `active` when work RESUMES after a `blocked` permission prompt: Claude Code has no
-    /// "permission answered" event, and the gated tool's `PreToolUse` fired BEFORE `blocked` was set, so its
-    /// `PostToolUse` is the first hook afterwards. `Notification` alone carries the `permission_prompt` matcher,
-    /// and only `Stop`→`completed` passes `--auto-reset` (it clears on visit); the rest stay keep-state.
-    static let claudeHooks: [(event: String, matcher: String?, state: String)] = [
-        ("UserPromptSubmit", nil, "active --blink"),
-        ("PostToolUse", nil, "active --blink"),
-        ("Stop", nil, "completed --auto-reset"),
-        ("Notification", "permission_prompt", "blocked"),
+    /// One installed Claude Code hook: which event fires it, which installed script it runs, and the
+    /// arguments that script takes. `script` is also the idempotency probe, so two hooks may share an event.
+    struct ClaudeHook {
+        let event: String
+        let matcher: String?
+        let script: String
+        let arguments: String
+    }
+
+    /// The Claude Code hook events the merge installs.
+    ///
+    /// Status: `UserPromptSubmit` and `PostToolUse` both set `active` — the latter after every tool run, so
+    /// the status returns to `active` when work RESUMES after a `blocked` permission prompt: Claude Code has
+    /// no "permission answered" event, and the gated tool's `PreToolUse` fired BEFORE `blocked` was set, so
+    /// its `PostToolUse` is the first hook afterwards. `Notification` alone carries the `permission_prompt`
+    /// matcher, and only `Stop`→`completed` passes `--auto-reset` (it clears on visit); the rest stay
+    /// keep-state.
+    ///
+    /// Restore: `SessionStart` pins the live session id so the next launch reattaches, and `SessionEnd`
+    /// unpins it — but only for the reasons the adapter treats as a deliberate exit, which is its own
+    /// judgement, not this table's.
+    static let claudeHooks: [ClaudeHook] = [
+        ClaudeHook(event: "UserPromptSubmit", matcher: nil, script: wrapperName, arguments: "active --blink"),
+        ClaudeHook(event: "PostToolUse", matcher: nil, script: wrapperName, arguments: "active --blink"),
+        ClaudeHook(event: "Stop", matcher: nil, script: wrapperName, arguments: "completed --auto-reset"),
+        ClaudeHook(event: "Notification", matcher: "permission_prompt", script: wrapperName, arguments: "blocked"),
+        ClaudeHook(event: "SessionStart", matcher: nil, script: claudeRestoreWrapperName, arguments: "session-start"),
+        ClaudeHook(event: "SessionEnd", matcher: nil, script: claudeRestoreWrapperName, arguments: "session-end"),
     ]
 
     /// Codex lifecycle events paired with actions the installed Codex hook understands; the adapter, not
@@ -100,23 +125,23 @@ public enum AgentHooksInstall {
     /// object: the installer refuses to overwrite a hand-maintained file it cannot safely parse.
     public enum MergeError: Error { case malformedExistingSettings }
 
-    /// merge the four agent-status hooks into an existing Claude Code `settings.json`.
+    /// merge the agent-status and session-restore hooks into an existing Claude Code `settings.json`.
     ///
     /// `existing` is the current contents (nil/empty = start from a fresh object). Returns the new JSON and
-    /// whether it differs; idempotent — hooks already present (detected by the wrapper command) return the
-    /// input with `changed == false`. Unrelated hooks and keys are preserved; invalid JSON throws.
+    /// whether it differs; idempotent — hooks already present (detected per event by the script each runs)
+    /// return the input with `changed == false`. Unrelated hooks and keys are preserved; invalid JSON throws.
     public static func mergeClaudeSettings(existing: String?, scriptDir: String) throws -> (json: String, changed: Bool) {
-        let command = wrapperCommand(scriptDir: scriptDir)
         var root = try parsedObject(existing)
 
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         var didChange = false
         for hook in claudeHooks {
+            let script = scriptDir + "/" + hook.script
             var entries = hooks[hook.event] as? [[String: Any]] ?? []
-            if entries.contains(where: { entryUsesWrapper($0, scriptDir: scriptDir) }) {
+            if entries.contains(where: { entryUsesScript($0, path: script) }) {
                 continue
             }
-            entries.append(hookEntry(command: command, state: hook.state, matcher: hook.matcher))
+            entries.append(hookEntry(command: shellQuote(script) + " " + hook.arguments, matcher: hook.matcher))
             hooks[hook.event] = entries
             didChange = true
         }
@@ -327,15 +352,10 @@ public enum AgentHooksInstall {
         }
     }
 
-    // build the command string a Claude hook runs: the quoted wrapper path plus the state argument.
-    private static func wrapperCommand(scriptDir: String) -> String {
-        shellQuote(wrapperPath(scriptDir: scriptDir)) + " "
-    }
-
     // a single Claude hook entry: { (matcher?), hooks: [{ type: command, command }] }.
-    private static func hookEntry(command: String, state: String, matcher: String?) -> [String: Any] {
+    private static func hookEntry(command: String, matcher: String?) -> [String: Any] {
         var entry: [String: Any] = [
-            "hooks": [["type": "command", "command": command + state]],
+            "hooks": [["type": "command", "command": command]],
         ]
         if let matcher {
             entry["matcher"] = matcher
@@ -343,11 +363,10 @@ public enum AgentHooksInstall {
         return entry
     }
 
-    // does a hook entry already invoke our wrapper (idempotency probe, by wrapper path)?
-    private static func entryUsesWrapper(_ entry: [String: Any], scriptDir: String) -> Bool {
-        let probe = wrapperPath(scriptDir: scriptDir)
+    // does a hook entry already invoke this installed script (idempotency probe, by script path)?
+    private static func entryUsesScript(_ entry: [String: Any], path: String) -> Bool {
         guard let commands = entry["hooks"] as? [[String: Any]] else { return false }
-        return commands.contains { ($0["command"] as? String)?.contains(probe) == true }
+        return commands.contains { ($0["command"] as? String)?.contains(path) == true }
     }
 
     // absent/empty/whitespace-only → fresh empty object; a non-empty file that is not a valid JSON object →

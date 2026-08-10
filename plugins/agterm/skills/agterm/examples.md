@@ -42,12 +42,16 @@ The pinned value is SHELL CODE: it persists in the window's state file (`windows
 via `tree`, and may enter shell history when it runs — so it must not carry secrets, and only
 safely-interpolated values (a UUID-shaped session id) belong in it.
 
-## Keep a forking agent session reattaching across restarts (a SessionStart hook)
+## Keep an agent session reattaching across restarts (a SessionStart hook)
 
-`claude --resume <id> --fork-session` mints a NEW claude session on every agterm restart, so restoring it
-verbatim never reattaches the session you were in. Fix it by rewriting the override to the LIVE session id
-on every start, from a Claude Code `SessionStart` hook — it runs inside the session's shell, where
-`$AGTERM_SESSION_ID` and `$AGTERM_PANE_ID` are exported:
+Restoring a captured `claude` verbatim starts an EMPTY session, and `claude --resume <id> --fork-session`
+mints a new one on every agterm restart — neither reattaches the session you were in. Fix it by rewriting
+the override to the LIVE session id on every start, from a `SessionStart` hook: it runs inside the
+session's shell, where `$AGTERM_SESSION_ID` and `$AGTERM_PANE_ID` are exported.
+
+Claude Code needs none of this by hand — agterm's installed agent hooks
+(`agent-status/agterm-claude-restore.sh`) already pin `claude --resume <id>` on every start and clear the
+pin on a deliberate exit. Write your own only for another agent, or to pin different flags:
 
 ```bash
 # in the SessionStart hook (the selector is --target; there is no --session).
@@ -59,8 +63,11 @@ agtermctl session restore "claude --resume $sid" \
 ```
 
 Because the hook rewrites the override on every start, it always tracks the live child, so the next
-restart reattaches instead of forking. Ownership flips to whoever sets it: write it once by hand and forget,
-and it stays pinned to a STALE id — that is why this is a hook-driven override, not a set-once setting.
+restart reattaches. Ownership flips to whoever sets it: write it once by hand and forget, and it stays
+pinned to a STALE id — that is why this is a hook-driven override, not a set-once setting. A matching
+`SessionEnd` hook that pins `--clear` is what keeps a pane you deliberately left at a shell from
+reopening the agent; only clear on the reasons that mean a deliberate exit, since a killed process (what
+quitting agterm does to it) is exactly the case the pin exists for.
 
 Read the id from the hook's stdin (`$CLAUDE_CODE_SESSION_ID` is exported in the session's environment as
 well, but the stdin `session_id` is what the hook is handed). GUARD against an empty value before pinning:

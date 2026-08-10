@@ -53,6 +53,12 @@ paths:
   unrelated config; unreadable config is never treated as absent.
 - Claude maps prompt/tool work to `active --blink`, Stop to `completed --auto-reset`, and permission
   prompt to blocked. PostToolUse clears a prior block because there is no answer event.
+- Claude also installs the session-restore adapter: SessionStart pins `claude --resume <stdin session_id>`
+  through `session restore`, SessionEnd clears it only for `logout`/`prompt_input_exit`. `other` covers a
+  killed process, which is what quitting agterm does, so clearing there would undo the pin it exists for.
+  Require the UUID shape before pinning — the pin is persisted and re-typed every launch until cleared.
+  `mergeClaudeSettings` probes idempotency per event by the SCRIPT each entry runs, so two adapters may
+  share one event; `bakedWrapperNames` is the single list both installers bake the CLI path into.
 - Codex maps SessionStart idle; prompt/pre/post tool active; Stop ending `?` blocked, otherwise completed.
   `PermissionRequest` is insufficient under Auto Review, so a pane watcher reads `session.text` and blocks
   only for visible approval/question UI. Remove stale issue #193 `codex-notify.sh` values, not comments or
@@ -515,6 +521,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - `CommandRestore.restorePlan` owns precedence. Honor the master `restoreRunningCommand` setting, bypass
   denylist for deliberate pins, and type text verbatim. Document that persisted shell code may enter
   history and must not contain secrets.
+- A captured agent argv restores the PROGRAM, never its conversation: a bare `claude` comes back empty.
+  Reattaching belongs to a lifecycle hook that pins the live session id, not to the capture.
 - Reuse command/mode/pane/paneID. Validate mode, required set command, no control characters including tab,
   maximum 1024 UTF-8 bytes, and left/right/scratch. Shell metacharacters are allowed.
 - Pane ID resolves first. Unlike status, unknown pane ID without an explicit pane errors to avoid writing

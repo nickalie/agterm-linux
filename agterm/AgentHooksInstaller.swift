@@ -2,9 +2,10 @@ import AppKit
 import agtermCore
 
 /// Installs the bundled agent-status hooks package into the user's home: the scripts into
-/// `~/.config/agterm/agent-status/`, the bundled `agtermctl`'s absolute path baked into the wrapper, a
-/// marker-guarded `source` line in `~/.zshrc`/`~/.bashrc`/`~/.config/fish/config.fish`, the four Claude Code
-/// hooks merged into `~/.claude/settings.json`, the six Codex lifecycle hooks into `~/.codex/config.toml`,
+/// `~/.config/agterm/agent-status/`, the bundled `agtermctl`'s absolute path baked into the wrappers, a
+/// marker-guarded `source` line in `~/.zshrc`/`~/.bashrc`/`~/.config/fish/config.fish`, the Claude Code
+/// status and session-restore hooks merged into `~/.claude/settings.json`, the six Codex lifecycle hooks
+/// into `~/.codex/config.toml`,
 /// and — when each is configured — Pi's lifecycle extension into `~/.pi/agent/extensions/` and OpenCode's
 /// plugin into `~/.config/opencode/plugins/`. Claude/Codex configs get a `.bak` first; the Codex step parses
 /// TOML and surfaces a manual block instead when that file already has hooks or does not parse. The
@@ -124,7 +125,7 @@ enum AgentHooksInstaller {
     // env override still wins (order 1 > 2 > PATH); shellQuote keeps spaces / metacharacters inert.
     private static func bakeAgtermctlPath() throws {
         guard let tool = bundledTool else { return } // no bundled CLI: leave the PATH fallback in place
-        for name in [AgentHooksInstall.wrapperName, AgentHooksInstall.codexWrapperName] {
+        for name in AgentHooksInstall.bakedWrapperNames {
             let wrapper = destinationFolder.appendingPathComponent(name)
             let original = try String(contentsOf: wrapper, encoding: .utf8)
             let stripped = stripBakedBlock(from: original)
@@ -182,7 +183,7 @@ enum AgentHooksInstaller {
         }
     }
 
-    // merge the four Claude Code hooks into ~/.claude/settings.json, writing a .bak first when anything
+    // merge the Claude Code hooks into ~/.claude/settings.json, writing a .bak first when anything
     // changes. returns true when the merge was SKIPPED (invalid JSON, or unreadable) and the file left as is.
     private static func mergeClaudeSettings() throws -> Bool {
         let claudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")

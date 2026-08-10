@@ -129,6 +129,15 @@ Confirm what is pinned from `tree --json`: the node's `restoreCommand` (main pan
 (split pane) reports the persisted value, which survives after the override fires, so a read at any point
 shows the truth.
 
+### "claude comes back as an empty session after a restart"
+
+The pane re-ran the CAPTURED foreground, which is a bare `claude` — the capture records the argv, and that
+argv starts a new conversation. Reattaching needs the live session id, which only the agent knows, so it
+comes from the `SessionStart` hook agterm's installers add (`agterm-claude-restore.sh`), pinning
+`claude --resume <id>` through `session restore`. If it is empty anyway, check that `tree --json` reports a
+`restoreCommand` on that session, that `~/.claude/settings.json` still carries both hook entries, and that
+the pane is neither the scratch nor a hidden split — both refuse a pin.
+
 ### "notify says ok but no notification appears"
 
 Check **Settings ▸ Notifications ▸ Show notification banners** first. With it off, `notify` succeeds and

@@ -2398,8 +2398,10 @@
               hooks package: a generic bash/zsh/fish shell integration (flags
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">active</span> while a command
               matching <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">AGTERM_AGENT_RE</span> runs;
-              the default set is gemini, cursor-agent, aider, crush, goose), four Claude Code hooks (prompt → active,
-              tool run → active, Stop → completed, permission prompt → blocked), and an OpenCode lifecycle plugin.
+              the default set is gemini, cursor-agent, aider, crush, goose), six Claude Code hooks (prompt → active,
+              tool run → active, Stop → completed, permission prompt → blocked, plus a session start that pins
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">claude --resume &lt;id&gt;</span>
+              as the pane's restore command and a session end that clears it), and an OpenCode lifecycle plugin.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               Six Codex lifecycle events run a dedicated adapter.
@@ -2488,10 +2490,11 @@
                 window's state file and readable via
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tree</span>, so it must not carry
                 secrets. A
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">SessionStart</span> hook can rewrite it so a
-                non-idempotent command like
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">SessionStart</span> hook rewrites it to the
+                agent's live session id, which is what makes a restart reattach: a captured bare
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">claude</span> would come back empty, and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">claude --resume … --fork-session</span>
-                reattaches on restart instead of forking.
+                would fork. Claude Code is wired that way by the installed agent hooks; any other agent needs the same hook of its own.
               </li>
               <li style="font-size: 15px; line-height: 1.65; color: #cbc6bc; padding-left: 22px; position: relative">
                 <span
