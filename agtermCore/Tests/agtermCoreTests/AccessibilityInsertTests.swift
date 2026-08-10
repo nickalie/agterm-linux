@@ -22,8 +22,12 @@ struct AccessibilityInsertTests {
     // `contains("\n") || contains("\r")` predicate reported false and the payload skipped the
     // bracketed-paste branch — the raw CR reached the pty and the line ran.
     @Test func crlfRoutesToPaste() {
-        #expect("ls -la\r\n".contains("\n") == false, "CRLF is one cluster, equal to neither \\n nor \\r")
-        #expect("ls -la\r\n".contains("\r") == false)
+        // spelled `as Character` because the bare literal picks a different overload per platform:
+        // Foundation's substring search on Darwin, the stdlib's on Linux, and only the latter finds "\n"
+        // inside CRLF. Element containment is the grapheme comparison this documents, on both.
+        #expect("ls -la\r\n".contains("\n" as Character) == false,
+                "CRLF is one cluster, equal to neither \\n nor \\r")
+        #expect("ls -la\r\n".contains("\r" as Character) == false)
         #expect(AccessibilityInsert.needsPasteRouting("ls -la\r\n"))
         #expect(AccessibilityInsert.needsPasteRouting("one\r\ntwo"))
     }
