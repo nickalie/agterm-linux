@@ -41,7 +41,7 @@ Code layout:
 
 ### Linux feature parity and platform differences
 
-The `linux-port` branch carries the upstream v0.19.0 terminal model and control protocol, including
+The `linux-port` branch carries the upstream v0.21.0 terminal model and control protocol, including
 split/scratch/overlay terminals, Quick terminal input and read-back, terminal zoom, fullscreen,
 recently closed sessions with grouped undo, light/dark themes, configurable toolbar and sidebar text,
 recent-session and attention popovers, agent status in the multi-session dashboard, stable pane status
@@ -73,6 +73,9 @@ A custom command's `PATH` is widened the same way with Linux directories: the ru
 directory — where both the tarball bundle and `install-linux.sh` put `agtermctl` — leads it, and
 `/usr/local/bin` plus `~/.local/bin` are appended. So a bare `agtermctl` works; anything else your shell
 profile adds still needs an absolute path or a login shell (`sh -lc '…'`).
+The terminal surface is not exposed as an editable accessible text area on Linux: GTK4's `GtkAccessibleText`
+would have to be implemented on libghostty's own GL widget, and the port registers no widget types of its
+own. Screen readers see the window chrome, the sidebar, and the dialogs, not the terminal grid.
 The macOS Finder, traffic-light, TCC, entitlement, notarization, Homebrew-cask, and AppKit-specific
 instructions later in this inherited document apply only to upstream agterm.
 
