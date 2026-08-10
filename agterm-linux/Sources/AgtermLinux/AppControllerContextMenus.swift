@@ -31,10 +31,7 @@ extension AppController {
         guard let popover = op(gtk_popover_new()) else { return }
         attachControllerContext(to: popover, windowID: windowID)
         contextMenuPopover = popover
-        gtk_widget_set_parent(W(popover), W(listBox))
-        var rect = GdkRectangle(x: Int32(x), y: Int32(y), width: 1, height: 1)
-        gtk_popover_set_pointing_to(POPOVER(popover), &rect)
-        gtk_popover_set_position(POPOVER(popover), GTK_POS_RIGHT)
+        anchorContextMenu(popover, x: x, y: y, over: listBox)
         let box = op(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0))
         let targets = store.sidebarSelectionTargets(forContextSession: sid)
         let sessions = targets.compactMap { store.session(withID: $0) }
@@ -77,6 +74,29 @@ extension AppController {
         gtk_popover_popup(POPOVER(popover))
     }
 
+    /// Parent the menu to the sidebar SCROLLER, not to the clicked row's own widget, and translate the
+    /// click into the scroller's coordinates because the parent is what those coordinates are relative to.
+    ///
+    /// `rebuildSidebar()` destroys every row and workspace header, and it runs on any store change — a
+    /// background session's agent status, an OSC title, a control command — so a popover parented into that
+    /// subtree dies with it and the menu vanishes under the user's cursor mid-choice. The scroller outlives
+    /// every rebuild, which leaves an outside click and a chosen item as the only ways the menu closes.
+    /// It must NOT be `sidebarBox`: the rebuild empties that one through `gtk_widget_get_first_child`, which
+    /// would hand it the popover and loop forever failing to `gtk_box_remove` it.
+    private func anchorContextMenu(_ popover: OpaquePointer, x: Double, y: Double, over widget: OpaquePointer) {
+        let parent = sidebarScroller ?? widget
+        var click = graphene_point_t(x: Float(x), y: Float(y))
+        var anchor = click   // already the parent's space, or untranslatable: the raw click stands
+        if parent != widget {
+            var translated = graphene_point_t()
+            if gtk_widget_compute_point(W(widget), W(parent), &click, &translated) != 0 { anchor = translated }
+        }
+        gtk_widget_set_parent(W(popover), W(parent))
+        var rect = GdkRectangle(x: Int32(anchor.x), y: Int32(anchor.y), width: 1, height: 1)
+        gtk_popover_set_pointing_to(POPOVER(popover), &rect)
+        gtk_popover_set_position(POPOVER(popover), GTK_POS_RIGHT)
+    }
+
     private func addContextButton(_ box: OpaquePointer?, _ label: String, _ handler: GCallback?) {
         guard let button = op(gtk_button_new_with_label(label)) else { return }
         gtk_button_set_has_frame(BUTTON(button), 0)
@@ -85,15 +105,9 @@ extension AppController {
         gtk_box_append(cast(box), W(button))
     }
 
-    /// Whether a sidebar context menu is on screen right now. The `contextMenuPopover` handle OUTLIVES an
-    /// autohide dismissal (GTK pops the popover down itself when the user clicks away, and only the next
-    /// `dismissContextMenu()` clears the handle), so visibility is the live signal — a deferred rebuild
-    /// gating on the bare handle would defer forever after one click-away dismissal.
-    var contextMenuIsOpen: Bool {
-        guard let popover = contextMenuPopover else { return false }
-        return gtk_widget_get_visible(W(popover)) != 0
-    }
-
+    /// Pop the menu down and detach it from the scroller. The handle OUTLIVES an autohide dismissal — GTK
+    /// pops the popover down itself when the user clicks away and tells nobody — so this also runs on an
+    /// already-hidden popover, which is why it must stay idempotent.
     func dismissContextMenu() {
         if let popover = contextMenuPopover {
             gtk_popover_popdown(POPOVER(popover))
@@ -179,10 +193,7 @@ extension AppController {
         guard let popover = op(gtk_popover_new()) else { return }
         attachControllerContext(to: popover, windowID: windowID)
         contextMenuPopover = popover
-        gtk_widget_set_parent(W(popover), W(parent))
-        var rect = GdkRectangle(x: Int32(x), y: Int32(y), width: 1, height: 1)
-        gtk_popover_set_pointing_to(POPOVER(popover), &rect)
-        gtk_popover_set_position(POPOVER(popover), GTK_POS_RIGHT)
+        anchorContextMenu(popover, x: x, y: y, over: parent)
         let box = op(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0))
         addContextButton(box, store.isSoleFocus(wsID) ? "Unfocus" : "Focus",
                          unsafeBitCast(onCtxWorkspaceFocus as @convention(c)

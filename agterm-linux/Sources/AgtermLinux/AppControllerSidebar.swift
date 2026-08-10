@@ -54,15 +54,16 @@ extension AppController {
         }
     }
 
-    /// Whether a sidebar row interaction is live: an inline rename, or an open context menu.
+    /// Whether an inline sidebar rename is live.
     ///
     /// `rebuildSidebar()` destroys and re-creates every row, so an ASYNC rebuild must not land here — it
-    /// would tear down the in-progress rename entry (whose disposal fires a focus-out that commits its
-    /// half-typed text) and dismiss the open menu, from a timer the user never asked for. Both deferred
-    /// rebuilds — the sidebar-metadata refresh and the trailing soft-close reconcile — gate on this ONE
-    /// predicate so they cannot drift apart. A SYNCHRONOUS rebuild is a direct consequence of a user action
-    /// and is deliberately not gated.
-    var sidebarInteractionInProgress: Bool { renaming != nil || contextMenuIsOpen }
+    /// would tear down the in-progress rename entry, whose disposal fires a focus-out that commits its
+    /// half-typed text, from a timer the user never asked for. Both deferred rebuilds — the sidebar-metadata
+    /// refresh and the trailing soft-close reconcile — gate on this ONE predicate so they cannot drift
+    /// apart. A SYNCHRONOUS rebuild is a direct consequence of a user action and is deliberately not gated.
+    /// An open context menu needs no gate: it hangs off the scroller, not off a row (`anchorContextMenu`),
+    /// so it survives any rebuild and only the user closes it.
+    var sidebarInteractionInProgress: Bool { renaming != nil }
 
     /// How long a deferred rebuild waits before re-checking `sidebarInteractionInProgress`. It belongs to the
     /// GATE rather than to either job: the metadata refresh and the soft-close reconcile are unrelated jobs
@@ -71,10 +72,6 @@ extension AppController {
 
     func rebuildSidebar() {
         let settings = linuxSettingsStore().load()
-        // GtkPopover is parented to the row's GtkListBox while its context menu is open. Detach it
-        // before destroying that list box: GtkListBox disposal otherwise treats the popover as a row,
-        // repeatedly fails to remove it, and starves the GTK main loop.
-        dismissContextMenu()
         updateAttentionButton(settings: settings)
         updateDashboardStatusIndicators()
         while let child = gtk_widget_get_first_child(W(sidebarBox)) {

@@ -63,6 +63,9 @@ extension AppController {
         cancelTheme()
         closePalette()
         dismissSettings()
+        // The context menu hangs off the sidebar scroller and no longer goes away with a row, so unparent
+        // it here rather than leaving GTK to finalize the scroller with a child still attached.
+        dismissContextMenu()
         dismissAuxiliaryDialogs()
         sidebarMetadataDebouncer.cancel()
         // These deferred jobs now really fire on Linux, and each outlives this window if something else

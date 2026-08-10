@@ -83,7 +83,10 @@ paths:
   dismissal — GTK owns the dialog and the guard is what makes the late callback a no-op.
 - **A deferred job that rebuilds the sidebar defers while the user is interacting with it.**
   `rebuildSidebar()` destroys every row, so an async rebuild landing on a live inline rename commits its
-  half-typed text (the entry's disposal fires a focus-out) and dismisses an open context menu.
+  half-typed text (the entry's disposal fires a focus-out).
+  An open context menu is NOT part of that gate: `anchorContextMenu` parents the popover to the sidebar
+  scroller instead of to a row, so it survives every rebuild — a background session's status, an OSC title,
+  a control command — and closes only on an outside click or a chosen item.
   Gate on the shared `AppController.sidebarInteractionInProgress` and re-arm at
   `AppController.sidebarInteractionRetryInterval` instead of dropping the rebuild; a SYNCHRONOUS rebuild is a
   direct consequence of a user action and is deliberately not gated.
@@ -92,7 +95,7 @@ paths:
 - **A deferred job must not GRAB keyboard focus — that gate covers the sidebar only.**
   `reconcile()` defaults to `focusActive: true`, which ends in `grab_focus` on the active session's pane, so
   a timer-driven reconcile takes the keyboard away from whatever the user moved to during the delay.
-  `sidebarInteractionInProgress` sees only the inline rename and the context menu; the in-terminal search
+  `sidebarInteractionInProgress` sees only the inline rename; the in-terminal search
   entry and the quick terminal are plain widgets in the SAME toplevel and are invisible to it, so a grab
   silently reroutes the rest of the user's typing into a live shell.
   Pass `reconcile(focusActive: false)` from any timer (the trailing soft-close reconcile does);

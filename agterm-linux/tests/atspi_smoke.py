@@ -1029,6 +1029,19 @@ def verify_dashboard_modal(env):
 
 
 def verify_context_menu(env):
+    def menu_item(name):
+        # The button and its child label share the name and BOTH expose an action, so `actionable` would
+        # hand back the label, whose action does nothing.
+        return next((item for item in collect(app, name=name, role="push button")), None)
+
+    def flagged_sessions():
+        return [
+            session["name"]
+            for workspace in control_json(env, "tree", "--json")["result"]["tree"]["workspaces"]
+            for session in workspace["sessions"]
+            if session.get("flagged")
+        ]
+
     process, app = launch(env)
     try:
         rows = wait_for(lambda: collect(app, role="list item"), "expected at least one session row")
@@ -1036,7 +1049,7 @@ def verify_context_menu(env):
         for _ in range(3):
             right_click(lambda: next(iter(collect(app, role="list item")), None), process.pid)
             try:
-                flag = wait_for(lambda: actionable(app, "Flag"), "session context menu did not open", timeout=1)
+                flag = wait_for(lambda: menu_item("Flag"), "session context menu did not open", timeout=1)
                 break
             except AssertionError:
                 pass
@@ -1045,13 +1058,21 @@ def verify_context_menu(env):
         created = control_json(env, "window", "new", "context-background", "--json")["result"]["id"]
         assert process.poll() is None, "backgrounding a window with a context menu terminated the app"
         control_json(env, "window", "close", created, "--json")
+        # An agent's status update rebuilds the sidebar under the open menu, as does creating a session.
+        # Neither is the user's dismissal, so the menu stays up through both.
+        control_json(env, "session", "status", "active", "--json")
+        time.sleep(0.5)
+        assert menu_item("Flag"), "a background status update dismissed the open context menu"
         activate(wait_for(lambda: actionable(app, "New Session"), "New Session button is not actionable"))
         wait_for(
             lambda: len(collect(app, role="list item")) == len(rows) + 1,
             "creating a session with a context menu open blocked the app",
         )
-        control_json(env, "tree", "--json")
-        print("OK: session context menu survives a sidebar rebuild")
+        assert menu_item("Flag"), "creating a session dismissed the open context menu"
+        activate(menu_item("Flag"))
+        wait_for(lambda: menu_item("Flag") is None, "choosing a context menu item left the menu open")
+        assert flagged_sessions(), "the chosen context menu item did not flag its session"
+        print("OK: session context menu survives a sidebar rebuild and closes on a chosen item")
     except AssertionError:
         describe_tree(app)
         raise
