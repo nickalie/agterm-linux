@@ -550,7 +550,7 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
 
     // wired off GhosttySurfaceView.keyDown, so it MUST be a real keystroke: `session.type` calls
     // ghostty_surface_key directly and bypasses keyDown.
-    func testTypingClearsBlockedOrCompletedStatus() throws {
+    func testInterruptClearsBlockedOrCompletedStatus() throws {
         let tree = try sendCommand(#"{"cmd":"tree"}"#)
         let treeResult = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")
         let root = try XCTUnwrap(treeResult["tree"] as? [String: Any], "result should carry a tree")
@@ -558,6 +558,8 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
         let sessions = try XCTUnwrap(workspaces.first?["sessions"] as? [[String: Any]], "workspace should list sessions")
         let seeded = try XCTUnwrap(sessions.first?["id"] as? String, "should have a seeded session id")
 
+        // Escape, not a letter: an ordinary key ANSWERS a block into `active` rather than clearing it
+        // (`AgentIndicator.afterKeystroke`), and only the interrupt drops both states to idle.
         // keyboard focus return is async, so retry until the glyph clears.
         func typeUntilGlyphCleared() -> Bool {
             for _ in 0..<8 {
@@ -580,7 +582,7 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
     // an `active` glyph clears ONLY on an interrupt keystroke. Ctrl-C is an interrupt just like Esc — Claude
     // Code and most TUIs treat it as Esc for dismissing a pending prompt — so it must drop the stale glyph
     // where ordinary typing (host-free tested) does not. covers the app-side `isInterruptKeystroke` wiring
-    // the host-free `clearedByKeystroke` cannot reach.
+    // the host-free `afterKeystroke` cannot reach.
     func testCtrlCClearsActiveStatus() throws {
         let tree = try sendCommand(#"{"cmd":"tree"}"#)
         let treeResult = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")

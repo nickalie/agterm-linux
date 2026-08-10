@@ -541,7 +541,7 @@ final class GhosttySurface: TerminalSurface {
         let baseScalar = Unicode.Scalar(gdk_keyval_to_unicode(gdk_keyval_to_lower(keyval)))
         let isInterrupt = keyval == 0xFF1B || (control && !hasOtherModifiers && baseScalar?.value == 0x63)
         if let pane = role.statusPane {
-            controller?.clearAttentionStatus(sessionID, pane: pane, isInterrupt: isInterrupt)
+            controller?.applyKeystrokeToStatus(sessionID, pane: pane, isInterrupt: isInterrupt)
         }
 
         // App-level shortcuts run first via the shared keymap (rebindable built-ins + custom commands +

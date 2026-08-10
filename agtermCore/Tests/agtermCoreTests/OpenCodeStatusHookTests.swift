@@ -249,7 +249,7 @@ struct OpenCodeStatusHookTests {
 
     @Test func abortErrorDoesNotLatchBlocked() throws {
         // Esc → halt(AbortError) → MessageAbortedError + idle. Must end on completed --auto-reset
-        // (self-clears on visit), not stuck blocked ahead of clearedByKeystroke.
+        // (self-clears on visit), not stuck blocked ahead of afterKeystroke.
         let calls = try runEvents([
             status("busy"),
             event("session.error", properties: [

@@ -98,16 +98,16 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     var onClearUnseen: (() -> Void)?
 
     /// Called on the main actor on EVERY keystroke into this surface, carrying whether the key interrupts the
-    /// agent (Escape or Ctrl-C). The factory decides per pane via `AgentIndicator.clearedBy(pane:isInterrupt:)`:
-    /// clear the glyph to idle only when THIS surface's pane owns a clearable status — `blocked`/`completed`
-    /// on any key, `active` only on an interrupt — so foreground typing cannot wipe a background pane's block.
-    /// Passing the pane rather than reading `view.session` lets the scratch, which has none, self-clear.
-    /// Status is otherwise control-driven; this is the one input-driven clear, for the decline case Claude
-    /// Code fires no hook for.
-    var onUserInputClearsStatus: ((Bool) -> Void)?
+    /// agent (Escape or Ctrl-C). The factory moves the glyph per pane via
+    /// `AgentIndicator.afterKeystroke(pane:isInterrupt:)`, and only when THIS surface's pane owns the status,
+    /// so foreground typing cannot touch a background pane's block. Passing the pane rather than reading
+    /// `view.session` lets the scratch, which has none, transition itself. Status is otherwise control-driven;
+    /// this is the one input-driven path, covering the two moments Claude Code fires no hook for — declining a
+    /// prompt, and answering one before its approved tool finishes.
+    var onUserInputStatusKeystroke: ((Bool) -> Void)?
 
     /// Called on the main actor on EVERY keystroke to stamp user activity and reset the window's auto-follow
-    /// idle timer. Fires unconditionally, unlike `onUserInputClearsStatus`: ordinary typing in an idle
+    /// idle timer. Fires unconditionally, unlike `onUserInputStatusKeystroke`: ordinary typing in an idle
     /// session must count as activity or the user is yanked to a blocked session mid-type.
     var onUserInput: (() -> Void)?
 
@@ -717,7 +717,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         onExitCodeCaptured = nil
         onFocusChange = nil
         onClearUnseen = nil
-        onUserInputClearsStatus = nil
+        onUserInputStatusKeystroke = nil
         onUserInput = nil
         onFontSizeChange = nil
         onSearchStart = nil

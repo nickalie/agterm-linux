@@ -586,11 +586,13 @@ final class AppController {
         syncSidebarSelection()
     }
 
-    /// Typing clears blocked/completed status; Escape or bare Ctrl-C also clears active status.
-    func clearAttentionStatus(_ id: UUID, pane: StatusPane, isInterrupt: Bool) {
+    /// Move the pane's agent status along a keystroke: typing clears completed and answers blocked into
+    /// active, Escape or bare Ctrl-C clears everything. `AgentIndicator.afterKeystroke` owns the table.
+    func applyKeystrokeToStatus(_ id: UUID, pane: StatusPane, isInterrupt: Bool) {
         guard let session = store.session(withID: id),
-              session.agentIndicator.clearedBy(pane: pane, isInterrupt: isInterrupt) else { return }
-        store.setAgentIndicator(AgentIndicator(), forSession: id)
+              let next = session.agentIndicator.afterKeystroke(pane: pane, isInterrupt: isInterrupt)
+        else { return }
+        store.setAgentIndicator(next, forSession: id)
         rebuildSidebar()
     }
     /// Reset the active session's agent status to idle (the palette "Clear Status", GUI half of

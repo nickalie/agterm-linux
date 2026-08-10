@@ -99,11 +99,13 @@ paths:
   `AppStore.selectSession`; hooks cannot infer agterm selection.
 - Clear Status is the first row-menu item when non-idle and also appears in the menu bar and palette.
   Row menus target their node; global surfaces call `clearActiveSessionStatus`; all set an empty indicator.
-- `GhosttySurfaceView.keyDown` always calls `onUserInputClearsStatus(isInterrupt:)`. Main `.left`, split
-  `.right`, and scratch `.scratch` factories own the pane-scoped decision, allowing scratch to clear
-  without `view.session`. `AgentIndicator.clearedBy` clears blocked/completed on any key, active only on
-  interrupt, and only when the key's pane owns the status. Thus foreground typing cannot clear another
-  pane's status.
+- `GhosttySurfaceView.keyDown` always calls `onUserInputStatusKeystroke(isInterrupt:)`. Main `.left`, split
+  `.right`, and scratch `.scratch` factories own the pane-scoped decision, allowing scratch to transition
+  without `view.session`. `AgentIndicator.afterKeystroke` returns the next indicator or nil: it clears
+  completed on any key, clears any state on interrupt, and promotes an answered blocked to blinking
+  `active` — the approved tool runs with no hook until `PostToolUse`, so clearing there left the glyph dark
+  for the whole run. It moves nothing unless the key's pane owns the status, so foreground typing cannot
+  touch another pane's status. The cost is that a stale blocked becomes a stale active once you type.
 - Interrupt means Esc (`keyCode == 53`) or bare Ctrl-C: control with no command/option/shift and either
   character `c` or physical key code 8. Physical matching covers non-Latin layouts; character matching
   covers Dvorak; excluding shift preserves Ctrl-Shift-C. Keep the full host-free truth table in

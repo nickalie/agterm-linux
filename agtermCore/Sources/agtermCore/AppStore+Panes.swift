@@ -44,7 +44,7 @@ extension AppStore {
     }
 
     /// Clear the agent-status indicator when the pane that OWNED it is torn down, so a pane-tagged block
-    /// can't strand a glyph no surviving surface can keystroke-clear (`AgentIndicator.clearedBy` requires the
+    /// can't strand a glyph no surviving surface can keystroke-clear (`AgentIndicator.afterKeystroke` requires the
     /// typing pane to match `statusPane`). `owner` is the departing pane; a nil tag counts as `.left`,
     /// matching the clear-decision default. Mirrors `clearSearch()` on these same teardown paths.
     private func clearIndicatorOwnedByPane(_ owner: StatusPane, of session: Session) {

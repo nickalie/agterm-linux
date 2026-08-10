@@ -50,14 +50,15 @@ extension GhosttySurfaceView {
         // every keystroke is user activity: reset the auto-follow idle timer UNCONDITIONALLY, not gated on
         // the status-clear below, else typing in an idle session yanks the user to a blocked one mid-type.
         onUserInput?()
-        // a keystroke clears an attention glyph to idle: blocked/completed on ANY key, active ONLY on an
-        // interrupt (Escape or Ctrl-C), so typing while the agent works keeps the "working" glyph but
-        // cancelling a pending prompt drops it. Claude Code treats Ctrl-C like Esc for dismissing a prompt,
-        // yet neither fires a hook and a cancelled prompt can still read active (its blocked notification
-        // lands seconds later), so this is the only signal that drops the stale glyph. fire UNCONDITIONALLY
-        // with the isInterrupt flag: the pane-scoped decision belongs to AgentIndicator.clearedBy, so the
-        // scratch (no view.session) self-clears too and a background pane's block survives foreground typing.
-        onUserInputClearsStatus?(isInterruptKeystroke(event))
+        // a keystroke moves an attention glyph: completed clears on ANY key, an answered block becomes active,
+        // and active itself clears ONLY on an interrupt (Escape or Ctrl-C), so typing while the agent works
+        // keeps the "working" glyph but cancelling a pending prompt drops it. Claude Code treats Ctrl-C like
+        // Esc for dismissing a prompt, yet neither fires a hook and a cancelled prompt can still read active
+        // (its blocked notification lands seconds later), so this is the only signal that drops the stale
+        // glyph. fire UNCONDITIONALLY with the isInterrupt flag: the pane-scoped decision belongs to
+        // AgentIndicator.afterKeystroke, so the scratch (no view.session) transitions too and a background
+        // pane's block survives foreground typing.
+        onUserInputStatusKeystroke?(isInterruptKeystroke(event))
         let action: ghostty_input_action_e = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
