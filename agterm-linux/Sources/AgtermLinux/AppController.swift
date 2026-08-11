@@ -111,6 +111,7 @@ final class AppController {
     var rowSession: [OpaquePointer: UUID] = [:]
     var sidebarSelectionAnchor: UUID?
     var nameLabels: [OpaquePointer: (id: UUID, isWorkspace: Bool)] = [:]  // name label -> rename target (double-click)
+    var renderedNameLabels: [SidebarLabel] = []   // drawn rows, in draw order (see applySidebarMetadata)
     var workspaceDiscButtons: [OpaquePointer: UUID] = [:]  // disclosure button -> workspace (collapse toggle)
     // The session/workspace currently being inline-renamed (nil = none). One value instead of an
     // id + is-workspace pair, so the "is-workspace" flag can't drift from the id.

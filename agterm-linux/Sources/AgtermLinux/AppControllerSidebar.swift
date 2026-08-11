@@ -70,6 +70,58 @@ extension AppController {
     /// that happen to defer on the same predicate, so neither owning the other's retry cadence.
     static let sidebarInteractionRetryInterval: TimeInterval = 0.25
 
+    /// One drawn name label, so a metadata refresh can retext it instead of rebuilding the sidebar.
+    struct SidebarLabel {
+        let id: UUID
+        let isWorkspace: Bool
+        let label: OpaquePointer
+        var text: String
+    }
+
+    /// Retext the rows already on screen and report whether that covered the change.
+    ///
+    /// An OSC title lands on every prompt redraw and continuously from any TUI that animates its title,
+    /// while a row only SHOWS that title under `sessionNameFromTerminalTitle`. Rebuilding for it destroys
+    /// and re-creates every widget about ten times a second, which is not merely wasteful: it takes the
+    /// row under the pointer with it, so the workspace header loses `:hover` (its "+" button flickers) and
+    /// GTK drops the pointer focus the next press needs, silently swallowing sidebar clicks.
+    /// Metadata never reshapes the sidebar, only the text in it. A shape that no longer matches what was
+    /// drawn returns false and takes the full rebuild, so drift between this projection and
+    /// `appendSection` degrades to today's behavior rather than to a stale sidebar.
+    func applySidebarMetadata() -> Bool {
+        let expected = sidebarLabelPlan()
+        guard expected.count == renderedNameLabels.count else { return false }
+        for (index, item) in expected.enumerated() {
+            let rendered = renderedNameLabels[index]
+            guard item.id == rendered.id, item.isWorkspace == rendered.isWorkspace else { return false }
+            guard item.text != rendered.text else { continue }
+            item.text.withCString { gtk_label_set_text(rendered.label, $0) }
+            renderedNameLabels[index].text = item.text
+        }
+        return true
+    }
+
+    /// The name each row would draw right now, in `rebuildSidebar` order. A row being renamed carries a
+    /// GtkEntry instead of a label and is left out of both this plan and `renderedNameLabels`.
+    private func sidebarLabelPlan() -> [(id: UUID, isWorkspace: Bool, text: String)] {
+        var plan: [(id: UUID, isWorkspace: Bool, text: String)] = []
+        guard store.sidebarMode != .flagged else {
+            return store.flaggedSessions.filter { renaming?.id != $0.id }
+                .map { ($0.id, false, LinuxSidebarPolicy.flaggedRowLabel(for: $0, in: store)) }
+        }
+        for ws in store.visibleWorkspaces {
+            if renaming?.id != ws.id { plan.append((ws.id, true, ws.name)) }
+            guard ws.isExpanded else { continue }
+            plan += ws.sessions.filter { renaming?.id != $0.id }.map { ($0.id, false, $0.displayName) }
+        }
+        return plan
+    }
+
+    private func noteRenderedLabel(id: UUID, isWorkspace: Bool, label: OpaquePointer, text: String) {
+        guard renaming?.id != id else { return }
+        renderedNameLabels.append(SidebarLabel(id: id, isWorkspace: isWorkspace, label: label, text: text))
+    }
+
     func rebuildSidebar() {
         let settings = linuxSettingsStore().load()
         updateAttentionButton(settings: settings)
@@ -79,6 +131,7 @@ extension AppController {
         }
         rowSession.removeAll()
         nameLabels.removeAll()
+        renderedNameLabels.removeAll()
         workspaceDiscButtons.removeAll()
         workspaceListBoxes.removeAll()
         updateWorkspaceFilterButton()
@@ -138,6 +191,7 @@ extension AppController {
             gtk_box_append(cast(row), W(workspaceIcon))
             if let name = makeNameWidget(id: wsID, text: title, isWorkspace: true) {
                 gtk_widget_add_css_class(W(name), "heading")
+                noteRenderedLabel(id: wsID, isWorkspace: true, label: name, text: title)
                 gtk_box_append(cast(row), W(name))
             }
             if !settings.isInterfaceElementHidden(.workspaceAddSession),
@@ -218,13 +272,15 @@ extension AppController {
         // The flagged row normally includes its workspace breadcrumb, but inline rename must edit only
         // the session's bare display name. Reuse the normal name widget for the active rename so the
         // entry is created and seeded without the breadcrumb.
+        let rowText = flaggedView ? LinuxSidebarPolicy.flaggedRowLabel(for: s, in: store) : s.displayName
         let flaggedLabel: OpaquePointer? = flaggedView && renaming?.id != s.id
-            ? op(gtk_label_new(LinuxSidebarPolicy.flaggedRowLabel(for: s, in: store)))
+            ? op(gtk_label_new(rowText))
             : nil
         // Middle ellipsis for the same reason as the palette rows: the trailing breadcrumb is what
         // tells two identically named sessions apart.
         if let flaggedLabel { gtk_label_set_ellipsize(flaggedLabel, PANGO_ELLIPSIZE_MIDDLE) }
         let label = flaggedLabel ?? makeNameWidget(id: s.id, text: s.displayName, isWorkspace: false)
+        if let label { noteRenderedLabel(id: s.id, isWorkspace: false, label: label, text: rowText) }
         gtk_widget_set_hexpand(W(label), 1)
         gtk_widget_set_margin_top(W(label), 4)
         gtk_widget_set_margin_bottom(W(label), 4)

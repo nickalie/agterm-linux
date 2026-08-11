@@ -1667,6 +1667,36 @@ def verify_surface_configuration_lifetimes(env):
         stop(process)
 
 
+def verify_sidebar_metadata_refresh(env):
+    """An OSC title storm must retext rows in place instead of re-creating them.
+
+    A shell reports its title on every prompt redraw, and a TUI can animate it continuously, so a rebuild
+    per report tears the sidebar down about ten times a second. That destroys the row under the pointer,
+    which drops the workspace header's `:hover` (the "+" button flickers) and the pointer focus the next
+    press needs, so clicks on a session row are silently swallowed. A live accessible surviving the storm
+    is exactly the "the widget was never destroyed" assertion, since a destroyed row's proxy raises.
+    """
+    process, app = launch(env)
+    try:
+        row = wait_for(lambda: next(iter(collect(app, role="list item")), None), "no sidebar row")
+        session = control_json(env, "tree", "--json")["result"]["tree"]["workspaces"][0]["sessions"][0]["id"]
+        storm = 'i=0; while :; do i=$((i+1)); printf "\\033]0;t$i\\007"; sleep 0.1; done'
+        control_json(env, "session", "type", storm + "\n", "--target", session, "--json")
+        wait_for(
+            lambda: control_json(env, "tree", "--json")["result"]["tree"]["workspaces"][0]
+            ["sessions"][0].get("title", "").startswith("t"),
+            "the OSC title storm never reached the session",
+        )
+        time.sleep(3)
+        try:
+            row.get_role_name()
+        except Exception as error:
+            raise AssertionError(f"a terminal title storm re-created the sidebar rows: {error}")
+        print("OK: an OSC title storm leaves the sidebar rows in place")
+    finally:
+        stop(process)
+
+
 def verify_sidebar_row_height_follows_font_size(env):
     """Sidebar rows must follow the sidebar font size instead of Adwaita's 36px navigation-sidebar pin."""
     settings_path = os.path.join(env["AGTERM_STATE_DIR"], "settings.json")
@@ -2026,6 +2056,7 @@ def main():
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "sidebar-row-height",
+            "sidebar-metadata",
             "auto-follow", "hidden-toolbar",
         ):
             child_env = dict(os.environ, AGTERM_ATSPI_SCENARIO=child_scenario)
@@ -2081,6 +2112,8 @@ def main():
             verify_surface_configuration_lifetimes(env)
         elif scenario == "sidebar-row-height":
             verify_sidebar_row_height_follows_font_size(env)
+        elif scenario == "sidebar-metadata":
+            verify_sidebar_metadata_refresh(env)
         elif scenario == "preferences-pages":
             verify_preferences_pages(env, home)
         elif scenario == "auto-follow":

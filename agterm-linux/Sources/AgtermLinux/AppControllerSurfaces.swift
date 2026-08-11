@@ -734,15 +734,16 @@ extension AppController {
         scheduleSidebarMetadataRefresh()
     }
 
-    /// Coalesce OSC title/pwd churn from every session into one sidebar rebuild.
+    /// Coalesce OSC title/pwd churn from every session into one sidebar update.
     ///
-    /// A rebuild destroys and re-creates every row, so it must NOT land while the user is interacting with
-    /// one: it would tear down an in-progress inline rename, whose entry commits its half-typed text on the
-    /// focus-out that disposal triggers, from a background shell's prompt redraw. That interaction is short,
-    /// so the refresh re-arms itself at a slower cadence instead of being dropped; whichever ends it
-    /// rebuilds anyway, and the retry is then a cheap no-op repaint. The gate is the shared
-    /// `sidebarInteractionInProgress`, so this and the trailing soft-close reconcile defer on exactly the
-    /// same condition.
+    /// Metadata only changes row TEXT, so `applySidebarMetadata` retexts the drawn rows and the rebuild is
+    /// the fallback for a sidebar whose shape no longer matches. Both paths must NOT land while the user is
+    /// interacting with a row: a rebuild would tear down an in-progress inline rename, whose entry commits
+    /// its half-typed text on the focus-out that disposal triggers, from a background shell's prompt redraw.
+    /// That interaction is short, so the refresh re-arms itself at a slower cadence instead of being
+    /// dropped; whichever ends it rebuilds anyway, and the retry is then a cheap no-op. The gate is the
+    /// shared `sidebarInteractionInProgress`, so this and the trailing soft-close reconcile defer on exactly
+    /// the same condition.
     private func scheduleSidebarMetadataRefresh(after delay: TimeInterval = 0.01) {
         sidebarMetadataDebouncer.schedule(after: delay) { [weak self] in
             guard let self else { return }
@@ -750,6 +751,7 @@ extension AppController {
                 self.scheduleSidebarMetadataRefresh(after: AppController.sidebarInteractionRetryInterval)
                 return
             }
+            guard !self.applySidebarMetadata() else { return }
             self.rebuildSidebar()
         }
     }

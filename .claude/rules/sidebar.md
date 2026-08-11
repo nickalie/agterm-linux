@@ -169,6 +169,14 @@ paths:
   visible. Scope notifications by the target `AppStore` object so only that window's Coordinator acts.
   Both no-op in flagged mode. Menus/palette target frontmost; `sidebar.expand`/`sidebar.collapse` resolve
   `--window` and can target background windows.
+- **Linux adapter:** `rebuildSidebar()` destroys and re-creates every widget, so terminal metadata never
+  takes it. An OSC title lands on every prompt redraw and continuously from a TUI that animates its title,
+  and a rebuild per report re-creates the row under the pointer about ten times a second: the workspace
+  header loses `:hover` (its "+" button flickers) and GTK drops the pointer focus the next press needs,
+  so session-row clicks are swallowed. `applySidebarMetadata` retexts the labels recorded in
+  `renderedNameLabels` instead, and returns false — taking the rebuild — when the drawn shape no longer
+  matches its `sidebarLabelPlan` projection, so drift between the two degrades to a rebuild rather than to
+  a stale sidebar. The `sidebar-metadata` AT-SPI scenario pins it by outliving a title storm.
 
 ## Persistence
 
