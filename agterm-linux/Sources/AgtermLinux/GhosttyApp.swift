@@ -77,6 +77,7 @@ final class GhosttyApp: @unchecked Sendable {
 
         app = ghostty_app_new(&rt, cfg)
         replaceCurrentConfig(with: cfg)
+        applyColorScheme(appearanceSide)   // settle the scheme before the first surface can be created
         ghostty_config_free(cfg)
     }
 
@@ -99,10 +100,24 @@ final class GhosttyApp: @unchecked Sendable {
         currentConfig = clone
     }
 
+    /// Report the desktop's light/dark side to libghostty, re-baking the app config whenever it moves.
+    ///
+    /// The re-bake is not cosmetic: the conditional `theme = light:…,dark:…` keeps `theme` in libghostty's
+    /// conditional set, so a surface born under a mismatched scheme makes core replay the config's load
+    /// steps, and the replay drops the surface config's `AGTERM_*` env vars (it re-copies only
+    /// `working-directory`), leaving the agent-status hooks with nothing to address.
     @MainActor func applyColorScheme(_ side: LinuxAppearanceSide) {
         guard let app else { return }
         ghostty_app_set_color_scheme(
             app, side.isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        if appliedAppearanceSide != side {
+            let settings = AppController.resolvedThemeSettings(persisted: linuxSettingsStore().load())
+            if let rebaked = buildConfig(
+                extraLines: AppController.ghosttyLines(for: settings, isDark: side.isDark)) {
+                updateConfig(rebaked)
+                ghostty_config_free(rebaked)
+            }
+        }
         appliedAppearanceSide = side
     }
 

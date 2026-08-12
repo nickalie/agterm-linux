@@ -28,6 +28,10 @@ paths:
   `working-directory`, and drops the per-surface env, `initial_input` and `command` (#260).
   A host-built config always resolves light, and `GhosttyApp` is built before `NSApp` exists, so its own
   appearance read is always light; the KVO reload is debounced and lands after the launch restore.
+- Linux owns that re-siding in `GhosttyApp.applyColorScheme`, which re-bakes the config whenever the side
+  moves, so launch, the appearance observer and each `createSurface` are covered by one invariant:
+  `synchronizeLiveColorScheme` shifts the conditional state on every switch while its config reload is
+  policy-gated. `atspi_smoke.py`'s `surface-env` scenario pins it under a forced dark scheme.
 - Observe app-level `NSApplication.effectiveAppearance` through KVO, not per-view appearance,
   `AppleInterfaceStyle`, or the early distributed notification. Post the KVO-delivered settled `isDark`
   and thread it through `reloadConfigPreservingSessionZoom`; do not use `apply`, whose unchanged text skips

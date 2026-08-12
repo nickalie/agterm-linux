@@ -1667,6 +1667,32 @@ def verify_surface_configuration_lifetimes(env):
         stop(process)
 
 
+def verify_launch_surface_environment(env, state):
+    """The session realized at launch must reach its shell with `AGTERM_SESSION_ID`.
+
+    Forced dark because that is what breaks it: libghostty replays the config's load steps for a surface
+    born under a scheme its app config was not baked with, and the replay drops the surface env, leaving
+    the agent-status hooks with no session to address.
+    """
+    env["ADW_DEBUG_COLOR_SCHEME"] = "prefer-dark"
+    marker = os.path.join(state, "launch-surface-env.marker")
+    process, _ = launch(env)
+    try:
+        session = control_json(env, "tree", "--json")["result"]["tree"]["workspaces"][0]["sessions"][0]
+        control_json(
+            env, "session", "type", f'printf "%s" "$AGTERM_SESSION_ID" > {marker}\n',
+            "--target", session["id"], "--json",
+        )
+        reported = wait_for(
+            lambda: os.path.exists(marker) and open(marker, encoding="utf-8").read().strip(),
+            "the launch session's shell never reported AGTERM_SESSION_ID",
+        )
+        assert reported == session["id"], f"launch shell saw {reported}, expected {session['id']}"
+        print("OK: the session realized at launch inherits its AGTERM_* environment under a dark scheme")
+    finally:
+        stop(process)
+
+
 def verify_sidebar_metadata_refresh(env):
     """An OSC title storm must retext rows in place instead of re-creating them.
 
@@ -2055,7 +2081,7 @@ def main():
             "normal", "upstream-controls", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
-            "custom-command-failures", "surface-lifetimes", "sidebar-row-height",
+            "custom-command-failures", "surface-lifetimes", "surface-env", "sidebar-row-height",
             "sidebar-metadata",
             "auto-follow", "hidden-toolbar",
         ):
@@ -2110,6 +2136,8 @@ def main():
             verify_custom_command_failures(env)
         elif scenario == "surface-lifetimes":
             verify_surface_configuration_lifetimes(env)
+        elif scenario == "surface-env":
+            verify_launch_surface_environment(env, state)
         elif scenario == "sidebar-row-height":
             verify_sidebar_row_height_follows_font_size(env)
         elif scenario == "sidebar-metadata":
