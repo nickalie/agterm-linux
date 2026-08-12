@@ -1,17 +1,20 @@
-# Linux catch-up to upstream/master past v0.21.0
+# Linux catch-up to upstream v0.22.0
 
 ## Range
 
 - Previous Linux parity base: upstream `v0.21.0`
   (`9e8105015f83f0b7a4a2040b7f6ff19851644265`)
-- Target parity base: upstream `master`
-  (`28c256895db08a889f2c45eb12237733d869eb59`, 2026-08-09)
+- Target parity base: upstream `v0.22.0`
+  (`8192f0ba48ebd3d716f77c8a02c8bec06535e708`, 2026-08-09)
 - Integration branch: `linux-port`
-- Merge commit: `31414b1` (`chore(upstream): merge upstream/master past v0.21.0`)
-- 38 upstream commits, **none of them released**: upstream has published no tag after `v0.21.0`.
-  This catch-up is deliberately rolling rather than tag-bounded, at the maintainer's direction.
+- Merge commits: `31414b1` (`chore(upstream): merge upstream/master past v0.21.0`) took the branch to
+  `28c256895db08a889f2c45eb12237733d869eb59`; upstream then tagged `v0.22.0` one commit later, and
+  `chore(upstream): merge upstream v0.22.0` takes only that commit — the changelog entry and the plugin
+  and site version bumps. The inventory below is therefore the whole `v0.21.0..v0.22.0` product range.
+- 39 upstream commits. The parity work landed while the range was still untagged, at the maintainer's
+  direction; the tag arrived afterwards and the base is now tag-bounded.
 
-`linux-v0.21.0` was never cut either, so this branch also still carries the whole unreleased
+`linux-v0.21.0` was never cut, so this branch also still carries the whole unreleased
 `v0.20.x`/`v0.21.0` range described in `20260807-linux-v0.21.0-catch-up.md`.
 
 ## Downstream feature shipped in the same cycle
@@ -69,8 +72,8 @@ Inherited from upstream; no Linux code required.
   appends `~/.local/bin`. Same #393 failure with Linux directories: a `.desktop`-launched app inherits the
   graphical session's environment and `/bin/sh -c` reads no profile, so a bare `agtermctl` exited 127.
   `CommandPath`'s own `/opt/homebrew/bin` is inert here and not worth forking the shared implementation.
-- **CI ancestry pin** moved to the merged upstream commit in both workflows. It is a commit, not a
-  release, so the materialized tag is named `upstream-28c2568`.
+- **CI ancestry pin** moved to `v0.22.0` in both workflows, back to a real release tag after the interim
+  `upstream-28c2568` commit pin.
 
 ### Platform-specific adaptations and exemptions
 
@@ -98,7 +101,7 @@ Inherited from upstream; no Linux code required.
 
 - README: upstream's Copy Name, `hasSplit`, PATH-widening and accessibility paragraphs arrive from
   upstream; the Linux section gains the Linux PATH directories, the accessibility exemption, and a base
-  version corrected from v0.19.0 to v0.21.0.
+  version corrected from v0.19.0 to v0.22.0.
 - `plugins/agterm/skills/agterm/reference.md` merged upstream's `hasSplit` paragraph with the downstream
   naming clause on the same lines.
 - `.claude/rules/control-api.md` and `sidebar.md` gained the two Linux adapter notes.
@@ -118,7 +121,9 @@ Gates run in the `swift:6.3.2-noble`-derived container CI uses, with SwiftLint 0
 - [x] `scripts/test-linux-ui.sh`
 - [x] `git diff --check`
 - [x] `git diff --quiet master -- agtermCore/Tests/agtermCoreTests/ConfigPathsTests.swift`
-- [ ] Branch CI green on `linux-port`
+- [ ] Branch CI green on `linux-port` — blocked, not failing. GitHub disables Actions on a new fork and the
+  override exists only in the repository's Actions tab, so `nickalie/agterm-linux` has run no workflow.
+  No Linux release tag is cut until it does.
 
 ## Not verified interactively
 

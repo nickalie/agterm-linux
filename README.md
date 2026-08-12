@@ -41,7 +41,7 @@ Code layout:
 
 ### Linux feature parity and platform differences
 
-The `linux-port` branch carries the upstream v0.21.0 terminal model and control protocol, including
+The `linux-port` branch carries the upstream v0.22.0 terminal model and control protocol, including
 split/scratch/overlay terminals, Quick terminal input and read-back, terminal zoom, fullscreen,
 recently closed sessions with grouped undo, light/dark themes, configurable toolbar and sidebar text,
 recent-session and attention popovers, agent status in the multi-session dashboard, stable pane status
