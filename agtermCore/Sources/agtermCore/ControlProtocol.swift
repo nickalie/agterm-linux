@@ -27,6 +27,7 @@ public enum Command: String, Codable, Sendable {
     case sessionRestore = "session.restore"
     case sessionBackground = "session.background"
     case sessionSplit = "session.split"
+    case sessionSplitClose = "session.split.close"
     case sessionScratch = "session.scratch"
     case sessionFocus = "session.focus"
     case sessionResize = "session.resize"
@@ -126,6 +127,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// `session.background` (`image|text|color|clear`), and `session.restore` (`set|none|clear` — pin
     /// `command`, pin nothing, or drop the pin).
     public var mode: String?
+    /// Optional divider direction for `session.split`: `vertical` (left/right) or `horizontal` (top/bottom).
+    /// Omitted preserves the original axis-agnostic show/hide behavior.
+    public var axis: String?
     /// The image file path for `session.background` mode `image` (PNG or JPEG).
     public var path: String?
     /// The `#rrggbb` color for `session.background`: the mode-`text` tint (nil = terminal foreground) or the
@@ -178,11 +182,11 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// `session.restore` diverges: an unresolvable token with NO explicit `pane` errors there rather than
     /// silently using `left`, since a wrong restore pin persists. See `Session.paneRole(forToken:)`, #199.
     public var paneID: String?
-    /// Absolute left-pane split fraction (0...1) for `session.resize`, clamped server-side to
+    /// Absolute primary-pane split fraction (0...1) for `session.resize`, clamped server-side to
     /// `AppStore.splitRatioMin...splitRatioMax`. Mutually exclusive with `ratioDelta`.
     public var ratio: Double?
-    /// Signed relative split-divider nudge for `session.resize`: a positive fraction grows the LEFT
-    /// pane, negative grows the right (the CLI's `--grow-left`/`--grow-right`). Applied to the session's
+    /// Signed relative split-divider nudge for `session.resize`: a positive fraction grows the PRIMARY
+    /// pane, negative grows the split pane. Applied to the session's
     /// current fraction (0.5 when never moved). Mutually exclusive with `ratio`.
     public var ratioDelta: Double?
     /// For `session.text` / `quick.text`: read the full screen + scrollback instead of just the visible screen.
@@ -297,7 +301,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, collapsed: Bool? = nil, minimized: Bool? = nil,
                 noSelect: Bool? = nil,
-                text: String? = nil, select: Bool? = nil, mode: String? = nil,
+                text: String? = nil, select: Bool? = nil, mode: String? = nil, axis: String? = nil,
                 command: String? = nil, wait: Bool? = nil, sizePercent: Int? = nil, full: Bool? = nil,
                 follow: Bool? = nil, message: String? = nil, detail: String? = nil, spinner: String? = nil,
                 items: [ControlPickItem]? = nil, prompt: String? = nil,
@@ -326,6 +330,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.text = text
         self.select = select
         self.mode = mode
+        self.axis = axis
         self.command = command
         self.wait = wait
         self.sizePercent = sizePercent
@@ -487,7 +492,9 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// second-guessing `split`. The sidebar icon, the dashboard's second cell and Focus Left/Right Pane all
     /// follow this, not `split`.
     public let hasSplit: Bool?
-    /// The left-pane fraction (0.05...0.95) of a session that HAS a split (shown or hidden); nil with no
+    /// Divider direction for a live split (`vertical`=left/right, `horizontal`=top/bottom); nil without one.
+    public let splitAxis: String?
+    /// The primary-pane fraction (0.05...0.95) of a session that HAS a split (shown or hidden); nil with no
     /// split OR when the ratio was never explicitly set (via `session.resize` or a divider drag), the divider
     /// then sitting at the default 0.5. The read side of `session.resize`, otherwise echoed only on that call.
     public let splitRatio: Double?
@@ -564,9 +571,22 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// Addressable terminal surfaces owned by this session; nil/omitted against a server predating
     /// `surface.zoom`. Hidden-but-alive surfaces are included, so a client can zoom them without unhiding.
     public let surfaces: [ControlSurfaceNode]?
+    /// Whether the MAIN pane's terminal exists — the libghostty surface created and its program spawned —
+    /// as opposed to the session merely being in the model. False means `session.type`/`session.text` will
+    /// report `session not realized` and a `--command` has not run yet. nil/omitted only against a server
+    /// predating the field; this one always reports it.
+    ///
+    /// `session.new` answers `ok` for a model insert, which is honest but says nothing about the terminal:
+    /// libghostty refuses to create a surface while the display is asleep, so a session a scheduled job
+    /// creates overnight sits unrealized until the displays wake (#416). This is the field that tells them
+    /// apart. It reports the main pane because that is what `--command` spawns on and what the input/read
+    /// commands address by default; per-pane liveness is `fontSize`/`splitFontSize`/`scratchFontSize`,
+    /// each omitted when its pane is unrealized.
+    public let realized: Bool?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
-                hasSplit: Bool? = nil, splitRatio: Double? = nil, splitFocused: Bool? = nil,
+                hasSplit: Bool? = nil, splitAxis: String? = nil,
+                splitRatio: Double? = nil, splitFocused: Bool? = nil,
                 overlay: Bool = false, overlaySizePercent: Int? = nil, paneOverlays: [String]? = nil,
                 hud: ControlHudNode? = nil, scratch: Bool = false, flagged: Bool = false,
                 commandWait: Bool? = nil,
@@ -576,7 +596,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 statusShape: String? = nil,
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
-                surfaces: [ControlSurfaceNode]? = nil) {
+                surfaces: [ControlSurfaceNode]? = nil, realized: Bool? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -584,6 +604,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.active = active
         self.split = split
         self.hasSplit = hasSplit
+        self.splitAxis = splitAxis
         self.splitRatio = splitRatio
         self.splitFocused = splitFocused
         self.overlay = overlay
@@ -608,6 +629,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.splitFontSize = splitFontSize
         self.scratchFontSize = scratchFontSize
         self.surfaces = surfaces
+        self.realized = realized
     }
 }
 
@@ -815,7 +837,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var theme: String?
     /// The available bundled theme names for `theme.list`.
     public var themes: [String]?
-    /// The applied left-pane split fraction echoed by `session.resize`, after clamping / a relative nudge.
+    /// The applied primary-pane split fraction echoed by `session.resize`, after clamping / a relative nudge.
     public var ratio: Double?
     /// The light/dark syncing state for `theme.set`/`theme.list`, from the stored theme: `sync` = whether it
     /// is ghostty's dual `light:,dark:` form (the terminal tracks the macOS appearance), `light`/`dark` its
@@ -885,7 +907,7 @@ public enum OverlayHudError {
 public enum PaneOverlayError {
     public static let alreadyOpen = "pane overlay already open"
     public static let paneNotVisible = "pane not visible"
-    /// Names the canonical spellings only; `OverlayPane.init?(controlName:)` also takes `primary`/`split`.
+    /// Names the canonical spellings only; `OverlayPane.init?(controlName:)` also takes role/axis aliases.
     public static let invalidPane = "session.overlay: --pane must be left or right"
     public static let sizePercentConflict = "session.overlay.open: --pane is mutually exclusive with --size-percent"
     public static let resizeUnsupported = "session.overlay.resize: --pane is not supported (pane overlays are always full)"

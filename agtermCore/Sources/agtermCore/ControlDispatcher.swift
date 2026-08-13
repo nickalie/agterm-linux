@@ -36,7 +36,14 @@ public protocol ControlActions {
     /// unresolvable `paneID` given without an explicit `pane`).
     func setSessionRestore(_ target: String?, window: String?,
                            update: ControlSessionRestoreUpdate) -> ControlResponse
+    /// Source-compatible axis-agnostic entry point retained for existing conformers and callers.
     func splitSession(_ target: String?, window: String?, mode: String?) -> ControlResponse
+    /// Axis-aware entry point. Its default delegates to the original method so an existing conformer does
+    /// not have to implement the new requirement until it needs axis support.
+    func splitSession(_ target: String?, window: String?, mode: String?, axis: SplitAxis?) -> ControlResponse
+    /// Tear the split pane down rather than hide it, the write side `splitSession`'s `on|off|toggle` cannot
+    /// express: the surface dies and `hasSplit`/`splitRatio`/`splitFocused` go nil in `tree`.
+    func closeSessionSplit(_ target: String?, window: String?) -> ControlResponse
     func scratchSession(_ target: String?, window: String?, mode: String?, command: String?) -> ControlResponse
     func focusSessionPane(_ target: String?, window: String?, pane: String?) -> ControlResponse
     func resizeSplit(_ target: String?, window: String?, resize: ControlSplitResize) -> ControlResponse
@@ -97,6 +104,12 @@ public protocol ControlActions {
     /// Cancel a native picker. The host owns window resolution, registry lookup, and dismissal.
     func cancelPick(_ target: String, window: String?) -> ControlResponse
     func clearRestoreCommands() -> ControlResponse
+}
+
+public extension ControlActions {
+    func splitSession(_ target: String?, window: String?, mode: String?, axis _: SplitAxis?) -> ControlResponse {
+        splitSession(target, window: window, mode: mode)
+    }
 }
 
 public struct ControlSessionTypeOptions: Equatable, Sendable {
@@ -173,7 +186,8 @@ public struct ControlDispatcher {
         case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
                 .sessionReveal, .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus, .sessionRestore:
             return dispatchSessionCommand(request)
-        case .sessionSplit, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom, .sessionType,
+        case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize,
+                .surfaceZoom, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult, .sessionBackground,
                 .sessionText:
@@ -432,9 +446,10 @@ public struct ControlDispatcher {
         return .pane(parsed)
     }
 
-    /// The role selector (`session.status`, `session.restore`), spelled `left|right|scratch`.
+    /// The role selector (`session.status`, `session.restore`). It accepts role and position aliases; the
+    /// stable rejection names the canonical `left|right|scratch` read-back values.
     private func parsePane(_ raw: String?) -> PaneSelection<StatusPane> {
-        parsePane(raw, error: "--pane must be left, right, or scratch") { StatusPane(rawValue: $0) }
+        parsePane(raw, error: "--pane must be left, right, or scratch") { StatusPane(controlName: $0) }
     }
 
     /// The `session.overlay.open`/`.close`/`.result` selector: absent keeps the session-wide overlay,
@@ -505,7 +520,19 @@ public struct ControlDispatcher {
     private func dispatchSessionSurfaceCommand(_ request: ControlRequest) async -> ControlResponse {
         switch request.cmd {
         case .sessionSplit:
-            return actions.splitSession(request.target, window: request.args?.window, mode: request.args?.mode)
+            let axis: SplitAxis?
+            if let raw = request.args?.axis {
+                guard let parsed = SplitAxis(rawValue: raw) else {
+                    return ControlResponse(ok: false, error: "invalid split axis: \(raw) (vertical|horizontal)")
+                }
+                axis = parsed
+            } else {
+                axis = nil
+            }
+            return actions.splitSession(request.target, window: request.args?.window,
+                                        mode: request.args?.mode, axis: axis)
+        case .sessionSplitClose:
+            return actions.closeSessionSplit(request.target, window: request.args?.window)
         case .sessionScratch:
             return actions.scratchSession(request.target, window: request.args?.window, mode: request.args?.mode,
                                           command: request.args?.command)

@@ -5,15 +5,18 @@ import agtermCore
 /// watermark, buffer read, in-terminal search, text injection. Split out for the swiftlint size limit.
 extension ControlServer {
     /// Runs a libghostty binding action on the target's addressable surface — a SPECIFIC one, unlike the menu
-    /// path's focused pane. Shared by `session.paste`/`session.selectall`. `addressableSurface` falls back to
-    /// a promoted split survivor whose primary shell exited (which nils `surface`), else a session the user
-    /// is typing in reports "session not realized"; a never-shown session has no surface at all → error.
+    /// path's focused pane. Shared by `session.paste`/`session.selectall`; `Session.addressableSurface` owns
+    /// which pane that resolves to. An empty slot and a parked view whose surface never came up are one state
+    /// to a caller: "session not realized".
     private func surfaceBindingAction(_ target: String?, window: String?, action: String) -> ControlResponse {
         return resolver.resolveSession(target, window: window) { store, id in
             guard let surface = store.session(withID: id)?.addressableSurface as? GhosttySurfaceView else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
-            surface.performBindingAction(action)
+            // the cast alone only proves the SLOT is filled; a false return is the view without a surface.
+            guard surface.performBindingAction(action) else {
+                return ControlResponse(ok: false, error: "session not realized")
+            }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -80,6 +83,11 @@ extension ControlServer {
             // `addressableSurface`, not `surface`: must resolve the SAME pane `session.selectall` acted on,
             // promoted split survivor included, or the documented selectall -> copy read-back breaks.
             guard let surface = store.session(withID: id)?.addressableSurface as? GhosttySurfaceView else {
+                return ControlResponse(ok: false, error: "session not realized")
+            }
+            // an unrealized pane has no selection to report EITHER way, and `readSelection` cannot tell the
+            // two apart — so answer it as `session.selectall` does rather than blaming an empty selection.
+            guard surface.isRealized else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
             guard let text = surface.readSelection() else {
@@ -170,6 +178,14 @@ extension ControlServer {
             case .some(let value): return ControlResponse(ok: false, error: "invalid pane: \(value)")
             }
             guard let surface = chosen as? GhosttySurfaceView else {
+                return ControlResponse(ok: false, error: "session not realized")
+            }
+            // a view parked in the slot whose libghostty surface never came up is UNREALIZED, not a failed
+            // read — the deck installs the view before `createSurface`, and creation is refused outright
+            // while the display sleeps (#416). Without this the same state answered `failed to read surface
+            // buffer` here and `session not realized` from every other command, naming a cause that did not
+            // happen: nothing failed to read, there was nothing to read from.
+            guard surface.isRealized else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
             guard let text = surface.readScreenText(all: all, lines: lines) else {

@@ -22,7 +22,8 @@ struct Keymap: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Show the resolved keymap and the live menu key equivalents.",
             discussion: """
-            Prints every built-in with the chord the keymap resolved for it, the custom commands, any \
+            Prints every built-in with the binds the keymap resolved for it — the menu shortcut first, then \
+            any monitor-bound alternatives, joined with `|` — plus the custom commands, any \
             parse diagnostics, and the key equivalents the menu bar is actually carrying. The last \
             section is what makes a stale or hijacked chord visible: SwiftUI rebuilds the menu only on \
             the next app activation, so a chord can be right in the keymap and wrong in the menu.
@@ -563,9 +564,9 @@ struct Font: ParsableCommand {
         subcommands: [Inc.self, Dec.self, Reset.self]
     )
 
-    /// Help for the shared `--pane` option, reusing the `left|right|scratch` vocabulary of `session type`.
+    /// Help for the shared `--pane` option; role and axis-position aliases resolve to the same stable slots.
     static let paneHelp = "Which pane's font to change: left (main), right (split), or scratch (the "
-        + "session's scratch terminal, even when hidden). Defaults to the left pane."
+        + "session's scratch terminal, even when hidden). primary/left/top and split/right/bottom are aliases. Defaults to the left pane."
 
     struct Inc: RequestCommand {
         static let configuration = CommandConfiguration(abstract: "Increase font size.")

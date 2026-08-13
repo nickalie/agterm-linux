@@ -240,6 +240,14 @@ final class AppActions {
         return true
     }
 
+    /// The whole close-session keystroke as File ▸ Close Session performs it: dismiss the frontmost cover or
+    /// close the active session, and when there was neither — a zero-session window — close `window` instead.
+    /// Shared with the key monitor so a `close_session` alternative cannot be the one binding that dies in a
+    /// window with nothing left to close.
+    func closeActiveSessionOrWindow(_ window: NSWindow?) {
+        if !closeActiveSession() { window?.performClose(nil) }
+    }
+
     /// Resolve the pending picker owned by `windowID` as cancelled. Used by ⌘W and app termination;
     /// window teardown cancels through `PickRegistry.unregister` so it can retain the terminal result.
     @discardableResult
@@ -662,7 +670,7 @@ final class AppActions {
 
     // MARK: - Split
 
-    /// Toggle the active session's split. A NEW split shows both panes and focuses the new (right) one;
+    /// Toggle the active session's vertical split. A NEW split shows both panes and focuses the new one;
     /// closing only HIDES it (both shells stay alive) and maximizes the focused pane, so reopening restores
     /// both in their original positions with the SAME pane focused — focus follows `splitFocused`, which
     /// `AppStore.toggleSplit` moves only for a genuinely new split.
@@ -673,13 +681,42 @@ final class AppActions {
     /// scratch shell survives. A full overlay runs a caller's program that must not be closed under it, so
     /// the press is inert. Control's `session.split` keeps acting on the deck behind either cover.
     func toggleSplit() {
+        toggleSplit(axis: .leftRight)
+    }
+
+    /// Toggle the active session's horizontal split, or transpose a shown vertical split in place.
+    func toggleHorizontalSplit() {
+        toggleSplit(axis: .topBottom)
+    }
+
+    /// Preserve the current axis. Used by the titlebar's stateful split button rather than either
+    /// orientation-specific menu/keymap action.
+    func toggleCurrentSplit() {
+        toggleSplit(axis: nil)
+    }
+
+    private func toggleSplit(axis: SplitAxis?) {
         guard uiActionsEnabled else { return }
         guard let store, let session = store.activeSession else { return }
         guard !session.fullOverlayActive else { return }
         // the deck's `scratchActive` onChange reclaims first responder for the pane, as it does for ⌘J.
         if session.scratchActive { store.toggleScratch(session.id); return }
-        store.toggleSplit(session.id)
+        store.toggleSplit(session.id, axis: axis)
         focusSplitPane(session, wantSplit: session.splitFocused)
+    }
+
+    /// The palette's Close Split, GUI twin of `session.split.close`. Gated on `hasSplit`, so the hidden
+    /// split ⌘D leaves behind is reachable. Immediate and unconfirmed like the other pane teardowns; the
+    /// confirm and undo window stay with `closeActiveSession`. Carries `toggleSplit`'s cover rungs, which
+    /// matter more here: behind a cover this destroys a live shell instead of rearranging panes, so the
+    /// dismissed scratch makes the teardown a second, deliberate press with the panes in view.
+    func closeSplit() {
+        guard uiActionsEnabled else { return }
+        guard let store, let session = store.activeSession else { return }
+        guard session.hasSplit, !session.fullOverlayActive else { return }
+        if session.scratchActive { store.toggleScratch(session.id); return }
+        store.closeSplit(session.id)
+        focusSplitPane(session, wantSplit: false)
     }
 
     /// Show/hide the active session's scratch terminal, a third full-overlay login shell. Focus rides the
@@ -734,7 +771,7 @@ final class AppActions {
         frontmostTerminalZoom?.toggle()
     }
 
-    /// Toggle the frontmost window's dashboard — the ⌘⇧D / Navigate ▸ Dashboard MRU grid, equivalent to
+    /// Toggle the frontmost window's dashboard, the ⌘⇧G / Navigate ▸ Dashboard MRU grid, equivalent to
     /// `agtermctl dashboard --mru --auto-size`. Inert while terminal zoom or a pending picker is up, but NOT
     /// while the dashboard itself is open, so the grid stays its own escape hatch. Open → close and refocus;
     /// closed → open over the window's most-recently-used sessions, auto-sized; no-op with none.

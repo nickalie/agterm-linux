@@ -106,16 +106,23 @@ SIGTERM use normal process behavior.
 when none reported; distinct from `name`, the derived sidebar label, which ignores the title unless the
 user turned on "Name sessions after the terminal title"), `active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
+`realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned, a
+`--command` has not run, and `session type`/`session text` will answer `session not realized`. `session
+new` returns `ok` for a session that exists in the model, which is not the same thing: libghostty refuses
+to create a surface while the DISPLAY is asleep, so a session a scheduled job creates overnight stays
+unrealized until the displays wake, at which point it recovers on its own. Poll this after creating a
+session unattended; `agtermctl tree` also tags the row `(not realized)`),
 `hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
 read THIS to decide whether a session has a split, because a hidden split reports `split: false` while
 its pane stays alive, and it is present exactly when `splitRatio`/`splitFocused` can be),
-`splitRatio` (the left-pane fraction 0.05–0.95 of a session that HAS a split —
+`splitAxis` (`vertical` for left/right or `horizontal` for top/bottom; omitted when there is no split),
+`splitRatio` (the primary-pane fraction 0.05-0.95, left or top, of a session that HAS a split,
 shown or hidden; omitted when there's no split or the ratio was never explicitly set (divider at the
 default 0.5) — the read side
 of `session resize`, record it to restore the exact divider position),
-`splitFocused` (which pane holds focus in a session that HAS a split — `true` = the split/right pane,
-`false` = the main/left pane; omitted when there's no split; the read side of `session focus`, record it
-to restore focus via `session focus --pane left|right`),
+`splitFocused` (which pane holds focus in a session that HAS a split: `true` = the split/right/bottom pane,
+`false` = the primary/left/top pane; omitted when there's no split; the read side of `session focus`, record it
+to restore focus via `session focus left|right`),
 `commandWait` (whether a `--command` session was created with `--wait` to hold open after the command
 exits — the read side of `session new --wait`; omitted for a plain or non-holding session),
 `overlay` (overlay shown),
@@ -366,6 +373,12 @@ All twelve are read-only projections of GUI state.
   move as one ordered block after all sources are removed. Repeated `--target` is rejected with
   `--to up|down|top|bottom` because relative reorder is per-session. Batch moves return `result.affected`,
   counting only sessions whose position/workspace changed.
+
+Shared pane selectors accept `primary`/`left`/`top` for the primary pane and
+`split`/`right`/`bottom` for the split pane. Commands supporting scratch also accept `scratch`.
+The signatures and read-back below use canonical `left`/`right`/`scratch`; the stable invalid-value
+error keeps those names for compatibility.
+
 - `session type <text> [--stdin] [--select] [--pane left|right|scratch] [--target] [--window W]` — inject text
   as real keystrokes (printable runs plus Return for each newline; no bracketed-paste markers).
   `--stdin` reads the text from stdin instead of the argument. Any session is typable without `--select`,
@@ -380,7 +393,8 @@ All twelve are read-only projections of GUI state.
   already exist.
 - `session copy [--target] [--window W]` — returns `result.text` with the session's current selection.
   Does NOT touch the system clipboard (pipe the returned text into another `session type`). No/empty
-  selection → `no selection` error. Selection is readable on any realized session regardless of focus.
+  selection → `no selection` error. Selection is readable on any realized session regardless of focus;
+  a never-shown session → `session not realized`, as with `session select-all`.
 - `session paste [--target] [--window W]` — paste the system clipboard (`NSPasteboard.general`) into the
   session's main pane, the socket analogue of ⌘V / Edit ▸ Paste. Runs libghostty's `paste_from_clipboard`
   (bracketed paste, no prompt), so the text lands at the prompt without auto-submitting. Read it back with
@@ -409,9 +423,14 @@ All twelve are read-only projections of GUI state.
   matches) and `result.text` (the counter string: "N of M", "M matches", or "no matches"); the count
   settles asynchronously, so the command waits briefly for it. Without `--json` it prints `result.text`
   (or `ok` on close / an empty bar).
-- `session split [on|off|toggle] [--target] [--window W]` — side-by-side second shell. `off` HIDES it
-  but keeps the shell alive (mirrors ⌘D); the pane's surface is torn down only when its shell exits.
-  Unknown mode errors.
+- `session split [on|off|toggle] [--axis vertical|horizontal] [--target] [--window W]` - second shell.
+  `vertical` means left/right and `horizontal` means top/bottom. Omitting `--axis` preserves the current
+  axis and keeps the legacy left/right default for a new split. `off` hides but keeps the shell alive;
+  tearing it down takes `session split close` or the shell's own exit. Unknown modes and axes error.
+- `session split close [--target] [--window W]` — tear the split pane down: the surface dies, whatever it
+  runs dies with it, and `hasSplit`/`splitRatio`/`splitFocused` drop out of `tree`. Reaches a HIDDEN pane
+  too, which is what `session type --pane right $'exit\n'` cannot do once the pane is past a prompt
+  (nested shell, ssh, an agent). Answers ok on a session with no split.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
@@ -421,15 +440,15 @@ All twelve are read-only projections of GUI state.
   absolute path) and RUN-ONCE like `session new --command` (after it exits, the next `on` is a plain
   shell). A scratch is expendable, so passing `--command` while one is already open respawns it. Not
   persisted. Unknown mode errors. The tree's `scratch` flag tracks visibility.
-- `session focus [left|right|other] [--target] [--window W]` — move keyboard focus between the two
+- `session focus [primary|split|left|right|top|bottom|other] [--target] [--window W]` - move keyboard focus between the two
   split panes (`other` toggles, the default). Errors when the session has no split. Works whether the
-  split is shown side-by-side or hidden (maximized) — when hidden, focusing a pane swaps which one shows.
-- `session resize (--split-ratio R | --grow-left D | --grow-right D) [--target] [--window W]` — move the
+  split is shown in either orientation or hidden (maximized). When hidden, focusing a pane swaps which one shows.
+- `session resize (--split-ratio R | --grow-left D | --grow-right D | --grow-primary D | --grow-split D | --grow-top D | --grow-bottom D) [--target] [--window W]` - move the
   split DIVIDER (the divider is otherwise mouse-only: drag it, or double-click it for an even split. No
   GUI/menu/keymap action reaches any other fraction, so bind a key by mapping a
   `command "agtermctl session resize …"` custom action). Provide exactly one form:
-  `--split-ratio` sets the absolute left-pane fraction (`0..1`); `--grow-left D` / `--grow-right D` nudge
-  it by the fraction `D` (grow-left shrinks the right pane and vice-versa). The result is clamped to
+  `--split-ratio` sets the absolute primary-pane fraction (`0..1`, left or top). The grow options are
+  equivalent role/position aliases: primary/left/top versus split/right/bottom. The result is clamped to
   `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
@@ -455,7 +474,7 @@ All twelve are read-only projections of GUI state.
   `statusColor`), and rides the `status` control event's `shape` payload field so an `events` consumer can
   explain a shape-only change.
   A `--shape` on `idle` is accepted and ignored, since an idle session draws no glyph.
-  `--pane` (`left`|`right`|`scratch`, `left`=main, `right`=split; defaults to `left` when omitted) records
+  `--pane` (canonical `left`|`right`|`scratch`; role and position aliases above are also accepted) records
   which pane set the status. It has two effects: (1) keystroke-clear becomes pane-scoped — a status set
   from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
   no longer wiped by foreground typing in the main pane, and only a keystroke in the OWNING pane clears
@@ -468,7 +487,7 @@ All twelve are read-only projections of GUI state.
   only STEPS the selection to attention sessions; it does not itself move focus into the tagged pane — the
   reveal is a GUI/auto-follow concern.) An agent that runs in a split or scratch should set its own pane so
   the user lands on it. The value is read back on `tree` as the session node's `statusPane`. An invalid
-  value errors (`--pane must be left, right, or scratch`).
+  value errors with the stable canonical-name message (`--pane must be left, right, or scratch`).
   `--pane-id` is the surface's stable spawn token (the shell's `$AGTERM_PANE_ID`) — the agent-status hook
   forwards it automatically. When it resolves against the session's LIVE surfaces it OVERRIDES `--pane`, so
   a status from a pane whose baked role went stale (a split survivor promoted into the main pane, then a
@@ -792,8 +811,9 @@ positional ids are session addresses (id / unique prefix / `active`), each of wh
 `:left`/`:right` pane suffix to place THAT PANE ALONE — the same form `dashboardMembers` reports back, so
 `dashboard <a>:left <b>:right` grids one pane per session while a bare id still takes every pane of its
 session. The suffix composes with any head, so `active:left` and `<prefix>:right` both work, and it is
-case-insensitive. Only `left`/`right` are accepted: any other suffix (`:scratch`, `:overlay`, `:primary`,
-`:split`, a typo like `:lft`, or a pasted `surface:<id>:left` zoom address) is REJECTED and fails the whole
+case-insensitive. `:primary`/`:top` alias `:left`, and `:split`/`:bottom` alias `:right`; readback remains
+`:left`/`:right`. Other suffixes (`:scratch`, `:overlay`, a typo like `:lft`, or a pasted
+`surface:<id>:left` zoom address) are rejected and fail the whole
 command. Unresolved ids are dropped — including `:right` on a session with no split, which parses fine but
 names no pane — and cells are deduped by session+pane, so a bare id beside a pane ref for the same session
 collapses instead of double-hosting a surface. A grid that expands to no cells at all is an error and
@@ -809,7 +829,7 @@ A cell placed by a `:right` ref FOLLOWS its pane through promotion: when a split
 exits, agterm promotes the survivor into the primary slot, and the grid rewrites that cell to `<id>:left`
 rather than dropping it, so a dashboard built to watch an agent in the split pane keeps watching it.
 
-The most-recently-used grid also has a GUI opener — **⌘⇧D** on macOS or **Ctrl⇧M** on Linux (the
+The most-recently-used grid also has a GUI opener — **⌘⇧G** on macOS or **Ctrl⇧M** on Linux (the
 `dashboard` built-in action, rebindable in `keymap.conf`), **Navigate ▸ Dashboard** on macOS, and the
 command palette's **Dashboard** entry all TOGGLE the
 frontmost window's dashboard: open it over the window's most-recently-used sessions auto-sized (identical to
@@ -988,11 +1008,13 @@ parse diagnostics (0 = clean). App-global (no `--window`).
 `result.keymap`:
 
 - `path` — the `keymap.conf` this came from.
-- `actions[]` — every rebindable built-in: `action` (its `keymap.conf` name), `chord` (the resolved
-  chord in the same kitty syntax the file uses, omitted when the action is keyless), and
-  `overridden: true` when a `map` line moved it off its shipped default. Every action is listed, bound
-  or not, so you can also see which chords are free.
-- `commands[]` — the custom commands: `name`, and `shortcut` omitted for a palette-only one.
+- `actions[]` — every rebindable built-in: `action` (its `keymap.conf` name), `chord` (the resolved menu
+  chord in the same kitty syntax the file uses, omitted when the action is keyless or a `map` line left it
+  with no menu chord), `alternates[]` (its other binds, the ones a key monitor delivers, omitted when it
+  has none), and `overridden: true` when a `map` line moved it off its shipped default. Every action is
+  listed, bound or not, so you can also see which chords are free.
+- `commands[]` — the custom commands: `name`, and `shortcut` omitted for a palette-only one. A shortcut
+  holding alternatives is one `|`-joined string, in the file's own spelling.
 - `diagnostics[]` — `line` + `message` per parse problem (`keymap.reload` returns only the count).
 - `menu[]` — the key equivalents the menu bar carries: `chord`, the owning `menu`, the item `title`, its
   `selector`, and `enabled: false` when the item is disabled. agterm's own items report `menuAction:`;
@@ -1010,7 +1032,8 @@ item carries it.
 Two built-ins are legitimately absent from `menu`, both delivered by a key monitor rather than a menu
 item: `undo_close` (⌘Z by default), so native text undo keeps working in the rename, palette and Settings
 fields, and `toggle_fullscreen` (⌃⌘F by default), because agterm ships no full screen menu item — macOS
-adds its own, carrying `fn+f`. Their missing menu entries are expected and not a fault.
+adds its own, carrying `fn+f`. Their missing menu entries are expected and not a fault. So is an
+`alternates` entry: only an action's `chord` can reach the menu bar.
 
 Menu chords use the same vocabulary as the file (`cmd+opt+up`, `cmd+shift+return`), so the two lists
 compare as plain strings. One exception: the globe/fn modifier prints as `fn+`, which no `keymap.conf`
@@ -1021,11 +1044,22 @@ line can express — such an item is AppKit's own and never matches an action.
 The file lives at `<config dir>/keymap.conf` (default `~/.config/agterm`; the dir is set in Settings ▸
 Key Mapping). Two verbs, line-based; blank lines and `#` comments ignored:
 
-- `map <chord> <action>` — rebind a built-in menu action to a single chord (no leaders for built-ins).
+- `map <chord> <action>` — rebind a built-in menu action.
 - `command "<name>" [chord] <shell...>` — define a custom shell command, listed in the action palette
   marked `custom`. The quoted name may contain spaces. The post-name token is the chord only if it
   parses AND carries a modifier (a bare modifier-less key is rejected). A custom chord may be a leader
   sequence (chords joined by `>`, e.g. `ctrl+a>g`). No chord → palette-only.
+
+Either verb's chord token may hold **alternatives** joined by `|`, with no spaces around it (everything
+after the first token is the shell line): `map cmd+t|ctrl+space>s toggle_split` fires the action from
+either. A built-in's first single-chord alternative the menu can carry becomes its menu shortcut (one that
+names a reserved chord or a bare arrow is diagnosed and dropped, and the next single chord takes the slot);
+every other alternative, and every alternative of a `command`, is delivered by a key monitor and so must
+carry a modifier on its first chord. A `map` line with no single-chord alternative
+(`map ctrl+a>s toggle_split`) leaves the action with NO menu shortcut — its shipped default is gone, not
+kept. A malformed alternative rejects the whole line; one that merely breaks a rule or collides with
+another binding drops by itself and its siblings keep working. A line left binding nothing at all leaves
+the action on the shortcut it shipped with.
 
 A **chord** is modifier words joined by `+` then a base key: modifiers `ctrl`, `cmd`, `opt`, `shift`;
 base key is a single character or `tab`/`space`/`return`/`delete`/`left`/`right`/`up`/`down`. A key typed
@@ -1058,7 +1092,7 @@ controller incarnation remains open.
 
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
 `open_directory`, `rename_session`, `duplicate_session`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
-`decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_scratch`, `toggle_sidebar`,
+`decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_horizontal_split`, `toggle_scratch`, `toggle_sidebar`,
 `focus_workspace`, `toggle_workspace_filter`, `quick_terminal`,
 `session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
@@ -1175,6 +1209,8 @@ restore; a `session restore --pane right` on a session with no split also return
 `invalid shape: <value> (circle|square|triangle|diamond|capsule|star)` (session status --shape over the
 raw socket; the `agtermctl` CLI rejects the same value locally with
 `shape must be one of: circle, square, triangle, diamond, capsule, star`),
-`--pane must be left, right, or scratch` (the `--pane` value check — the `agtermctl` CLI rejects a bad pane
-with this for session status/type/text, and over the raw socket `session.status` returns this same string;
+`--pane must be left, right, or scratch` (the `--pane` value check; the message intentionally lists the
+canonical read-back names while the role and position aliases documented above are accepted. The
+`agtermctl` CLI rejects a bad pane with this for session status/type/text, and over the raw socket
+`session.status` returns this same string;
 `session.type`/`session.text` over the raw socket instead return `invalid pane: <value>`). Unknown commands fail to decode and return a structured error, never a crash.

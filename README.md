@@ -81,7 +81,9 @@ instructions later in this inherited document apply only to upstream agterm.
 
 Upstream `agterm` is a native macOS terminal for working with AI coding agents across many sessions at once; this fork carries that model to Linux. It is intentionally opinionated: rather than scattering shells across tabs, it organizes them into named workspaces, each holding the sessions for one project or context, so several agent-driven sessions can run side by side and you can move between them without losing track of which is which. The motivation is specific: running several coding agents at once means many long-lived sessions, each progressing on its own, and a tabbed terminal loses track of them quickly. agterm keeps them organized and makes it obvious which session needs you. None of this is limited to agents. It also works as a capable general-purpose terminal for everyday multi-project work.
 
-The design is deliberately minimal: it covers the use cases above and stops there. Features come in two kinds. One is just enough to get the work done. The other is the small set of things other terminals get wrong, done the way they should have been. There is no deep agent integration and no attempt to invent a new way of working with agents. You get a sensible minimum out of the box, plus a complete control API and CLI on top. Almost everything is scriptable, so anything past the defaults you build yourself instead of waiting for it to ship.
+The motivation is specific: running several coding agents at once means many long-lived sessions, each progressing on its own, and a tabbed terminal loses track of them quickly. Each agent works in a named session and reports whether it is active, blocked, or done, so it is obvious which one needs you. An installable skill teaches an agent the control model, so it can drive the terminal itself. None of that is a special agent mode; it is the same control surface anything else uses. With nothing scripted at all it is a capable general-purpose terminal for everyday multi-project work.
+
+The design is deliberately minimal: it covers the use cases above and stops there. Features come in two kinds. One is just enough to get the work done. The other is the small set of things other terminals get wrong, done the way they should have been. There is no deep agent integration and no attempt to invent a new way of working with agents. You get a sensible minimum out of the box, plus a complete control API and CLI on top, so anything past the defaults you build yourself instead of waiting for it to ship.
 
 What it does:
 
@@ -122,27 +124,19 @@ A file manager in a floating overlay over the active session:
 
 ![Floating overlay](docs/screenshots/floating-overlay.png)
 
-The fuzzy session palette for jumping to any session by name:
-
-![Session palette](docs/screenshots/session-palette.png)
-
-A session's right-click context menu:
-
-![Context menu](docs/screenshots/context-menu.png)
-
-The keymap editor:
-
-![Keymap editor](docs/screenshots/keymap-editor.png)
-
 A split session, two panes side by side on different color themes:
 
 ![Split session](docs/screenshots/split-theme.png)
 
-A file open in the quick terminal, the window's shared scratch overlay:
-
-![Quick terminal](docs/screenshots/quick-terminal.png)
-
 </details>
+
+## The model
+
+- **Window.** A top-level bundle of workspaces and sessions in its own desktop window, with its own sidebar tree.
+- **Workspace.** A named group of sessions for one project or context.
+- **Session.** One running shell with a name, a working directory, and its own scrollback. It is the row you see in the sidebar, and it keeps running while you work in another one.
+- **Split and scratch.** A session can split into two shells side by side or top and bottom, both sharing the one sidebar row, and it can open a scratch terminal over itself for a quick aside.
+- **Overlay.** One program running in a temporary terminal over a session. It disappears when the program exits and leaves the shell underneath unchanged.
 
 ## Install
 
@@ -500,7 +494,7 @@ codex plugin marketplace add umputun/agterm
 codex plugin add agterm@agterm
 ```
 
-Use one route or the other, not both — a machine with both ends up with two copies of the skill, and which one the agent picks is not defined. Adding the marketplace clones this whole repository, which is an app rather than a skill library; both CLIs take a `--sparse` option on `marketplace add` to limit the checkout, and it needs to cover the marketplace manifest as well as `plugins/agterm`.
+Install the skill by one route or the other, never both: two copies leave it undefined which one the agent picks.
 
 On macOS, upstream `agtermctl` lives in the `agtermCore` Swift package.
 On Linux, this fork builds the CLI from the Linux package to keep Linux socket code out of upstream-owned core:
@@ -530,6 +524,8 @@ ArgumentParser reports malformed command lines with exit status `64`.
 These local commands ignore `--socket` and do not require a running app.
 
 Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
+
+The same interface covers windows, splits, overlays, dashboards, HUDs, notifications, events, themes, and restoration. All 75 commands are at [agterm.com/commands](https://agterm.com/commands).
 
 ### Native picker
 
@@ -879,6 +875,14 @@ For OpenCode, the installer copies a bundled JavaScript lifecycle plugin to `~/.
 
 A generic bash/zsh/fish `shell/integration.sh` (or `.fish`) covers any agent launched as a shell command: it flags `active` while a command matching `AGTERM_AGENT_RE` runs and `idle` at the next prompt. The default regex matches `gemini`, `cursor-agent`, `aider`, `crush`, and `goose`; Claude Code, Codex, Pi, and OpenCode are excluded by default because their own hooks/extensions/plugins drive finer per-turn state that the coarse process-level `active`/`idle` would only fight. Override `AGTERM_AGENT_RE` before sourcing to change the set. All hooks are no-ops outside an agterm session.
 
+## Documentation
+
+- This README is the Linux guide: the workspace and session model, windows, splits and overlays, keymap, and settings, with the Linux chords and packaging.
+- [Command reference](https://agterm.com/commands) documents every `agtermctl` command with its arguments and return values; the protocol is shared, so it applies to this fork unchanged.
+- [cookbook/](cookbook/) collects recipes built on the control API.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers building from source.
+- [ARCHITECTURE.md](ARCHITECTURE.md) describes the internals: the module split, surface ownership, and the libghostty C boundary.
+
 ## Troubleshooting
 
 Where the logs and config live, how to read them, and the common problems (a keymap editor that will not open, a custom action that does nothing, missing notifications) are covered in [docs/troubleshooting.md](docs/troubleshooting.md). For a bug, open an [issue](https://github.com/umputun/agterm/issues/new); for a feature request or question, start a [Discussion](https://github.com/umputun/agterm/discussions/new).
@@ -892,6 +896,9 @@ Restore reconstructs the structure, not the running processes. Three limitations
 3. The live working directory is persisted on quit and on every structural change (adding, closing, moving, renaming, or selecting a session), but not on every `cd` — OSC 7 fires on each prompt redraw, so saving each one would thrash the disk. A crash or force-quit therefore loses only the working-directory changes made since the last structural change or quit.
 
 ## Related projects
+
+<details>
+<summary>Ports, forks, reimplementations, and companion tools</summary>
 
 A small ecosystem has grown around agterm. These are independent projects, not maintained here.
 
@@ -909,6 +916,8 @@ A small ecosystem has grown around agterm. These are independent projects, not m
 - [agterm-remote](https://github.com/k0nsta/agterm-remote) carries agterm's agent-status colors and pushes to agents running in a remote tmux over SSH.
 - [pi-agterm](https://github.com/khanton/pi-agterm) is a pi extension that reports agent status onto agterm's status indicator.
 - [agterm-experimental](https://github.com/rashpile/agterm-experimental) collects custom skills and scripts for agterm.
+
+</details>
 
 ## Attribution
 

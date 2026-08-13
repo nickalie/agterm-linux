@@ -66,6 +66,14 @@ paths:
 - TOML merging refreshes managed markers while preserving trust tables. Leave foreign markers, existing
   user hooks, and invalid TOML untouched; show manual instructions for the last two. Require `/hooks`
   review for command-hook changes.
+- Every install-result alert line stays ONE LINE and embeds no generated block; two or three sentences on
+  that line are fine, and `AgentHooksInstallerTests` pins exactly that. `NSAlert` sizes itself to fit
+  `informativeText` with no scroll and no height cap, so embedding the hooks block grew the window past the
+  bottom of the screen (#430) — the block's long `command =` lines wrap several times each in that narrow
+  column. The two manual-merge cases open `site/docs.html#codex-hooks-manual` through a second button
+  instead, `informativeText` being plain unselectable text that renders no link. Keep the button second so
+  OK stays the default and Return still dismisses. That docs section carries a copy of `codexHooksBlock`
+  and drifts from it silently.
 - Install Pi only when `~/.pi/agent` exists. Start is active; settle only after retries, compaction, and
   queued continuations. Pi exposes no reliable blocked event, so never infer it from prose.
 - Install OpenCode only when its config exists and export only `AgtermStatusPlugin`; the legacy loader
@@ -91,7 +99,28 @@ paths:
 - Resolve socket from `AGTERM_CONTROL_SOCKET`, then `<AGTERM_STATE_DIR>/agterm.sock`, then Application
   Support. CLI `--socket` overrides. Explicit short paths avoid Unix `sun_path` near 104 bytes. Use 0600.
 - Each connection sets `SO_NOSIGPIPE` and a 5-second receive timeout. Close on non-EINTR read failure,
-  including EAGAIN. Start is idempotent, unlinks stale paths, and logs bind failure without blocking launch.
+  including EAGAIN. Start is idempotent and logs bind failure without blocking launch.
+- `ControlServer.init` takes an exclusive non-blocking `flock` on `<socketPath>.lock`, and start refuses
+  to bind while another process holds it. Ownership is decided at INIT, not at start: the launch window's
+  surfaces are built during the initial render pass and snapshot `AGTERM_SOCKET` into the pty environment,
+  while start runs from the scene's `.task` afterwards, so deciding there would hand the first shell the
+  owner's live socket. Start retries acquisition for the instance refused while the owner was still alive,
+  guarding on the held fd first — flock is per open file description, so re-opening a file this process
+  already locked conflicts with itself. Nothing on disk distinguishes a live socket from a
+  force-quit leftover, and unlinking a live one strands its owner: it keeps its listening fd, never
+  learns, and only a restart recovers it. Do NOT probe with `connect` instead — on Darwin a live listener
+  whose backlog is full refuses with the same `ECONNREFUSED` a socket nobody listens on returns, so one
+  stalled client parking the serial accept loop would make a running instance read as stale. `flock` is
+  also atomic against two instances launching together, and the kernel drops it on a force-quit, which is
+  the case the unlink covers. Never unlink the lock file: the next instance would lock a fresh inode and
+  exclude nobody.
+- A refused instance advertises `<socketPath>.unavailable` through `resolvedSocketPath`, so its shells and
+  `{AGT_SOCKET}` carry a path nothing serves instead of the resolved default, which would point them at
+  the other instance — the user's live terminal, where shared state makes persisted session ids resolve
+  too. Do NOT omit the variable instead: `agterm-agent-status.sh` drops `--socket` when it is absent and
+  `agtermctl` then resolves that same default, so an unset value routes agent status onto the live app.
+  `refused` clears on a later successful acquire, since `start()` re-runs per window scene and the owner
+  may have quit. Its `stop()` returns early without unlinking, leaving the owner's socket intact.
 - One newline-delimited JSON request and response uses each connection, capped at 1 MiB. Unknown commands
   return structured errors. Mutations may return `result.id`; trees use `result.tree`.
 - Human output shows IDs only for created session/workspace/window, retains them in JSON, uses
@@ -102,11 +131,12 @@ paths:
 
 ## Public catalog
 
-There are 74 public commands:
+There are 75 public commands:
 
 - `tree`, `events.read`
 - `workspace.new`, `.rename`, `.delete`, `.select`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
 - `session.new`, `.duplicate`, `.close`, `.select`, `.rename`, `.reveal`, `.move`, `.type`, `.split`,
+  `.split.close`,
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
   `.overlay.result`, `.hud.open`, `.hud.update`, `.hud.close`
@@ -118,7 +148,7 @@ There are 74 public commands:
   `.fullscreen`, `.minimize`
 - `keymap.reload`, `keymap.list`, `config.reload`, `theme.set`, `theme.list`, `restore.clear`
 
-`debug.appearance` is a private 75th `Command` case used only by `AppearanceFlipUITests`.
+`debug.appearance` is a private 76th `Command` case used only by `AppearanceFlipUITests`.
 It accepts light/dark, sets `NSApp.appearance`, posts `.agtermSystemAppearanceChanged`, echoes the effective
 side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provide no CLI or skill entry.
 
@@ -142,20 +172,27 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   between-row surface. `active` resolves through `currentWorkspaceID` — a foreground-created workspace
   first, then the selected session's, then `workspaces.last` — so repeated moves may target a different
   workspace; use an ID to keep one target.
-- `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. Off hides and
-  retains the shell; only shell exit tears it down. `split` reports SHOWN, so a hidden split reads false;
+- `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. `--axis
+  vertical|horizontal` selects left/right or top/bottom; omitting it preserves an existing split's axis
+  and defaults a new split to left/right. Off hides and retains the shell; `session.split.close` and the
+  split shell's own exit are what tear it down.
+  `split` reports SHOWN, so a hidden split reads false;
   `hasSplit` reports the pane existing at all and is present exactly when `splitRatio`/`splitFocused`
   can be. Callers asking "does this session have a split" read `hasSplit`, and `agtermctl tree` tags the
   hidden case `(split hidden)`.
+- `session.split.close` is the teardown verb, its own command rather than a fourth `ControlToggleMode`
+  value, which is shared with `session.scratch`/`sidebar` and cannot express close (a hidden split is
+  already `off`). Idempotent: a session with no right pane answers ok. The palette's Close Split is the
+  GUI twin, a row gated on `hasSplit` with no `BuiltinAction`.
 - `session.scratch` is a third, nonpersisted login shell with on/off/toggle. It spawns lazily, survives
   hiding, recreates after exit, and renders as a full translucent cover below overlay. It has no session
   PWD/title link but a weak watermark link. GUI surfaces are Command-J, titlebar, View, and palette.
-- `session.focus --pane left|right|other` requires an existing split and works shown or hidden.
-  Read `splitFocused`.
-- `session.resize` accepts exactly one absolute ratio or relative grow-left/grow-right delta, defaulting
-  an unset ratio to 0.5. Require a split, clamp through store limits, persist, then post the object-scoped
-  live-divider notification. Hidden split stores for next show. Return clamped ratio as `%.3f`; read
-  `splitRatio`.
+- `session.focus primary|split|left|right|top|bottom|other` requires an existing split and works shown or
+  hidden. The pane is positional; read `splitFocused`.
+- `session.resize` accepts exactly one absolute ratio or one relative
+  `--grow-left|right|primary|split|top|bottom` delta, defaulting an unset ratio to 0.5. Require a split,
+  clamp through store limits, persist, then post the object-scoped live-divider notification. Hidden split
+  stores for next show. Return clamped ratio as `%.3f`; read `splitRatio`.
 - `session.go --to next|prev|first|last|next-attention|prev-attention` operates on current selection in
   the placement store, wraps within filtered scope, and returns selected ID. It has no target.
 - `notify` requires body, defaults title and session, skips OSC focus suppression, increments unseen, and
@@ -186,7 +223,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 ## Surface input, output, and search
 
-- `session.type --pane left|right|scratch` defaults to main for compatibility, not focused/on-screen.
+- `session.type --pane` accepts `primary|left|top`, `split|right|bottom`, or `scratch`; omission defaults
+  to primary for compatibility, not focused/on-screen. Read-back and the stable invalid-value error use
+  canonical `left|right|scratch` names.
   Hidden live scratch is addressable; missing panes error. Main alone bounded-polls (12 × 30ms) a newly
   unrealized session, with or without `select`, so `session.new --no-select` plus an immediate type does
   not race the mount+layout gap (#349). The probe precedes every sleep, so a realized session pays nothing
@@ -199,7 +238,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - `inject` emits Ghostty key events and Return keycode 36 for newline/CR/CRLF. Never replace it with
   `ghostty_surface_text`, whose bracketed paste suppresses Return and can expose `\e[200~`/`\e[201~`
   markers under rapid use.
-- `session.copy` returns the addressed main selection without touching clipboard; empty is `no selection`.
+- `session.copy` returns the addressed main selection without touching clipboard; empty is `no selection`,
+  and an unrealized pane is `session not realized` — `readSelection` cannot tell the two apart, and copy is
+  select-all's read-back, so both name that state the same way.
   `session.paste` and `.selectall` run Ghostty bindings on main. They use
   `Session.addressableSurface = surface ?? splitSurface`, never focus-aware `activeSurface`, so select-all
   and copy share one pane. Read paste through text and select-all through copy.
@@ -219,6 +260,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   scratch addresses that pane, including hidden scratch. Default reads viewport; `--all` includes
   scrollback; `--lines N` returns last content lines after trimming blank grid rows. All and lines are
   exclusive; N must be positive and dispatcher-validated. Blank returns empty success; API failure errors.
+  An UNREALIZED pane answers `session not realized`, not `failed to read surface buffer`, whether its slot
+  is empty or holds a view whose libghostty surface never came up — one state to a caller, and the reading
+  never happened. `failed to read surface buffer` is left to a real read failure on a realized surface.
+  `quick.text` keeps its own vocabulary and still reports that string for an unrealized quick surface.
   Output is plain text because pinned Ghostty exposes no styled-cell read.
 - `session.search` selects and realizes the target, then searches its focused surface. Text opens/updates;
   to next/prev navigates; close ends; no arguments opens empty UI. Poll async SEARCH_TOTAL and return count
@@ -388,8 +433,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   no IDs/MRU/font; open needs IDs or MRU; fixed size must be finite positive.
 - A split expands to primary and split `DashboardMember`s, unless the id carries a `:left`/`:right` suffix
   (#331) selecting one pane. Host-free `DashboardTarget` owns that grammar: split on the FIRST colon,
-  accept only `left`/`right` case-insensitively, reject everything else including `primary`/`split`,
-  `scratch`/`overlay`, and a pasted `surface:<id>:<pane>`. The dispatcher rejects bad grammar outright; a
+  accept `primary`/`left`/`top` and `split`/`right`/`bottom` case-insensitively while readback stays
+  `left`/`right`; reject `scratch`/`overlay` and a pasted `surface:<id>:<pane>`. The dispatcher rejects bad grammar outright; a
   well-formed ref naming no pane (`:right` without a split) is a soft miss joining `unresolved`.
 - Resolve targets in order and deduplicate by session+pane, then cap panes app-side at
   `DashboardLayout.maxCells` 9. Append dropped-pane text to unresolved text with `;`. Guard emptiness on the
@@ -400,7 +445,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `promoteSplitMember` rewrites that session's `.split` cell to `.primary` from `agtermApp.handlePaneExit`.
   Reconcile cannot do this: `closeSplit` and `closePrimaryPane` leave identical `hasSplit == false` state,
   and only the exit path knows which happened.
-- Dashboard is per-window and view-only; GUI Command-Shift-D/menu/palette toggles MRU auto-size.
+- Dashboard is per-window and view-only; GUI Command-Shift-G/menu/palette toggles MRU auto-size.
   Arrows navigate ragged `ceil(sqrt(n))` grid, Enter closes then selects/focuses exact pane, Esc closes.
   It is reciprocal with zoom. Read live `dashboardMembers`, highlighted member, applied font size, and
   `auto|fixed|untouched` mode. See [[libghostty]] for reparent, input gates, and transient font.
@@ -452,7 +497,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 - `keymap.reload` shares GUI reload and returns diagnostic count. `keymap.list` reports:
   resolved built-in actions and override state; live AppKit menu equivalents/menu/title/selector; path;
-  custom commands; diagnostics. The two chord sets may differ during deferred rebuild or collision.
+  custom commands; diagnostics. An action's `chord` is the menu key equivalent alone, so it keeps comparing
+  against `menu`, while `alternates` holds its monitor-bound binds in kitty syntax and is omitted when
+  empty; the human actions column joins the whole set with `|`. Both halves are canonical kitty syntax, not
+  the file's own spelling — only a custom command's `shortcut` is preserved verbatim. `overridden` compares
+  the MENU chord alone, so an action bound only by alternatives reports no override.
+  The two chord sets may differ during deferred rebuild or collision.
   Host-free projection names arrow/return; represent AppKit globe as `fn+` even though grammar lacks it.
   **Linux adapter:** there is no app-wide `SettingsModel` — the parsed keymap is cached PER WINDOW
   CONTROLLER, so the app-global guarantee is manufactured by `reloadKeymapAllWindows(reportingIn:)`
@@ -489,7 +539,15 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 ## Tree and window read-back
 
 - Session nodes include foreground/split foreground argv, background spec, overlay size, pane overlays,
-  split ratio, split focus, status fields, flag, unseen, restore pins, and surfaces. Foreground shares the
+  split axis, split ratio, split focus, status fields, flag, unseen, restore pins, surfaces, and `realized`.
+- `realized` reports the MAIN pane's `TerminalSurface.isRealized`, populated host-free in
+  `AppStore.controlTree` (no app closure — `isRealized` is on the protocol) and false for an empty slot, so
+  only a server predating the field omits it. It exists because `session.new` answers `ok` for a model
+  insert while libghostty refuses to create a surface with the display asleep, leaving a scheduled job's
+  session unrealized until the displays wake (#416). It is the main pane because that is what `--command`
+  spawns on and what `session.type`/`session.text` address by default; per-pane liveness stays with the
+  `fontSize`/`splitFontSize`/`scratchFontSize` triple, so do not add a second per-pane spelling.
+  `agtermctl tree` tags the row `(not realized)`, beside `(split hidden)`. Foreground shares the
   restore capture's pid/sysctl/host-free extraction but adds one step the capture must never take.
   libghostty's foreground pid is `tcgetpgrp`, a process GROUP id, and a pane with no job-control shell
   leaves its program in the group led by setuid-root `login`, whose argv `KERN_PROCARGS2` refuses. The tree

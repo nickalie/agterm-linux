@@ -186,4 +186,28 @@ struct SurfaceEnvironmentTests {
 
         #expect(env["AGTERM_SOCKET"] == "")
     }
+
+    /// both factories must always SET the variable. The shipped status hooks drop `--socket` when it is
+    /// absent, and `agtermctl` then resolves the default path — another instance's.
+    @Test func bothFactoriesAlwaysSetTheSocketVariable() {
+        let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let windowID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        let unavailable = "/tmp/agterm.sock.unavailable"
+
+        let sessionEnv = SurfaceEnvironment.session(
+            sessionID: sessionID,
+            windowID: nil,
+            workspaceID: nil,
+            socketPath: unavailable,
+            programVersion: "0.12.0"
+        )
+        let quickEnv = SurfaceEnvironment.quickTerminal(
+            windowID: windowID,
+            socketPath: unavailable,
+            programVersion: "0.12.0"
+        )
+
+        #expect(sessionEnv["AGTERM_SOCKET"] == unavailable)
+        #expect(quickEnv["AGTERM_SOCKET"] == unavailable)
+    }
 }

@@ -9,6 +9,9 @@ public enum SurfaceEnvironment {
     /// when non-empty, adds `AGTERM_PANE_ID` — the surface's STABLE spawn identity
     /// (`TerminalSurface.paneToken`), which the hook forwards as `--pane-id` so the status handler resolves
     /// the LIVE role instead of the stale baked `AGTERM_PANE` after a promote + re-split (#199).
+    /// `socketPath` is always emitted, never omitted: consumers treat an absent `AGTERM_SOCKET` as
+    /// "resolve the default", which is another instance's. `ControlServer` supplies an unbindable path
+    /// when it does not own one.
     public static func session(sessionID: UUID, windowID: UUID?, workspaceID: UUID?,
                                socketPath: String, programVersion: String,
                                pane: StatusPane? = nil, paneToken: String? = nil) -> [String: String] {

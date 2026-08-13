@@ -965,7 +965,12 @@ struct ControlDispatcherTests {
         let split = await dispatcher.dispatch(ControlRequest(
             cmd: .sessionSplit,
             target: "session",
-            args: ControlArgs(mode: "off", window: "win")
+            args: ControlArgs(mode: "off", axis: "horizontal", window: "win")
+        ))
+        let splitClose = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionSplitClose,
+            target: "session",
+            args: ControlArgs(window: "win")
         ))
         let scratch = await dispatcher.dispatch(ControlRequest(
             cmd: .sessionScratch,
@@ -984,15 +989,26 @@ struct ControlDispatcherTests {
         ))
 
         #expect(split == ControlResponse(ok: true))
+        #expect(splitClose == ControlResponse(ok: true))
         #expect(scratch == ControlResponse(ok: true))
         #expect(focus == ControlResponse(ok: true))
         #expect(resize == ControlResponse(ok: true))
         #expect(actions.calls == [
-            .sessionSplit(target: "session", window: "win", "off"),
+            .sessionSplit(target: "session", window: "win", "off", .topBottom),
+            .sessionSplitClose(target: "session", window: "win"),
             .sessionScratch(target: "session", window: nil, "on", command: "htop"),
             .sessionFocus(target: "session", window: nil, "right"),
             .sessionResize(target: "session", window: "win", .delta(-0.1))
         ])
+    }
+
+    @Test func splitRejectsAnUnknownAxisBeforeDispatch() async {
+        let actions = MockControlActions()
+        let response = await ControlDispatcher(actions: actions).dispatch(ControlRequest(
+            cmd: .sessionSplit, args: ControlArgs(mode: "toggle", axis: "diagonal")))
+        #expect(response == ControlResponse(ok: false,
+                                           error: "invalid split axis: diagonal (vertical|horizontal)"))
+        #expect(actions.calls.isEmpty)
     }
 
     @Test func resizeRejectsInvalidInputs() async {

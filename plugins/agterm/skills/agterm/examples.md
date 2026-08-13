@@ -147,8 +147,8 @@ the pane you duplicated from.
 ws=$(agtermctl workspace new "build" --json | jq -r '.result.id')
 a=$(agtermctl session new --workspace "$ws" --cwd "$HOME/proj" --json | jq -r '.result.id')
 agtermctl session rename "server" --target "$a"
-agtermctl session split on --target "$a"          # second shell side by side
-agtermctl session resize --split-ratio 0.7 --target "$a"   # left pane gets 70% (prints 0.700)
+agtermctl session split on --axis horizontal --target "$a" # second shell below the primary
+agtermctl session resize --split-ratio 0.7 --target "$a"   # top pane gets 70% (prints 0.700)
 b=$(agtermctl session new --workspace "$ws" --json | jq -r '.result.id')
 agtermctl session rename "logs" --target "$b"
 ```
@@ -676,7 +676,7 @@ suffix, capped at 9 cells total. No cell takes input:
 the keyboard navigates a highlight (arrows), Enter jumps into the highlighted session AND focuses that
 exact pane then closes, Esc closes. Open it over the socket with explicit session ids, or with `--mru` to
 pull the window's most-recently-used sessions automatically. The most-recently-used grid also has a built-in
-opener — **⌘⇧D** on macOS or **Ctrl⇧M** on Linux (the `dashboard` action), **Navigate ▸ Dashboard** on
+opener — **⌘⇧G** on macOS or **Ctrl⇧M** on Linux (the `dashboard` action), **Navigate ▸ Dashboard** on
 macOS, or the command palette's **Dashboard**
 toggle it auto-sized (the `dashboard --mru --auto-size` equivalent), so the recent-sessions view needs no
 script for the common case.
@@ -715,7 +715,8 @@ agtermctl tree --json | jq '.result.tree | {dashboardMembers, dashboardHighlight
 agtermctl dashboard --close
 ```
 
-The MRU grid is already on **⌘⇧D** on macOS or **Ctrl⇧M** on Linux (the built-in `dashboard` action) — rebind that chord in `keymap.conf`
+The MRU grid is already on **⌘⇧G** on macOS or **Ctrl⇧M** on Linux (the built-in `dashboard` action) —
+rebind that chord in `keymap.conf`
 with `map <chord> dashboard`. To dashboard a FIXED set of explicit ids instead, bind a `keymap.conf` custom
 action (then `agtermctl keymap reload`):
 
@@ -970,16 +971,17 @@ agtermctl keymap list --json \
   | jq -r '.result.keymap.menu[] | select(.enabled == false) | "\(.chord)  \(.menu) > \(.title)"'
 ```
 
-Find every chord already in use before picking one for a new binding. All THREE sources matter: a
-custom command's shortcut is delivered by the key monitor rather than a menu item, so it appears in
-`commands` and can never show up under `menu`. Miss it and a new `map` line on the same chord makes the
-next reload drop the custom binding.
+Find every chord already in use before picking one for a new binding. All FOUR sources matter: a custom
+command's shortcut and a built-in's `alternates` are delivered by the key monitor rather than a menu item,
+so they can never show up under `menu`. Miss one and a new `map` line on the same chord makes the next
+reload drop that binding. A shortcut holding alternatives is one `|`-joined string, so split it.
 
 ```bash
 agtermctl keymap list --json | jq -r '
   [ .result.keymap.actions[].chord,
-    .result.keymap.commands[].shortcut,
-    .result.keymap.menu[].chord ] | map(select(. != null)) | unique | .[]'
+    (.result.keymap.actions[].alternates // [] | .[]),
+    (.result.keymap.commands[].shortcut // "" | split("|") | .[]),
+    .result.keymap.menu[].chord ] | map(select(. != null and . != "")) | unique | .[]'
 ```
 
 Read the parse problems in full rather than just their count:

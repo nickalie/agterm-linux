@@ -1,8 +1,9 @@
 # agterm project notes
 
 agterm is a native macOS SwiftUI terminal on libghostty with a workspace-to-session sidebar.
-Read `README.md` for product behavior and `ARCHITECTURE.md` for modules, surface ownership, and C-boundary
-concurrency before changing the bridge.
+Read `site/docs.html` for product behavior and `ARCHITECTURE.md` for modules, surface ownership, and
+C-boundary concurrency before changing the bridge.
+`README.md` is the product synopsis, not the reference.
 
 ## Working norms
 
@@ -39,6 +40,8 @@ concurrency before changing the bridge.
   or reasons the obvious implementation fails. Never narrate code, repeat a fact across surfaces, use a
   paragraph where a clause works, or preserve change history. Own each contract once and cross-reference it.
   If 25 lines of logic seem to need 100 lines of comment, fix the code.
+- A doc comment longer than the body it documents is wrong. The usual cause is writing it to justify a
+  review fix rather than to document the code, which belongs in the commit message.
 - Test comments are rare and one line. Add one only when neither the test name nor setup reveals the goal.
   Never label arrange/act/assert, restate an assertion, or explain why a test exists.
 - Review severity follows user-visible consequences: critical for data loss or broken primary paths, major
@@ -88,13 +91,18 @@ concurrency before changing the bridge.
 - `make deploy` copies Release to `~/Applications`, whose app, PATH CLI, and installed hooks shadow Debug.
   Test fresh CLI/hooks with the Debug binary or redeploy and reinstall them. Debug uses
   `com.umputun.agterm.debug`, distinct from Release, but state/socket paths still require isolation.
-- Launching ANY second instance without `AGTERM_STATE_DIR` does not merely share state, it takes the
-  running app's control socket away for good. `ControlServer.start` unlinks the resolved path
-  unconditionally before binding, and cannot tell a live socket from one a force-quit left behind. The
-  first instance keeps its listening fd and never learns, so it stays alive and unreachable; the second
-  one's `stop()` unlinks again, leaving no path at all. Only a restart of the deployed app recovers it.
-- Diagnose that state with `lsof -p <pid> | grep agterm.sock`: an fd on a socket path that `ls` cannot
-  find means the socket was orphaned, which is a different fault from a window scene that never bound one.
+- Launching a second instance without `AGTERM_STATE_DIR` still shares state, but no longer takes the
+  running app's control socket. `ControlServer.init` takes an exclusive `flock` on `<socket>.lock` and
+  `start` refuses to bind while another live instance holds it, logging `already served by another
+  instance`. Ownership is settled at init so the launch window's first shell, whose environment is
+  snapshotted before `start` runs, cannot bake the owner's path.
+  A refused instance advertises `<socket>.unavailable` in `AGTERM_SOCKET`, so a command passing
+  `--socket "$AGTERM_SOCKET"` fails rather than reaching the owner. A BARE `agtermctl` still reaches it:
+  the CLI never reads that variable and resolves the default path. Isolate anyway — state is shared and
+  persisted session ids resolve in both instances, so an untargeted command lands on the live terminal.
+- `lsof -p <pid> | grep agterm.sock` showing an fd on a socket path `ls` cannot find means an orphaned
+  socket; a window scene that never bound one is a different fault. Reaching it now takes a build
+  predating the lock, or the socket file being deleted by hand.
 
 ## Protect the live terminal
 
@@ -165,8 +173,16 @@ concurrency before changing the bridge.
 - Event arguments must appear in `EventFormatter.human`, not only JSON payloads.
 - Control API, keymap, and model changes also update bundled
   `plugins/agterm/skills/agterm/`, the sole source for installed Claude/Codex copies.
-- `site/docs.html` mirrors README. `site/index.html` reflects major features and current
-  `softwareVersion`; `site/commands.html` mirrors every command, arguments, and read-back field.
+- `site/docs.html` is the canonical user guide and `site/commands.html` the canonical command reference.
+  `README.md` is the product synopsis: pitch, install, the model, and the control-API demo.
+  `site/llms.txt` is the crawler-oriented summary and discovery index.
+  These four facts stay synchronized across every surface that states them: the command count, the install
+  commands, the minimum macOS version, and the positioning claim
+  (`a simply good terminal with a full control API`).
+  The positioning claim must stay consistent in substance, not byte-identical: `site/index.html`'s title and
+  social tags insert `macOS` for search intent, and `site/llms.txt` carries a libghostty-based variant.
+- `site/index.html` reflects major features and current `softwareVersion`; `site/commands.html` mirrors
+  every command, arguments, and read-back field.
 - `cookbook/` is not a synchronized surface. Recipes pin a minimum version and are fixed reactively;
   its CI checks structure and shell hygiene, not current API parity.
 - Cookbook recipes are third-party work published by their author, not code the project owns.

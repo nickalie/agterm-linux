@@ -20,6 +20,7 @@ struct agtermApp: App {
     @State private var customCommandRunner: CustomCommandRunner
     @State private var appearanceObserver: SystemAppearanceObserver
     @State private var accessibilityObserver: SystemAccessibilityObserver
+    @State private var wakeObserver: SystemWakeObserver
 
     /// Whether this launch owes the user the first-run welcome. Decided in `init()`, because the first
     /// launch writes its own window snapshot moments after the scene appears and that write would read back
@@ -61,15 +62,19 @@ struct agtermApp: App {
         _sessionSwitcher = State(initialValue: SessionSwitcher(library: library, canSwitch: { actions.uiActionsEnabled }))
         _paneShortcuts = State(initialValue: PaneShortcuts(library: library, actions: actions))
         _undoCloseShortcut = State(initialValue: UndoCloseShortcut(actions: actions))
-        // built last: needs the keymap (settings) and the control server's bound socket path for `{AGT_SOCKET}`.
+        // built last: needs the keymap (settings), the action hub for built-in monitor binds, and the control
+        // server's bound socket path for `{AGT_SOCKET}`.
         _customCommandRunner = State(initialValue: CustomCommandRunner(
-            library: library, settings: settingsModel,
+            library: library, settings: settingsModel, actions: actions,
             socketProvider: { controlServer.resolvedSocketPath }))
         // follows macOS light/dark via KVO on NSApp.effectiveAppearance; dependency-free, started in `.task`.
         _appearanceObserver = State(initialValue: SystemAppearanceObserver())
         // follows Reduce Motion / Reduce Transparency via NSWorkspace's accessibility-display notification,
         // fanning live changes to AppKit consumers; SwiftUI ones use Environment.
         _accessibilityObserver = State(initialValue: SystemAccessibilityObserver())
+        // re-attempts surface creation on display wake: libghostty refuses to create one while the display
+        // sleeps, which leaves a scheduled job's session realized-never and its --command unrun (#416).
+        _wakeObserver = State(initialValue: SystemWakeObserver())
     }
 
     var body: some Scene {
@@ -175,6 +180,7 @@ struct agtermApp: App {
                         appearanceObserver.start()
                         // consumers read current accessibility values at first render; this handles live flips.
                         accessibilityObserver.start()
+                        wakeObserver.start()
                         // last: a modal here blocks the rest of the task, and the window behind it should be
                         // fully wired before it opens. `presentOnce` latches, so the per-window .task is safe.
                         if welcomeDue { WelcomeAlert.presentOnce(settingsModel: settingsModel) }
@@ -533,7 +539,8 @@ struct agtermApp: App {
     /// session facts plus agterm's identity (`TERM_PROGRAM`/`TERM_PROGRAM_VERSION`). The window id comes from the
     /// open store owning the session (split/overlay/scratch inherit it), the workspace from the session's owner.
     /// `AGTERM_SOCKET` is the path `ControlServer` will bind, resolved at init so a launch-window shell
-    /// materializing before `start()` still sees it, honoring a test's `AGTERM_CONTROL_SOCKET` override. `pane`
+    /// materializing before `start()` still sees it, honoring a test's `AGTERM_CONTROL_SOCKET` override, and
+    /// replaced by an unbindable path when this instance refused it to another live one. `pane`
     /// injects `AGTERM_PANE` (`left`=main, `right`=split, `scratch`) so the hook wrapper forwards `--pane` and a
     /// background-pane status records which surface blocked; the overlay passes nil.
     @MainActor
