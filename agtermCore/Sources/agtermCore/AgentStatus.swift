@@ -3,8 +3,10 @@
 public enum AgentStatus: String, Codable, Sendable, CaseIterable {
     case idle, active, completed, blocked
 
-    /// True for the states attention navigation (⌃⌥↑/↓, `session.go next-attention|prev-attention`) steps
-    /// through: a `blocked` prompt or a `completed` run, not `active` (still working) or `idle` (no glyph).
+    /// True for the states that are waiting on the USER: a `blocked` prompt or a `completed` run, not `active`
+    /// (still working) or `idle` (no glyph). The single membership rule for every attention surface —
+    /// navigation (⌃⌥↑/↓, `session.go next-attention|prev-attention`) and `AppStore.attentionSessions`, which
+    /// backs the titlebar bell, its popover, the Dock menu group, and the `.attention` palette.
     public var needsAttention: Bool { self == .blocked || self == .completed }
 
     /// The state a keystroke in the session's terminal moves this one to, or nil to leave it alone.
@@ -30,8 +32,8 @@ public enum AgentStatus: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Sort priority for the attention list, lower first. `idle` is never sorted — idle sessions are filtered
-    /// out before the list is built — but ranks last so an accidental inclusion sorts after the rest.
+    /// Sort priority for the attention list, lower first. Only `needsAttention` states reach it; `active` and
+    /// `idle` keep ranks so an accidental inclusion sorts after the states that are actually waiting.
     public var attentionRank: Int {
         switch self {
         case .blocked: return 0

@@ -37,12 +37,12 @@ final class AttentionButtonUITests: XCTestCase {
         XCTAssertTrue(pollButton(bell, value: "none", enabled: false), "an all-idle window should disable the bell as none")
 
         try setStatus("active", target: seeded)
-        XCTAssertTrue(pollButton(bell, value: "attention", enabled: true),
-                      "a non-blocked attention session should enable the bell as attention")
+        XCTAssertTrue(pollButton(bell, value: "none", enabled: false),
+                      "a working agent asks nothing of the user, so active must leave the bell disabled")
 
         try setStatus("completed", target: seeded)
         XCTAssertTrue(pollButton(bell, value: "attention", enabled: true),
-                      "a completed (non-blocked) attention session should keep the bell enabled as attention")
+                      "a completed (non-blocked) session should enable the bell as attention")
 
         try setStatus("blocked", target: seeded)
         XCTAssertTrue(pollButton(bell, value: "blocked", enabled: true),

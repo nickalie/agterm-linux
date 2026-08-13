@@ -50,14 +50,21 @@ extension AppStore {
         )
     }
 
-    /// The window-wide non-idle sessions, the single source of truth for the titlebar attention icon and the
-    /// `.attention` palette. Spans ALL workspaces (`workspaces.flatMap(\.sessions)`) and deliberately IGNORES
-    /// the focus/flagged sidebar filter (unlike `navigableSessions`) — the point is window-wide visibility even
-    /// when the sidebar is hidden. Sorted by `attentionRank` ascending (blocked → active → completed) then
-    /// `statusChangedAt` DESCENDING (newest first; a nil stamp sorts last within its rank group).
+    /// The window-wide sessions waiting on the user, the single source of truth for the titlebar attention
+    /// icon and the `.attention` palette. Spans ALL workspaces (`workspaces.flatMap(\.sessions)`) and
+    /// deliberately IGNORES the focus/flagged sidebar filter (unlike `navigableSessions`) — the point is
+    /// window-wide visibility even when the sidebar is hidden. Sorted by `attentionRank` ascending
+    /// (blocked → completed) then `statusChangedAt` DESCENDING (newest first; a nil stamp sorts last within
+    /// its rank group).
+    ///
+    /// The filter is `AgentStatus.needsAttention`, the predicate attention navigation already used, so
+    /// `active` is out: the installed hooks hold a working agent there almost continuously
+    /// (`UserPromptSubmit` and every `PostToolUse`), and answering a prompt promotes `blocked` → `active`
+    /// (`AgentStatus.afterKeystroke`), which together made an attended session stay listed. Sidebar glyphs
+    /// are unaffected.
     public var attentionSessions: [Session] {
         workspaces.flatMap(\.sessions)
-            .filter { $0.agentIndicator.status != .idle }
+            .filter { $0.agentIndicator.status.needsAttention }
             .sorted { lhs, rhs in
                 let lrank = lhs.agentIndicator.status.attentionRank
                 let rrank = rhs.agentIndicator.status.attentionRank

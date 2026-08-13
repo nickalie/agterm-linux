@@ -126,12 +126,17 @@ paths:
 ## Titlebar attention
 
 - With `attentionButtonEnabled` off by default, `customTitlebar` places a bell after recent sessions and
-  before scratch/split/quick-terminal controls. It derives live state from all non-idle
+  before scratch/split/quick-terminal controls. It derives live state from
   `AppStore.attentionSessions`: empty is disabled `bell` at about 0.35 opacity; non-blocked is enabled
   `bell` in `chromeText`; any blocked is enabled `bell.fill` in `blockedStatusColor`. There is no count
   or pulse.
+- `attentionSessions` filters on `AgentStatus.needsAttention`, so `active` never reaches the bell, its
+  popover, the Dock group, or the `.attention` palette — the same membership rule attention navigation
+  already used. The installed hooks hold a working agent in `active` almost continuously, and answering a
+  prompt promotes `blocked` to `active`, so including it made the list read as "where agents live" rather
+  than "what waits on you". The sidebar glyph is unchanged; only the attention surfaces narrow.
 - Clicking opens the mouse popover of `SessionPopoverRow`s with `StatusGlyph`, ordered
-  blocked, active, completed; selection reveals the tagged blocked pane. Ctrl-Shift-I, Navigate > Go to
+  blocked then completed; selection reveals the tagged blocked pane. Ctrl-Shift-I, Navigate > Go to
   Attention, and Show Attention in the palette retain the searchable keyboard surface.
 - The button ID is `attention-button`, with help and value `none`, `attention`, or `blocked`.
   `WindowContentView` mirrors `GhosttyApp.attentionButtonEnabled` into state and refreshes on

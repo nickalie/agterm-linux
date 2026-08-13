@@ -151,8 +151,8 @@ extension AppActions {
         return store.navigableSessions.map { paletteItem(for: $0, in: store) }
     }
 
-    /// The window's non-idle sessions as palette items (`.attention` mode), each row carrying the session's
-    /// agent-status glyph. `store.attentionSessions` orders blocked→active→completed, newest status-change
+    /// The window's sessions waiting on the user as palette items (`.attention` mode), each row carrying the
+    /// session's agent-status glyph. `store.attentionSessions` orders blocked→completed, newest status-change
     /// first, so the empty-query order matches; choosing one selects it. Subtitle as in `paletteSessions()`.
     func paletteAttention() -> [PaletteItem] {
         guard let store else { return [] }

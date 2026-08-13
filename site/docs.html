@@ -2358,10 +2358,12 @@
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               When the sidebar is hidden the glyphs go with it, so an optional
               <strong style="color: #e6e1d7">title-bar bell</strong> (Settings ▸ Notifications ▸ Show attention indicator, off by
-              default) reflects the window: dimmed when nothing needs you, plain when a session is active or completed, filled
-              amber when any is blocked. Clicking it opens a <strong style="color: #e6e1d7">popover</strong> of this window's non-idle
-              sessions, sorted blocked → active → completed, that you hover to highlight and click to jump to the session.
-              A blocked or completed row also reveals the pane that set its status; an active row keeps the existing pane selection.
+              default) reflects the window: dimmed when nothing needs you, plain when a session has completed, filled
+              amber when any is blocked. Clicking it opens a <strong style="color: #e6e1d7">popover</strong> of this window's
+              sessions waiting on you, sorted blocked → completed, that you hover to highlight and click to jump to the session.
+              Each row also reveals the pane that set its status. A session whose agent is still working
+              (<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">active</span>) stays off every
+              attention surface, so answering a blocked prompt drops the session off the list.
               ⌃⇧I, <strong style="color: #e6e1d7">Navigate ▸ Go to Attention…</strong>, or the action
               palette's "Show Attention" opens the same <strong style="color: #e6e1d7">attention list</strong> as a searchable
               palette. Right-clicking agterm's Dock icon exposes the last-active window's same ordered list under

@@ -106,9 +106,9 @@ extension WindowContentView {
     }
 
     /// Title-bar bell reflecting the window's attention state (opt-in, gated by the `attentionButtonEnabled`
-    /// mirror). Three states from `store.attentionSessions`: empty → a dimmed disabled outline bell; non-empty
-    /// with nothing blocked → a plain enabled bell in `chromeText`; any blocked session → a filled bell tinted
-    /// the blocked-status color. No count, no pulse. Click opens the attention popover (the mouse form; ⌃⇧I /
+    /// mirror). Three states from `store.attentionSessions`: nothing waiting → a dimmed disabled outline bell;
+    /// a completed session and nothing blocked → a plain enabled bell in `chromeText`; any blocked → a filled
+    /// bell tinted the blocked-status color. No count, no pulse. Click opens the attention popover (the mouse form; ⌃⇧I /
     /// the Navigate menu keep the searchable `.attention` palette). Reading `store.attentionSessions` in the
     /// body registers the per-session `agentIndicator` observation, so the glyph re-renders live;
     /// `.accessibilityValue` (none|attention|blocked) exposes the otherwise-unobservable bell↔bell.fill state
@@ -138,14 +138,14 @@ extension WindowContentView {
             if shown { store.suppressAutoFollow() } else { store.resumeAutoFollow() }
         }
         .onChange(of: empty) { _, isEmpty in
-            // the last attention session going idle fires no outside-click dismiss; close the popover so no
-            // empty sliver lingers under the now-disabled bell.
+            // the last waiting session clearing or resuming work fires no outside-click dismiss; close the
+            // popover so no empty sliver lingers under the now-disabled bell.
             if isEmpty { attentionPopoverShown = false }
         }
     }
 
     /// The attention popover body: the window's sessions needing attention (`store.attentionSessions`, sorted
-    /// blocked→active→completed) as full-row `SessionPopoverRow`s with a leading status glyph — the mouse form
+    /// blocked→completed) as full-row `SessionPopoverRow`s with a leading status glyph — the mouse form
     /// of the ⌃⇧I attention palette, tinted and hover-highlighted like the recent-sessions popover. Clicking a
     /// row selects the session and reveals its blocked pane.
     private var attentionPopover: some View {

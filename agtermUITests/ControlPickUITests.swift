@@ -120,13 +120,14 @@ final class ControlPickUITests: ControlAPITestCase {
         XCTAssertEqual(result["index"] as? Int, 1, "the reported index stays the caller's array position")
     }
 
-    // pins the same tie-break in the .attention palette: Return on open ran the active row, not the blocked one.
+    // pins the same tie-break in the .attention palette: Return on open ran the alphabetically-first row,
+    // not the blocked one.
     func testAttentionPaletteEnterKeepsStatusOrderOnEmptyQuery() throws {
         let blocked = try namedSession("zebra")
-        let active = try namedSession("alpha")
+        let completed = try namedSession("alpha")
         try setStatus("blocked", target: blocked)
-        try setStatus("active", target: active)
-        XCTAssertTrue(poll(until: isActiveSession(active), timeout: 8),
+        try setStatus("completed", target: completed)
+        XCTAssertTrue(poll(until: isActiveSession(completed), timeout: 8),
                       "the last created session should start selected")
 
         app.menuBars.menuBarItems["Navigate"].click()
@@ -136,7 +137,7 @@ final class ControlPickUITests: ControlAPITestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "command-palette")
             .firstMatch.waitForExistence(timeout: 5), "the attention palette should open")
         XCTAssertTrue(app.paletteRow(blocked).waitForExistence(timeout: 5), "the blocked session should be listed")
-        XCTAssertTrue(app.paletteRow(active).waitForExistence(timeout: 5), "the active session should be listed")
+        XCTAssertTrue(app.paletteRow(completed).waitForExistence(timeout: 5), "the completed session should be listed")
 
         app.typeKey(.return, modifierFlags: [])
 

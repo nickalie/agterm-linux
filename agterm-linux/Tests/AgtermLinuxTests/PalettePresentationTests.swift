@@ -145,13 +145,15 @@ struct PalettePresentationTests {
     }
 
     /// The attention palette's rows arrive pre-ranked by `AppStore.attentionSessions`
-    /// (blocked→active→completed, newest change first). Alphabetizing that on an empty query would make
+    /// (blocked→completed, newest change first). Alphabetizing that on an empty query would make
     /// Return jump to the alphabetically-first session instead of the blocked one — macOS special-cases
     /// exactly this (`agterm/Views/Palette.swift`).
     @Test("the attention palette keeps its blocked-first order until something is typed")
     func attentionPaletteKeepsNaturalOrder() {
-        let natural = ["blocked session", "active session", "completed session"]
-        let alphabetical = ["active session", "blocked session", "completed session"]
+        // one blocked then two completed, newest first; the names share a length so a typed query scores
+        // them equally and falls through to `fuzzyRank`'s alphabetical tie-break.
+        let natural = ["blocked session", "younger session", "elderly session"]
+        let alphabetical = ["blocked session", "elderly session", "younger session"]
         let attention = LinuxPaletteList(items: items(natural.map { LinuxPaletteRow(title: $0) }),
                                          preservesNaturalOrder: true)
 

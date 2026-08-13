@@ -142,7 +142,7 @@ extension AppController {
 
     /// Sessions as palette entries (label = "name — workspace"), each selecting that session.
     /// `navigableSessions` is the ⌃P switcher's list (every workspace, sidebar order); `attentionSessions`
-    /// is the attention palette's, already ranked blocked→active→completed — which `filterPalette`
+    /// is the attention palette's, already ranked blocked→completed — which `filterPalette`
     /// preserves for an empty query rather than alphabetizing.
     private func sessionRows(_ sessions: [Session]) -> [LinuxPaletteItem] {
         sessions.map { s in

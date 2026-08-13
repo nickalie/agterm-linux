@@ -340,26 +340,40 @@ struct AppStoreNavigationTests {
 
     // MARK: - attentionSessions
 
-    @Test func attentionSessionsFiltersOutIdle() {
+    /// A working agent is not asking anything of the user, so `active` is as absent as `idle`.
+    @Test func attentionSessionsFiltersOutIdleAndActive() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
         _ = store.addSession(toWorkspace: ws.id, cwd: "/idle")
         let active = store.addSession(toWorkspace: ws.id, cwd: "/active")!
+        let blocked = store.addSession(toWorkspace: ws.id, cwd: "/blocked")!
         store.setAgentIndicator(AgentIndicator(status: .active), forSession: active.id)
-        #expect(store.attentionSessions.map(\.id) == [active.id])
+        store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: blocked.id)
+        #expect(store.attentionSessions.map(\.id) == [blocked.id])
     }
 
-    @Test func attentionSessionsOrderBlockedActiveCompleted() {
+    /// Answering a prompt promotes blocked → active, which must drop the session OUT of the list.
+    @Test func attentionSessionsDropAnsweredBlockedSession() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: session.id)
+        #expect(store.attentionSessions.map(\.id) == [session.id])
+        let answered = session.agentIndicator.afterKeystroke(pane: .left, isInterrupt: false)!
+        store.setAgentIndicator(answered, forSession: session.id)
+        #expect(answered.status == .active)
+        #expect(store.attentionSessions.isEmpty)
+    }
+
+    @Test func attentionSessionsOrderBlockedThenCompleted() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
         let completed = store.addSession(toWorkspace: ws.id, cwd: "/c")!
-        let active = store.addSession(toWorkspace: ws.id, cwd: "/a")!
         let blocked = store.addSession(toWorkspace: ws.id, cwd: "/b")!
         // set in a non-rank order, so insertion order alone cannot pass this
         store.setAgentIndicator(AgentIndicator(status: .completed), forSession: completed.id)
-        store.setAgentIndicator(AgentIndicator(status: .active), forSession: active.id)
         store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: blocked.id)
-        #expect(store.attentionSessions.map(\.id) == [blocked.id, active.id, completed.id])
+        #expect(store.attentionSessions.map(\.id) == [blocked.id, completed.id])
     }
 
     @Test func attentionSessionsWithinRankOrderNewestFirstNilLast() {
@@ -401,7 +415,7 @@ struct AppStoreNavigationTests {
         let other = store.addWorkspace(name: "other")
         let here = store.addSession(toWorkspace: work.id, cwd: "/here")!
         let away = store.addSession(toWorkspace: other.id, cwd: "/away")!
-        store.setAgentIndicator(AgentIndicator(status: .active), forSession: here.id)
+        store.setAgentIndicator(AgentIndicator(status: .completed), forSession: here.id)
         store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: away.id)
         store.setFocusedWorkspace(work.id)
         #expect(store.attentionSessions.map(\.id) == [away.id, here.id])

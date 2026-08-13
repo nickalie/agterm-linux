@@ -177,9 +177,9 @@ paths:
 - An empty query skips ranking in two cases: attention mode and a caller-supplied picker. Both keep their
   source order, because every row scores 0 and the tie-break would re-sort A→Z and replace the row Return
   runs. Every other palette lists everything A→Z.
-- Attention mode lists every non-idle session, ordered blocked, active, completed and then newest
-  `statusChangedAt`, with nil last. Palette items carry status plus per-call color/shape, resolved by the
-  same helpers as sidebar glyphs. Typed queries use fuzzy score.
+- Attention mode lists every session waiting on the user (`AgentStatus.needsAttention`, so no `active`),
+  ordered blocked, completed and then newest `statusChangedAt`, with nil last. Palette items carry status
+  plus per-call color/shape, resolved by the same helpers as sidebar glyphs. Typed queries use fuzzy score.
 - Open attention through `show_attention` (Ctrl-Shift-I), Navigate > Go to Attention, or Show Attention
   in the action palette. The titlebar bell opens a popover, not this palette. Palette opening is
   keep-in-sync exempt.
@@ -201,7 +201,7 @@ paths:
   background, and chrome text.
 - Clock lists up to `maxCandidates` recent visible sessions excluding active and enables only with at
   least two sessions. Selection records activity, selects, and focuses.
-- Bell lists all non-idle sessions including current. Selection uses pane-aware reveal.
+- Bell lists every blocked or completed session including current. Selection uses pane-aware reveal.
 - Popover opens are keep-in-sync exempt. Synthesized XCUITest clicks inside `NSPopover` do not fire the
   SwiftUI button, though real clicks do; tests verify open/list contents, while selection is manual plus
   host-free API coverage.

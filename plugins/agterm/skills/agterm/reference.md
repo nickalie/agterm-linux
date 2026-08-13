@@ -475,6 +475,9 @@ All twelve are read-only projections of GUI state.
   re-split) lands on the pane's CURRENT slot instead of the stale role; an absent/unknown token falls back
   to `--pane`. Scripts normally set `--pane` directly and leave `--pane-id` to the hook.
   An unknown state errors. Setting non-idle is for agents/hooks; `idle` clears it (also available in the GUI).
+  Only `blocked` and `completed` reach the attention surfaces (the title-bar bell and its popover, the
+  ⌃⇧I attention list, the Dock group, and `session go --to next-attention`); `active` draws its sidebar
+  glyph and nothing more, since a working agent is not waiting on the user.
 - `session flag [on|off|toggle|clear] [--target] [--window W]` — flag/unflag a session for the flagged
   working-set view (a durable, persisted membership). `on`/`off`/`toggle` act on `--target` (default
   `active`) and are idempotent; `clear` ignores the target and unflags every session in the window.
