@@ -180,6 +180,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `hasSplit` reports the pane existing at all and is present exactly when `splitRatio`/`splitFocused`
   can be. Callers asking "does this session have a split" read `hasSplit`, and `agtermctl tree` tags the
   hidden case `(split hidden)`.
+  **Linux adapter:** the arrangement is the session `GtkPaned`'s orientation
+  (`AppControllerSurfaces.applySplitAxis`), so a transpose is a property change on the container the two
+  pane hosts already sit in — neither `GtkGLArea` is unparented, which would unrealize it and blank the
+  terminal. The divider ratio still means the PRIMARY pane's fraction, so every ratio site measures through
+  `panedExtent(_:axis:)` (height for `topBottom`, width for `leftRight`) rather than `gtk_widget_get_width`,
+  and a transpose re-derives the position from the stored ratio.
 - `session.split.close` is the teardown verb, its own command rather than a fourth `ControlToggleMode`
   value, which is shared with `session.scratch`/`sidebar` and cannot express close (a hidden split is
   already `off`). Idempotent: a session with no right pane answers ok. The palette's Close Split is the

@@ -38,6 +38,28 @@ struct PalettePresentationTests {
                                        chord: nil).title == "Show All Sessions")
     }
 
+    /// The two pane-focus rows name the arrangement they will move into, so a top/bottom split must not
+    /// offer "Focus Left Pane". The Linux palette therefore has to pass `activeSplitAxis` through, which a
+    /// context-free call would silently default away.
+    @Test("the pane-focus titles follow the active split's axis")
+    func paneFocusTitlesFollowAxis() {
+        let leftRight = PaletteContext(activeSessionHasSplit: true, activeSplitAxis: .leftRight)
+        let topBottom = PaletteContext(activeSessionHasSplit: true, activeSplitAxis: .topBottom)
+
+        #expect(LinuxPaletteRow.action(.focusLeftPane, in: leftRight, chord: nil).title == "Focus Left Pane")
+        #expect(LinuxPaletteRow.action(.focusRightPane, in: leftRight, chord: nil).title == "Focus Right Pane")
+        #expect(LinuxPaletteRow.action(.focusLeftPane, in: topBottom, chord: nil).title == "Focus Top Pane")
+        #expect(LinuxPaletteRow.action(.focusRightPane, in: topBottom, chord: nil).title == "Focus Bottom Pane")
+    }
+
+    /// Close Split reads `hasSplit`, not `isSplit`, so the hidden pane a plain toggle leaves behind stays
+    /// reachable — that is the state the row exists for.
+    @Test("Close Split is offered for a hidden split and withheld without one")
+    func closeSplitVisibility() {
+        #expect(!PaletteCommand.closeSplit.isVisible(in: PaletteContext()))
+        #expect(PaletteCommand.closeSplit.isVisible(in: PaletteContext(activeSessionHasSplit: true)))
+    }
+
     @Test("a custom command is badged and shows its own chord")
     func customWithShortcut() {
         let row = LinuxPaletteRow.custom(

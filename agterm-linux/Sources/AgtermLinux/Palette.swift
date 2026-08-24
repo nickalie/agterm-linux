@@ -24,6 +24,8 @@ extension AppController {
                                             hasMarkedWorkspaces: !store.focusedWorkspaceIDs.isEmpty,
                                             activeWorkspaceMarked: store.isCurrentWorkspaceFocusMember,
                                             activeSessionHasSplit: activeSession?.hasSplit ?? false,
+                                            activeSplitAxis: activeSession?.hasSplit == true
+                                                ? activeSession?.splitAxis : nil,
                                             hasPendingClose: store.pendingCloseSummary != nil,
                                             hasRecentClosed: !library.recentClosedItems.isEmpty)
         var items: [LinuxPaletteItem] = PaletteCommand.allCases.filter { $0.isVisible(in: paletteContext) }.map { cmd in
@@ -104,6 +106,8 @@ extension AppController {
         case .lastSession: return { self.navigate(.last) }
         case .showAttention: return { self.showAttentionPalette() }
         case .toggleSplit: return { self.toggleSplit() }
+        case .toggleHorizontalSplit: return { self.toggleHorizontalSplit() }
+        case .closeSplit: return { self.closeSplit() }
         case .toggleScratch: return { self.toggleScratch() }
         case .toggleTerminalZoom: return { self.toggleTerminalZoom() }
         case .dashboard: return { self.toggleDashboard() }

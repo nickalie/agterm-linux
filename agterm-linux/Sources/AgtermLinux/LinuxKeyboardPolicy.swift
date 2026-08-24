@@ -15,6 +15,9 @@ extension BuiltinAction {
         case .openDirectory: return Chord(mods: [.control, .shift], key: "o")
         case .closeSession: return Chord(mods: [.control, .shift], key: "q")
         case .toggleSplit: return Chord(mods: [.control, .shift], key: "d")
+        // macOS pairs the two splits as Cmd-D / Cmd-Shift-D. Linux already spends Shift on every default,
+        // so the top/bottom sibling takes H for horizontal rather than a second modifier.
+        case .toggleHorizontalSplit: return Chord(mods: [.control, .shift], key: "h")
         case .dashboard: return Chord(mods: [.control, .shift], key: "m")
         case .toggleScratch: return Chord(mods: [.control, .shift], key: "j")
         case .toggleSearch: return Chord(mods: [.control, .shift], key: "f")

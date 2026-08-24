@@ -41,8 +41,9 @@ Code layout:
 
 ### Linux feature parity and platform differences
 
-The `linux-port` branch carries the upstream v0.22.0 terminal model and control protocol, including
-split/scratch/overlay terminals, Quick terminal input and read-back, terminal zoom, fullscreen,
+The `linux-port` branch carries the upstream v0.23.0 terminal model and control protocol, including
+horizontal (top/bottom) splits and split teardown, keymap bind alternatives, split/scratch/overlay
+terminals, Quick terminal input and read-back, terminal zoom, fullscreen,
 recently closed sessions with grouped undo, light/dark themes, configurable toolbar and sidebar text,
 recent-session and attention popovers, agent status in the multi-session dashboard, stable pane status
 routing, control-event subscriptions, held command sessions, per-pane restore overrides, persisted workspace
@@ -55,6 +56,8 @@ Linux uses desktop conventions: key labels are Ctrl/Shift rather than Command/Op
 provided by libadwaita, and local `file://` links open their containing folder in the default file manager.
 Its desktop, notification, and Flatpak application ID is `io.github.melonamin.agterm`, owned by this Linux fork.
 Ctrl+Shift+M toggles the most-recently-used dashboard because Ctrl+Shift+D remains the split shortcut.
+Ctrl+Shift+H toggles the top/bottom split, the sibling macOS spells ⌘⇧D: Linux already spends Shift on
+every default, so the second arrangement takes H for horizontal rather than a second modifier.
 The content header exposes the same dashboard toggle as a grid button, grouped beside Quick Terminal.
 Dashboard and terminal-zoom views use stripped native headers: `Dashboard` or the active session title is
 shown with a custom window name when one exists, beside the matching exit button.
@@ -348,7 +351,7 @@ agterm arranges terminals into a small hierarchy. These are the only terms you n
 
 **Session.** A session is one running shell with a name, a working directory, and its own scrollback. It is the unit you work in and the row you see in the sidebar. A new session takes its name from the basename of its directory; rename it to pin a custom name, clear the name to go back to the basename. An unnamed session keeps that name whatever the program running in it titles the terminal — turn on **Name sessions after the terminal title** (General settings, off by default) to let the terminal title name the row instead, which puts the remote host on an SSH session and the running program's own title on everything else. New sessions open in your home directory by default, or in the current session's directory, or in a fixed folder (set in Settings). A session runs until you close it or its shell exits, and it comes back on the next launch with its directory, font size, and split state restored.
 
-**Panes.** A session can split into two shells side by side. Both panes are part of the same session and share one sidebar row; a split is one session with two terminals, not two sessions. One pane is focused at a time, and the divider position is remembered — drag the divider to resize the panes, double-click it to snap back to an even split.
+**Panes.** A session can split into two shells, side by side (Ctrl+Shift+D) or top and bottom (Ctrl+Shift+H). Both panes are part of the same session and share one sidebar row; a split is one session with two terminals, not two sessions. One pane is focused at a time, and the divider position is remembered as the primary pane's fraction on either axis — drag the divider to resize the panes, double-click it to snap back to an even split. Pressing the other arrangement's chord on a shown split transposes it in place, keeping both shells; the palette's **Close Split** and `agtermctl session split close` tear the second pane down for good, which hiding the split never does.
 
 **Scratch terminal.** Every session has an extra shell, the scratch terminal, that you toggle on over the session and hide again without killing it. It opens in the session's directory and is for a quick aside next to your main work. It belongs to that one session and is not restored across launches. While it covers the session, ⌘D and the split button hide it rather than rearrange the panes beneath, so either one takes you back to the panes exactly as you left them.
 
@@ -377,7 +380,7 @@ split session beside the split pane of another, leaving the panes you did not as
 A bare id still takes every pane of its session.
 A `:right` on a session with no split names no pane, so it joins the unresolved note, and fails the command
 outright if nothing else resolved.
-The most-recently-used grid also has a built-in opener: **⌘⇧D** on macOS or **Ctrl+Shift+M** on Linux (or
+The most-recently-used grid also has a built-in opener: **⌘⇧G** on macOS or **Ctrl+Shift+M** on Linux (or
 **Navigate ▸ Dashboard**, the command palette's **Dashboard**, or the title-bar grid button) toggles it, auto-sized,
 so the recent-sessions view is one keystroke away without a script.
 Cell fonts can be sized absolutely with `--font-size` or scaled to the grid with `--auto-size`; the nine-cell cap
@@ -474,7 +477,7 @@ To open a terminal at a directory without the CLI, run `agterm-linux <path>` on 
 agterm adds a session in that directory to the last-active window.
 The socket equivalent, and the way to place the session precisely, is `agtermctl session new --cwd <path>`.
 
-The sections below cover the common cases. All 74 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
+The sections below cover the common cases. All 75 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
 
 The macOS app bundles `agtermctl` inside `agterm.app`; upstream's **Help ▸ Install Command Line Tool…** action puts it on `PATH`.
 Linux package and portable-build behavior is described under [Optional integrations](#optional-integrations).
@@ -594,8 +597,9 @@ agtermctl session close --target 9f3c --target abcd       # close a batch with o
 agtermctl workspace move --to top                # reorder a workspace among its siblings (up|down|top|bottom)
 agtermctl workspace new work --collapsed          # create a workspace closed in the sidebar (fill it with session new --no-select without it opening)
 agtermctl workspace collapse --target "$ws"       # collapse one workspace in the sidebar tree; workspace expand re-opens it (per-workspace, unlike sidebar expand/collapse)
-agtermctl session split toggle                   # split the active session
-agtermctl session resize --split-ratio 0.7       # set the split divider (left-pane fraction); or --grow-left/--grow-right D
+agtermctl session split toggle                   # split the active session (--axis vertical|horizontal picks the arrangement)
+agtermctl session split close                    # tear the second pane down for good, unlike hiding it
+agtermctl session resize --split-ratio 0.7       # set the split divider (primary-pane fraction); or --grow-left/--grow-right D
 agtermctl session scratch toggle                 # show/hide the active session's scratch terminal (on|off|toggle)
 agtermctl session flag on                        # flag the active session for the flagged working-set view (on|off|toggle|clear)
 agtermctl session reveal --target 9f3c           # reveal the focused pane's cwd in Finder
@@ -724,9 +728,9 @@ Recipes come from other people as well as the maintainer. Every one is reviewed 
 The format is line-based with two verbs. Blank lines and lines starting with `#` are ignored:
 
 ```
-# rebind a built-in to a single chord (mods joined by +; no leader sequences for built-ins)
+# rebind a built-in; `|` offers alternatives, the first menu-bindable one becoming the shortcut
 map cmd+shift+l   toggle_split
-map ctrl+shift+k  command_palette
+map ctrl+shift+k|ctrl+a>k  command_palette
 
 # define custom commands ("name" shows in the palette; chord is optional)
 command "Open in Zed"  cmd+shift+e  open -a Zed {AGT_SESSION_PWD}
@@ -734,7 +738,7 @@ command "Lazygit"      ctrl+a>g     agtermctl session overlay open 'zsh -lc lazy
 command "Deploy"                    ./deploy.sh
 ```
 
-A chord is modifier words joined by `+` and a base key, e.g. `cmd+shift+e` or `ctrl+\``. The modifiers are `ctrl`, `cmd`, `opt`, and `shift`. The base key is a single character or one of `tab`, `space`, `return`, `delete`, `left`, `right`, `up`, `down`. A key you type with Shift is written as `shift+<base key>` (the base key, not the shifted symbol): `shift+/` for `?`, `shift+5` for `%`, `shift+=` for `+`, `shift+.` for `>`. A custom command's chord may also be a leader sequence — chords separated by `>`, e.g. `ctrl+a>g` (press `ctrl+a`, then `g`). A `command` with no chord is palette-only. A custom command's chord must include a modifier: a bare key like `a` is rejected with a diagnostic and the line is treated as palette-only, so a binding can't silently shadow a plain terminal key. The same diagnostic appears when the shell line simply starts with a bare key name — a single character, or one of the named keys like `up` or `tab` — and the line is kept as palette-only with its shell command intact.
+A chord is modifier words joined by `+` and a base key, e.g. `cmd+shift+e` or `ctrl+\``. The modifiers are `ctrl`, `cmd`, `opt`, and `shift`. The base key is a single character or one of `tab`, `space`, `return`, `delete`, `left`, `right`, `up`, `down`. A key you type with Shift is written as `shift+<base key>` (the base key, not the shifted symbol): `shift+/` for `?`, `shift+5` for `%`, `shift+=` for `+`, `shift+.` for `>`. A chord may also be a leader sequence — chords separated by `>`, e.g. `ctrl+a>g` (press `ctrl+a`, then `g`). Either verb's chord token may carry `|`-separated alternatives (no spaces around the `|`), each a chord or a sequence, and any of them fires the same thing: `map ctrl+shift+k|ctrl+a>k command_palette` binds both. A built-in takes its menu shortcut from the first alternative a menu item can hold, so a `map` line offering only leader sequences leaves the action with no menu chord at all rather than keeping its shipped default. A malformed alternative drops the whole line, so a typo cannot hide behind a half-working binding. A `command` with no chord is palette-only. A custom command's chord must include a modifier: a bare key like `a` is rejected with a diagnostic and the line is treated as palette-only, so a binding can't silently shadow a plain terminal key. The same diagnostic appears when the shell line simply starts with a bare key name — a single character, or one of the named keys like `up` or `tab` — and the line is kept as palette-only with its shell command intact.
 
 Chords are written in Latin and keep working on a non-Latin keyboard layout. A layout that cannot type ASCII — Russian, Greek, Hebrew, Arabic, Thai — resolves every chord by the physical key position, so `cmd+o` still fires on the key marked O even though it types `щ`. A layout that can type ASCII binds what it types, so an alternative Latin layout keeps its own letter positions: on Dvorak, `cmd+o` follows the O you actually type.
 
@@ -746,7 +750,8 @@ new_workspace      rename_workspace   delete_workspace
 new_session        open_directory     rename_session     duplicate_session
 close_session      reopen_recent      undo_close         clear_status
 increase_font_size decrease_font_size reset_font_size
-toggle_split       toggle_scratch     toggle_search
+toggle_split       toggle_horizontal_split                toggle_scratch
+toggle_search
 toggle_sidebar     toggle_flag        toggle_flagged_view
 focus_left_pane    focus_right_pane   focus_workspace    toggle_workspace_filter
 previous_session   next_session       first_session      last_session

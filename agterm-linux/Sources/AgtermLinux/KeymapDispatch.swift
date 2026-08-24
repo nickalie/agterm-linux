@@ -54,12 +54,12 @@ func isLinuxReservedChord(_ chord: Chord) -> Bool {
 /// default and can expose a fresh collision. Iterate to a fixpoint because dropping one override may
 /// restore another Linux default that invalidates a second override.
 private func resolveLinuxBuiltinOverrides(
-    _ parsed: [BuiltinAction: Chord], diagnostics: inout [KeymapDiagnostic]
+    _ parsed: [BuiltinAction: Chord], unbound: Set<BuiltinAction>, diagnostics: inout [KeymapDiagnostic]
 ) -> [BuiltinAction: Chord] {
     var candidates = parsed
     while true {
         var ownersByChord: [Chord: [BuiltinAction]] = [:]
-        for action in BuiltinAction.allCases {
+        for action in BuiltinAction.allCases where !unbound.contains(action) {
             guard let chord = candidates[action] ?? action.linuxDefaultChord else { continue }
             ownersByChord[chord, default: []].append(action)
         }
@@ -101,11 +101,13 @@ func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [Key
             message: "chord '\(chord.displayString)' is reserved by the Linux host; \(action.rawValue) map skipped"
         ))
     }
-    overrides = resolveLinuxBuiltinOverrides(overrides, diagnostics: &diagnostics)
+    overrides = resolveLinuxBuiltinOverrides(overrides, unbound: parsed.builtinUnbound, diagnostics: &diagnostics)
     // Dropping an override restores that action's Linux default. Re-check custom commands against the
     // resulting Linux chord set because the shared parser validated against the upstream macOS defaults.
-    let activeBuiltinChords = Set(BuiltinAction.allCases.compactMap { action in
-        overrides[action] ?? action.linuxDefaultChord
+    // An action left unbound by its own `map` line occupies nothing, so its default is not in the set.
+    let activeBuiltinChords = Set(BuiltinAction.allCases.compactMap { action -> Chord? in
+        guard !parsed.builtinUnbound.contains(action) else { return nil }
+        return overrides[action] ?? action.linuxDefaultChord
     })
     var commands = parsed.commands
     for index in commands.indices {
@@ -120,7 +122,38 @@ func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [Key
         ))
         commands[index].shortcut = ""
     }
-    return (Keymap(builtinOverrides: overrides, commands: commands), diagnostics)
+    let sequences = linuxBuiltinSequences(parsed.builtinSequences, activeChords: activeBuiltinChords,
+                                          diagnostics: &diagnostics)
+    return (Keymap(builtinOverrides: overrides, commands: commands,
+                   builtinSequences: sequences, builtinUnbound: parsed.builtinUnbound), diagnostics)
+}
+
+/// The monitor-bound built-in alternatives, re-validated against the LINUX chord set for the same reason
+/// custom commands are: the shared parser dropped what upstream's macOS menu chords shadowed, and Linux
+/// resolves a different set. An alternative the host reserves, or one whose first chord a live Linux
+/// built-in already answers, would never reach the monitor.
+private func linuxBuiltinSequences(
+    _ parsed: [BuiltinAction: [Keybind]], activeChords: Set<Chord>, diagnostics: inout [KeymapDiagnostic]
+) -> [BuiltinAction: [Keybind]] {
+    var kept: [BuiltinAction: [Keybind]] = [:]
+    for (action, binds) in parsed.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+        for bind in binds {
+            let reserved = bind.contains(where: isLinuxReservedChord)
+            // an alternative's own action cannot shadow it: `activeChords` holds the MENU chord, a
+            // different binding of the same action.
+            let shadowed = bind.first.map(activeChords.contains) ?? false
+            guard reserved || shadowed else {
+                kept[action, default: []].append(bind)
+                continue
+            }
+            let reason = reserved ? "a Linux-reserved shortcut" : "an active Linux built-in shortcut"
+            diagnostics.append(KeymapDiagnostic(
+                line: 0,
+                message: "keybind '\(bind.displayString)' uses \(reason); \(action.rawValue) alternative skipped"
+            ))
+        }
+    }
+    return kept
 }
 
 /// The toast for a keymap load, or `nil` when the load produced nothing worth saying.
@@ -185,7 +218,8 @@ extension AppController {
         // its action's default chord; a genuine chord collision resolves override-wins). Reserved monitor
         // chords are never inserted — they're handled by the fixed fallback.
         var reverse: [Chord: BuiltinAction] = [:]
-        for action in BuiltinAction.allCases where km.builtinOverrides[action] == nil {
+        for action in BuiltinAction.allCases
+        where km.builtinOverrides[action] == nil && !km.builtinUnbound.contains(action) {
             if let chord = action.linuxDefaultChord, !isLinuxReservedChord(chord) { reverse[chord] = action }
         }
         for (action, chord) in km.builtinOverrides where !isLinuxReservedChord(chord) {
@@ -194,8 +228,10 @@ extension AppController {
         resolvedBuiltinChords = reverse
 
         // Custom commands: the shared engine indexes by id + builds the leader matcher (parseKeymap already
-        // cleared shortcuts that collide with built-ins / reserved chords / each other).
-        customCommandEngine = CustomCommandEngine(commands: km.commands)
+        // cleared shortcuts that collide with built-ins / reserved chords / each other). It also carries the
+        // built-in binds `resolvedBuiltinChords` cannot hold — a leader sequence, or a second chord from a
+        // `map` line's `|` alternatives — which come back as `.firedBuiltin`.
+        customCommandEngine = CustomCommandEngine(commands: km.commands, builtinSequences: km.builtinSequences)
         return diagnostics.count
     }
 
@@ -259,6 +295,9 @@ extension AppController {
         switch customCommandEngine.advance(chord) {
         case .fired(let command):
             runCustomCommand(command, origin: origin, allowSessionless: store.activeSession == nil)
+            return true
+        case .firedBuiltin(let action):
+            dispatchBuiltin(action, sessionID: sessionID)
             return true
         case .armed:
             return true
@@ -347,6 +386,7 @@ extension AppController {
         case .decreaseFontSize: focusedSurface()?.performBindingAction(FontBindingAction.decrease)
         case .resetFontSize: focusedSurface()?.performBindingAction(FontBindingAction.reset)
         case .toggleSplit: toggleSplit()
+        case .toggleHorizontalSplit: toggleHorizontalSplit()
         case .toggleScratch: toggleScratch()
         case .toggleTerminalZoom: toggleTerminalZoom()
         case .dashboard: toggleDashboard()

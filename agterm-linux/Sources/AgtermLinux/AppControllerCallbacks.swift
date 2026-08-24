@@ -109,7 +109,7 @@ let onSidebarToggle: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Vo
 }
 
 let onSplitToggle: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
-    MainActor.assumeIsolated { controllerForWidget(button)?.toggleSplit() }
+    MainActor.assumeIsolated { controllerForWidget(button)?.toggleCurrentSplit() }
 }
 
 let onScratchToggle: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in

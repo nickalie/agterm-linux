@@ -31,6 +31,42 @@ struct LinuxKeymapTests {
         #expect(Set(activeDefaults).count == activeDefaults.count)
     }
 
+    /// The horizontal split shipped a Linux default of its own, and the AT-SPI fixture below binds a custom
+    /// command to a bare chord. A default landing on that chord would make validation drop the fixture and
+    /// fail the GUI leg with an opaque timeout, so pin both halves: the chord itself, and that the fixture
+    /// still parses beside it.
+    @Test("the horizontal split's Linux default leaves the AT-SPI fixture chord free")
+    func horizontalSplitDefaultDoesNotClaimTheFixtureChord() throws {
+        let horizontal = try #require(BuiltinAction.toggleHorizontalSplit.linuxDefaultChord)
+
+        #expect(horizontal == Chord(mods: [.control, .shift], key: "h"))
+        #expect(horizontal != Chord(mods: [.control, .shift], key: "e"))
+        #expect(BuiltinAction.toggleSplit.linuxDefaultChord == Chord(mods: [.control, .shift], key: "d"))
+    }
+
+    /// A `map` line whose only alternative is a leader sequence records the action in `builtinUnbound`, and
+    /// Linux resolves its chord table from the default table, so it has to honour that set or the shipped
+    /// default stays live beside the sequence the user asked for.
+    @Test("an action bound only to a leader sequence gives up its Linux default")
+    func leaderOnlyMapReleasesTheLinuxDefault() throws {
+        let loaded = try loadKeymap("map ctrl+a>d toggle_split\n")
+
+        #expect(loaded.keymap.builtinOverrides[.toggleSplit] == nil)
+        #expect(loaded.keymap.builtinUnbound.contains(.toggleSplit))
+        #expect(loaded.keymap.sequences(for: .toggleSplit).count == 1)
+    }
+
+    /// The shared parser validates monitor-bound alternatives against upstream's MACOS menu chords, where
+    /// `ctrl+shift+d` is free. Linux answers it with `toggle_split`, so the alternative has to be dropped
+    /// here or it would sit in the matcher behind a chord the built-in dispatch already consumes.
+    @Test("an alternative shadowed by a Linux built-in chord is dropped with a diagnostic")
+    func linuxShadowedAlternativeIsDropped() throws {
+        let loaded = try loadKeymap("map ctrl+shift+d>x toggle_scratch\n")
+
+        #expect(loaded.keymap.sequences(for: .toggleScratch).isEmpty)
+        #expect(loaded.diagnostics.contains { $0.message.contains("toggle_scratch alternative skipped") })
+    }
+
     /// The AT-SPI suite seeds this exact keymap and then asserts one palette row renders
     /// `Chorded Demo | custom | ctrl+shift+e`. That only holds if Linux validation leaves the chord
     /// alone, so pin the whole keymap→row path here — the GUI gate cannot run on every box.

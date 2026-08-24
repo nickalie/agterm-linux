@@ -712,46 +712,6 @@ final class AppController {
         syncSidebarSelection()
     }
 
-    /// A session-wide cover hides the panes, so rearranging them behind it would only show up once the cover
-    /// goes — the layout the user left is silently different. A shown scratch is DISMISSED instead, matching
-    /// Ctrl+W's cover-first rule, so either one is the way back to the panes as they were; hiding is
-    /// keep-alive, so the scratch shell survives. A full program overlay runs a caller's program that must
-    /// not be closed under it, so the press is inert. Control's `session.split` still drives the deck behind
-    /// either cover.
-    func toggleSplit() {
-        guard let id = store.selectedSessionID, let session = store.session(withID: id) else { return }
-        guard !session.fullOverlayActive else { return }
-        if session.scratchActive {
-            store.toggleScratch(id)
-            reconcile()
-            updateToggleIcons()
-            return
-        }
-        store.toggleSplit(id)
-        reconcile()
-        updateToggleIcons()
-        focusedSurface(for: id)?.grabFocus()
-    }
-
-    func closeSplitPane(_ id: UUID) {
-        store.closeSplitPane(id)
-        reconcile()
-        surfaces[id]?.grabFocus()
-    }
-
-    func toggleScratch() {
-        guard let id = store.selectedSessionID else { return }
-        store.toggleScratch(id)
-        reconcile()
-        updateToggleIcons()
-    }
-
-    /// Move keyboard focus between the two split panes of the active session.
-    func focusPane(left: Bool) {
-        guard let id = store.selectedSessionID, store.session(withID: id)?.hasSplit == true else { return }
-        (left ? surfaces[id] : splitSurfaces[id])?.grabFocus()
-    }
-
     /// Ctrl+Tab: jump to the most-recently-used OTHER session. Selecting re-pushes recency,
     /// so a second Ctrl+Tab toggles back (Alt-Tab-between-two).
     /// Ctrl-Tab: begin (or advance) the hold-to-cycle MRU switch via the shared SessionSwitcherModel. The

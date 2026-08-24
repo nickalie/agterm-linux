@@ -415,7 +415,25 @@ extension AppController {
         updatePaneDim(s)
     }
 
+    /// The paned extent the divider ratio is a fraction OF. The ratio always means the primary pane's share,
+    /// so a top/bottom split measures height where a left/right one measures width.
+    func panedExtent(_ paned: OpaquePointer, axis: SplitAxis) -> Int32 {
+        axis == .topBottom ? gtk_widget_get_height(W(paned)) : gtk_widget_get_width(W(paned))
+    }
+
+    /// The stored `splitAxis` is the single source of the paned's orientation, so a transpose is a property
+    /// change on the container the two pane hosts already live in — neither `GtkGLArea` is unparented, which
+    /// would unrealize it and blank the terminal it renders.
+    private func applySplitAxis(_ s: Session, paned: OpaquePointer) {
+        let wanted = s.splitAxis == .topBottom ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL
+        guard gtk_orientable_get_orientation(paned) != wanted else { return }
+        gtk_orientable_set_orientation(paned, wanted)
+        // the position was a fraction of the OTHER axis' extent; re-derive it from the stored ratio.
+        if s.splitRatio != nil { scheduleSplitRatioRestore(sessionID: s.id, paned: paned) }
+    }
+
     private func layoutSplit(_ s: Session, paned: OpaquePointer) {
+        applySplitAxis(s, paned: paned)
         guard let primaryHost = paneHosts[s.id]?[.left],
               let splitHost = paneHosts[s.id]?[.right] else { return }
         let primaryWidget = W(primaryHost)
@@ -445,18 +463,17 @@ extension AppController {
         guard let (sid, _) = sessionPanes.first(where: { $0.value == paned }),
               let session = store.session(withID: sid), session.hasSplit else { return }
         _ = store.applySplitRatio(AppStore.splitRatioDefault, forSession: sid)
-        let width = max(1, gtk_widget_get_width(W(paned)))
-        gtk_paned_set_position(paned, Int32(Double(width) * AppStore.splitRatioDefault))
+        let extent = max(1, panedExtent(paned, axis: session.splitAxis))
+        gtk_paned_set_position(paned, Int32(Double(extent) * AppStore.splitRatioDefault))
     }
 
     func capturePanedRatio(_ paned: OpaquePointer?) {
         guard let paned, let (sid, _) = sessionPanes.first(where: { $0.value == paned }),
-              !splitRatioRestore.isSuppressed(sid) else { return }
-        let width = gtk_widget_get_width(W(paned))
-        guard width > 0 else { return }
-        let ratio = Double(gtk_paned_get_position(paned)) / Double(width)
-        guard ratio > AppStore.splitRatioMin, ratio < AppStore.splitRatioMax,
-              let s = store.session(withID: sid) else { return }
+              !splitRatioRestore.isSuppressed(sid), let s = store.session(withID: sid) else { return }
+        let extent = panedExtent(paned, axis: s.splitAxis)
+        guard extent > 0 else { return }
+        let ratio = Double(gtk_paned_get_position(paned)) / Double(extent)
+        guard ratio > AppStore.splitRatioMin, ratio < AppStore.splitRatioMax else { return }
         if let cur = s.splitRatio, abs(cur - ratio) < 0.004 { return }
         s.splitRatio = ratio
         layoutSaveDebouncer.schedule(after: 0.4) { [weak self] in self?.store.save() }
@@ -487,13 +504,14 @@ extension AppController {
               splitRatioRestore.matches(
                 windowID: windowID, sessionID: sessionID, paned: paned, generation: generation),
               sessionPanes[sessionID] == paned,
-              let ratio = store.session(withID: sessionID)?.splitRatio else {
+              let session = store.session(withID: sessionID),
+              let ratio = session.splitRatio else {
             splitRatioRestore.complete(sessionID: sessionID, generation: generation)
             return 0
         }
-        let width = gtk_widget_get_width(W(paned))
-        guard width > 0 else { return 1 }
-        gtk_paned_set_position(paned, Int32(ratio * Double(width)))
+        let extent = panedExtent(paned, axis: session.splitAxis)
+        guard extent > 0 else { return 1 }
+        gtk_paned_set_position(paned, Int32(ratio * Double(extent)))
         splitRatioRestore.complete(sessionID: sessionID, generation: generation)
         return 0
     }

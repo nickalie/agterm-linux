@@ -407,16 +407,38 @@ extension AppController: ControlActions {
     }
 
     func splitSession(_ target: String?, window: String?, mode: String?) -> ControlResponse {
+        splitSession(target, window: window, mode: mode, axis: nil)
+    }
+
+    /// An axis is an arrangement request, not a visibility one: `store.setSplitVisibility` applies it only
+    /// while showing, so `off` never rewrites the layout a later `on` restores.
+    func splitSession(_ target: String?, window: String?, mode: String?, axis: SplitAxis?) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
             guard let session = store.session(withID: id) else { return err("no such session") }
             guard let parsed = ControlToggleMode.parse(mode) else { return err("invalid split mode: \(mode ?? "toggle")") }
-            if parsed.desiredValue(current: session.isSplit) != session.isSplit {
-                store.toggleSplit(id)
+            let shown = parsed.desiredValue(current: session.isSplit)
+            if shown != session.isSplit || (shown && axis != nil && axis != session.splitAxis) {
+                store.setSplitVisibility(id, shown: shown, axis: axis)
             }
             reconcile()
             focusedSurface(for: id)?.grabFocus()
+            return ok(id)
+        }
+    }
+
+    /// Tear the split pane down rather than hide it, which `session.split`'s `on|off|toggle` cannot express.
+    /// Idempotent on a session with no right pane.
+    func closeSessionSplit(_ target: String?, window: String?) -> ControlResponse {
+        switch resolveSessionResponse(target) {
+        case .failure(let response): return response
+        case .success(let id):
+            guard let session = store.session(withID: id) else { return err("no such session") }
+            guard session.hasSplit else { return ok(id) }
+            store.closeSplit(id)
+            reconcile()
+            surfaces[id]?.grabFocus()
             return ok(id)
         }
     }
@@ -467,8 +489,8 @@ extension AppController: ControlActions {
             }
             _ = store.applySplitRatio(ratio, forSession: id)
             if let paned = sessionPanes[id] {
-                let width = max(1, gtk_widget_get_width(W(paned)))
-                gtk_paned_set_position(paned, Int32(Double(width) * (session.splitRatio ?? AppStore.splitRatioDefault)))
+                let extent = max(1, panedExtent(paned, axis: session.splitAxis))
+                gtk_paned_set_position(paned, Int32(Double(extent) * (session.splitRatio ?? AppStore.splitRatioDefault)))
             }
             return ok(id)
         }
@@ -766,7 +788,12 @@ extension AppController: ControlActions {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            guard let text = focusedSurface(for: id)?.readSelection(), !text.isEmpty else {
+            // copy is select-all's read-back, so the pair must name an unrealized pane the same way:
+            // `readSelection` returns nil there exactly as it does for an empty buffer.
+            guard let surface = focusedSurface(for: id), surface.isRealized else {
+                return err("session not realized")
+            }
+            guard let text = surface.readSelection(), !text.isEmpty else {
                 return err("no selection")
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, text: text))
@@ -785,7 +812,7 @@ extension AppController: ControlActions {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            guard let surface = focusedSurface(for: id) else {
+            guard let surface = focusedSurface(for: id), surface.isRealized else {
                 return err("session not realized")
             }
             surface.performBindingAction(action)

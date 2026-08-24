@@ -128,8 +128,9 @@ private let fixedShortcutCatalog: [(title: String, shortcut: String)] = [
     ("Quick switch session", "ctrl+tab"),
     ("Previous session", "ctrl+pageup"),
     ("Next session", "ctrl+pagedown"),
-    ("Focus left pane", "ctrl+1 / ctrl+shift+left"),
-    ("Focus right pane", "ctrl+2 / ctrl+shift+right"),
+    // positional, not directional: the same two chords reach the top and bottom panes of a horizontal split.
+    ("Focus primary pane", "ctrl+1 / ctrl+shift+left"),
+    ("Focus split pane", "ctrl+2 / ctrl+shift+right"),
     ("Move session up", "ctrl+shift+up"),
     ("Move session down", "ctrl+shift+down"),
     ("Move workspace up", "ctrl+shift+pageup"),

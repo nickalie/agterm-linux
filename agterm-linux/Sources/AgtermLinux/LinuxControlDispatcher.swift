@@ -25,7 +25,7 @@ struct LinuxControlDispatcher {
         case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename, .sessionReveal,
                 .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus, .sessionRestore:
             return dispatchSessionCommand(request)
-        case .sessionSplit, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
+        case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
                 .sessionBackground, .sessionText:
@@ -353,7 +353,19 @@ struct LinuxControlDispatcher {
     private func dispatchSessionSurfaceCommand(_ request: ControlRequest) -> ControlResponse {
         switch request.cmd {
         case .sessionSplit:
-            return actions.splitSession(request.target, window: request.args?.window, mode: request.args?.mode)
+            let axis: SplitAxis?
+            if let raw = request.args?.axis {
+                guard let parsed = SplitAxis(rawValue: raw) else {
+                    return ControlResponse(ok: false, error: "invalid split axis: \(raw) (vertical|horizontal)")
+                }
+                axis = parsed
+            } else {
+                axis = nil
+            }
+            return actions.splitSession(request.target, window: request.args?.window,
+                                        mode: request.args?.mode, axis: axis)
+        case .sessionSplitClose:
+            return actions.closeSessionSplit(request.target, window: request.args?.window)
         case .sessionScratch:
             return actions.scratchSession(request.target, window: request.args?.window, mode: request.args?.mode,
                                           command: request.args?.command)

@@ -216,6 +216,18 @@ paths:
   `README.md` promises the Edit Keymap overlay reloads on editor exit, and Linux `editKeymap()`
   (`AppControllerSurfaces.swift`) only OPENS the overlay, so wiring that up adds the fifth caller and owes
   it the seam.
+- **Linux re-validates the parsed keymap against ITS OWN chord set, and must carry every field forward.**
+  `loadLinuxKeymap` (`KeymapDispatch.swift`) rebuilds the `Keymap` after dropping reserved/colliding
+  overrides, so `builtinSequences` and `builtinUnbound` have to be re-stated in that initializer or the
+  `|` alternatives never reach `CustomCommandEngine` and a leader-only `map` line silently keeps the
+  shipped Linux default alive beside the sequence it asked for.
+  `linuxBuiltinSequences` gives the monitor-bound alternatives the same second pass custom commands get:
+  the shared parser dropped what upstream's MACOS menu chords shadowed, and Linux answers a different set,
+  so `ctrl+shift+d>x` survives there and must die here. `builtinUnbound` also keeps an action's default out
+  of `activeBuiltinChords` and out of `resolveLinuxBuiltinOverrides`' collision table — being unbound is
+  what frees the chord.
+  `toggle_horizontal_split` ships `ctrl+shift+h`; `ctrl+shift+e` is deliberately NOT a default, the AT-SPI
+  fixture binding a custom command to it (`LinuxKeymapTests` pins both halves).
 - Three details the Linux seam depends on. Startup is deliberately NOT fanned out: window construction
   builds one new controller's cache, so it calls `loadKeymapAtStartup()` directly and a dirty `keymap.conf`
   banners once per window opened, which is per-window on purpose. Reporting belongs to the CALLER via
