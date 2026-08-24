@@ -73,8 +73,11 @@ These run inside the app, so a mistake can kill the host instead of failing an a
   keyboard/mouse events even in the background. Run them before handoff or after the user finishes.
   Host-free tests are safe.
 - Always run `cd agtermCore && swift test`, normally about 0.2 seconds. Ask before XCUITest.
-  The suite is about 75 seconds per
-  class and 460 seconds for all 77; target exact affected methods with one
+  The tree is 44 classes and 429 methods, and a class costs about its own test bodies: 31 seconds for
+  EditMenu's four, 7.5 minutes for ControlAPI's 82. Per-method preamble is about 0.1 seconds; if it
+  returns to 18-25 seconds the scheme's `preferredScreenCaptureFormat` has regressed to
+  `screenRecording`, whose per-method video startup made a full run take 2.5 hours.
+  Target exact affected methods with one
   `-only-testing:agtermUITests/<Class>/<method>` each. A behavior-preserving extraction with unchanged AX
   identifiers needs `make build` and lint, not UI tests. Recommend a class/broader run only for changed
   cross-cutting behavior such as launch, signing/bundle, eager-deck, or scene/window wiring.

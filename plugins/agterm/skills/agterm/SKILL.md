@@ -17,9 +17,9 @@ description: >
   feature request / question as a GitHub Discussion.
 when_to_use: >
   Trigger on: agterm, agtermctl, agterm control socket, session.new, session.close, session.type,
-  session.split, session.split.close, session.scratch, session.focus, session.resize, surface.zoom, dashboard, pick, pick.open, pick.result, pick.cancel, native picker, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
+  session.split, session.split.close, session.scratch, session.focus, session.resize, surface.zoom, surface.cursor, cursor column, dashboard, pick, pick.open, pick.result, pick.cancel, native picker, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
   session.flag, session.seen, session.reveal, session.duplicate, session.background, session.overlay,
-  session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
+  session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.go, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, window.minimize, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, keymap.list, config.reload,
   theme.set, theme.list, events, events.read, event subscription, select theme, edit keymap, show an image, display an image inline, show-image,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
@@ -51,8 +51,9 @@ the control channel is available:
   per-surface token; the agent-status hook forwards them as `session status --pane` / `--pane-id`. The
   token resolves the pane's LIVE slot, so a promoted-then-re-split agent still tags the right pane.
 
-The quick terminal is scratch (not in the tree), so it only gets `AGTERM_ENABLED`, `AGTERM_WINDOW_ID`,
-and `AGTERM_SOCKET` (no session/workspace ids).
+The quick terminal is scratch (not in the tree) and belongs to no window, so it only gets
+`AGTERM_ENABLED` and `AGTERM_SOCKET` (no session/workspace/window ids). An untargeted `agtermctl` run
+from it therefore resolves the active window like any other caller.
 
 These variables are inherited by every process the session's shell spawns — including long-lived
 daemons that outlive the shell. A tmux/screen server, a session manager (agent-deck and the like), or
@@ -91,20 +92,22 @@ shell, toggled like the split), and an ephemeral **overlay** (runs one program o
 An overlay covers the whole session, or with `--pane left|right` exactly one split pane, leaving the
 sibling pane visible and usable. The same session-wide slot also holds a **HUD** (`session hud`), a small
 passive panel carrying a message instead of a program: the session keeps focus and stays typable under it.
-One slot, so a session shows either a HUD or a program overlay, never both. Separately, each window has one
-**quick terminal** (a scratch overlay at 90% of the window, not part of the tree).
+One slot, so a session shows either a HUD or a program overlay, never both. Separately, the app has one
+**quick terminal** (a scratch shell in a floating panel at 90% of the focused screen, not part of the tree
+and not owned by a window).
 
 Inspect the live tree any time with `agtermctl tree --json` (workspaces → sessions, each with
 `id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `hud`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
 terminal title (e.g. a remote host over SSH), omitted when none was reported — read it when a
 session's local `cwd` is stale because it's connected to a remote. `surfaces[].id` is the
-control address for `surface zoom` (`left`, `right`, `scratch`, `overlay`, `overlay-left`, or
-`overlay-right`), including hidden-but-alive split/scratch surfaces. The tree object also carries five
+control address for `surface zoom` and `surface cursor` (`left`, `right`, `scratch`, `overlay`,
+`overlay-left`, or `overlay-right`), including hidden-but-alive split/scratch surfaces. The tree object also carries five
 read-only top-level fields: `idleMs` (ms since the last user input in the window), `autoFollowMs`
 (the Auto-follow timeout in ms, omitted when Disabled), `sidebarVisible` (whether the window's
 sidebar is currently shown — the read side of the write-only `sidebar` command), `sidebarMode`
-(`tree` or `flagged` — the read side of `sidebar mode`), and `quickVisible` (whether the window's quick
-terminal is shown — the read side of the write-only `quick` command). List windows with
+(`tree` or `flagged` — the read side of `sidebar mode`), and `quickVisible` (whether the quick terminal is
+shown — the read side of the write-only `quick` command; app-level, so every window reports the same
+value). List windows with
 `agtermctl window list --json`; each window also reports `autoFollowMs`, `sidebarVisible`, `geometry`
 (the live frame `{x, y, width, height, display}` in the units `window move`/`window resize` take — the
 read side, so record it then restore the exact frame), and `fullscreen`/`zoomed`/`minimized` (the read side
@@ -153,7 +156,7 @@ prompt concatenates with yours, and the program starts on the merged line. (`--n
 focus, but the newline and shared-buffer hazards of `type`-as-launcher remain — `--command` is still the
 rule.) After `--command`, confirm in `tree --json` that the new node's `foreground` shows your program running, not a bare shell prompt.
 
-## Command summary (75 commands)
+## Command summary
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -200,7 +203,7 @@ the default 0.5) —
 the read side of `session resize`, record it to restore the exact divider), `splitFocused`
 (which pane holds focus in a session that has a split: `true` = split/right/bottom, `false` = primary/left/top; omitted
 when there's no split; the read side of `session focus`, record it to restore focus), and `surfaces`
-(`id`, `kind`, `active`, `visible`) for `surface zoom`. The tree top level carries `zoomedSurface`
+(`id`, `kind`, `active`, `visible`) for `surface zoom` and `surface cursor`. The tree top level carries `zoomedSurface`
 (the control id of the currently zoomed surface, omitted when nothing is zoomed — the read side of
 `surface zoom`, so a script can check the zoom state and record-then-restore). It also carries the read
 side of the `dashboard` command (all omitted when no dashboard is open): `dashboardMembers` (the pane refs
@@ -221,6 +224,9 @@ rebaselined. There is no terminal-output event stream.
 **workspace** — `new [name] [--collapsed]` (`--collapsed` creates it closed in the sidebar so you can fill
 it with `session new --no-select` without it opening, and keeps it out of the focus set; a plain create
 joins the marked set while the filter is applied, so it is visible) · `rename <name>` · `delete` · `select` ·
+`go --to next|prev` (step the CURRENT workspace one place through the sidebar's visible order, wrapping,
+and select the first session of the one it lands on — relative, so no `--target`, and unaffected by
+whether a workspace is collapsed; `move` REORDERS instead) ·
 `move --to up|down|top|bottom` ·
 `focus [on|off|toggle|add]` (mark ONE workspace in the sidebar's focus set — `on` marks it alone and
 applies the filter, `off` unmarks it, `toggle` (default) replace-toggles, and `add` marks it alongside
@@ -276,7 +282,10 @@ omitted when expanded).
 - `type <text> [--stdin] [--select] [--pane left|right|scratch]` — inject keystrokes (real typing, Enter
   included) into the main pane, the split pane with `--pane right`, or the scratch terminal (even hidden)
   with `--pane scratch`. Pass `--target "$AGTERM_SESSION_ID"` to type into YOUR session, not the user's
-  active one (see Addressing).
+  active one (see Addressing). Like `session text`, every `--pane` addresses the surface UNDER a covering
+  overlay — by design, so a pane stays drivable whatever is drawn over it — meaning text typed while one is
+  open runs in the hidden shell and is invisible until it closes. There is no write twin of
+  `session overlay text`: an overlay runs the caller's own program, so nothing types into one.
 - `copy` — print the session's selected text (does NOT touch the system clipboard).
 - `paste` — paste the system clipboard into the session (the socket analogue of ⌘V; read it back with
   `session text`).
@@ -331,8 +340,18 @@ omitted when expanded).
 - `overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--follow] [--pane left|right]` ·
   `overlay resize (--size-percent N | --full)` ·
   `overlay close [--pane left|right]` ·
-  `overlay result [--pane left|right]` — run a program on top of a session; `--block` waits and exits
-  with its status.
+  `overlay result [--pane left|right]` ·
+  `overlay copy [--pane left|right]` ·
+  `overlay text [--all] [--lines N] [--pane left|right]` — run a program on top of a session; `--block`
+  waits and exits with its status.
+  `overlay copy` returns the selection made INSIDE the overlay and `overlay text` its terminal buffer:
+  `session copy` and `session text` both address the pane the overlay COVERS, so a selection made in the
+  overlay reads there as `no selection` and `session text --pane right` returns the shell underneath.
+  Reach for them when the read is NOT chord-driven — polling from outside, or reading some time after the
+  fact. A chord already gets the firing surface's selection synchronously in `$AGT_SELECTION`, the
+  overlay's included, so a custom command should use that rather than a later socket read.
+  `overlay text` returns a TUI's drawn screen wrapped as rendered — for a program's OUTPUT, still prefer
+  its own output file.
   `overlay resize` changes an ALREADY-OPEN overlay: `--size-percent N` (1-100) makes it a floating panel,
   `--full` switches it back to the full-pane overlay; the program keeps running (no re-spawn).
   `--pane left|right` scopes the overlay to ONE split pane instead of the whole session, leaving the
@@ -397,7 +416,9 @@ window; read back as `minimized` on `window list`).
 — zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
 button remains). Omit `--target` to use the active surface;
 copy an explicit surface id from `tree --json` to address a hidden split/scratch or a background
-session (`quick` is the id returned for a quick-terminal zoom). `hide` exits zoom; `toggle`
+session. `quick` is the one target that is not a window surface: it grows the quick-terminal panel to
+fill its screen, takes no `--window`, is refused while the panel is hidden, and is never what an omitted
+`--target` resolves to. `hide` exits zoom; `toggle`
 enters/exits only this zoom mode, not macOS window zoom.
 
 **dashboard** — `dashboard <ids…> [--font-size N | --auto-size] [--window W]` opens a view-only grid
@@ -440,10 +461,12 @@ result. `--no-block` prints the picker id instead;
 Only one picker may be pending per window. It opens without raising a background target unless
 `--follow` is set. Read the live picker id from the tree's top-level `pickPending` field.
 
-**quick** — `[show|hide|toggle]` (visibility; read back from the tree's `quickVisible`) ·
-`type TEXT` (or `--stdin`) inject keystrokes into the frontmost window's quick terminal ·
-`text [--all] [--lines N]` read its screen back — the twins of `session type`/`session text`,
-frontmost-window-only (no `--target`/`--window`/`--pane`).
+**quick** — `[show|hide|toggle]` (visibility; read back from the tree's `quickVisible`; a panel YOU open
+with `quick show` stays up when agterm loses focus, unlike one the user summoned by hotkey, so a following
+`quick type` / `quick text` / `surface zoom --target quick` still finds it) ·
+`type TEXT` (or `--stdin`) inject keystrokes into the quick terminal ·
+`text [--all] [--lines N]` read its screen back — the twins of `session type`/`session text`. There is one
+per app, so none of them take `--target`/`--window`/`--pane`; all three still need an open window.
 
 **sidebar** — `[show|hide|toggle]` (visibility; read back from the tree's `sidebarVisible`) ·
 `mode [tree|flagged|toggle]` (flip between the workspace tree and the flat flagged working-set list; read

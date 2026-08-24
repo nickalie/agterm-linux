@@ -7,6 +7,7 @@ public enum Command: String, Codable, Sendable {
     case workspaceRename = "workspace.rename"
     case workspaceDelete = "workspace.delete"
     case workspaceSelect = "workspace.select"
+    case workspaceGo = "workspace.go"
     case sessionNew = "session.new"
     case sessionDuplicate = "session.duplicate"
     case sessionClose = "session.close"
@@ -32,6 +33,7 @@ public enum Command: String, Codable, Sendable {
     case sessionFocus = "session.focus"
     case sessionResize = "session.resize"
     case surfaceZoom = "surface.zoom"
+    case surfaceCursor = "surface.cursor"
     case dashboard
     case sessionCopy = "session.copy"
     case sessionPaste = "session.paste"
@@ -42,6 +44,8 @@ public enum Command: String, Codable, Sendable {
     case sessionOverlayClose = "session.overlay.close"
     case sessionOverlayResize = "session.overlay.resize"
     case sessionOverlayResult = "session.overlay.result"
+    case sessionOverlayCopy = "session.overlay.copy"
+    case sessionOverlayText = "session.overlay.text"
     case sessionHudOpen = "session.hud.open"
     case sessionHudUpdate = "session.hud.update"
     case sessionHudClose = "session.hud.close"
@@ -168,7 +172,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// `left`/main, parsed to `StatusPane`); and `session.restore` pins (same `StatusPane` spelling, omitted
     /// = `left`/main, `scratch` rejected app-side).
     ///
-    /// `session.overlay.open`/`.close`/`.result` scope to ONE pane with it, parsed to `OverlayPane`, which
+    /// The `session.overlay.*` family (`.open`/`.close`/`.result`/`.copy`/`.text`) scopes to ONE pane with
+    /// it, parsed to `OverlayPane`, which
     /// takes the `TerminalZoomSurface` spellings minus `scratch` (`left`/`primary`, `right`/`split`);
     /// `scratch` is rejected, there being no scratch pane to cover, and the rejection names only
     /// `left or right` as guidance. Omitted keeps the session-wide overlay, so every existing caller is
@@ -193,9 +198,10 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var all: Bool?
     /// For `session.text` / `quick.text`: keep only the last N lines of the full buffer.
     public var lines: Int?
-    /// Direction for `session.go` (`next`|`prev`|`previous`|`first`|`last`), for the reorder form of
-    /// `session.move` / `workspace.move` (`up`|`down`|`top`|`bottom`), and for `session.search`
-    /// (`next`|`prev`|`close`).
+    /// Direction for `session.go` (`next`|`prev`|`previous`|`first`|`last`), for `workspace.go`
+    /// (`next`|`prev`|`previous` — a workspace has no attention state and no ends to jump to), for the
+    /// reorder form of `session.move` / `workspace.move` (`up`|`down`|`top`|`bottom`), and for
+    /// `session.search` (`next`|`prev`|`close`).
     public var to: String?
     /// Anchor session (id / unique prefix / `active`) to place a session right AFTER, for the placement form
     /// of `session.new`/`session.move`. The anchor carries its own workspace (resolved across the whole
@@ -640,7 +646,9 @@ public struct ControlWorkspaceNode: Codable, Sendable, Equatable {
     public let active: Bool
     /// Whether this workspace is a MEMBER of the sidebar's focus set; nil/omitted when not. Reported
     /// INDEPENDENTLY of whether the filter is applied (that flag is the tree top-level `workspaceFilter`), so
-    /// a marked-but-not-filtering set reads back. Distinct from `active` (the SELECTED workspace). The read
+    /// a marked-but-not-filtering set reads back. Distinct from `active` (the CURRENT workspace — what
+    /// `--target active` resolves to, which an empty or foreground-created destination makes current while
+    /// the selected session stays behind in another one). The read
     /// side of the write-only `workspace.focus`/`workspace.filter`.
     ///
     /// A workspace ROW is VISIBLE iff `tree.sidebarVisible && tree.sidebarMode == "tree" &&
@@ -851,6 +859,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var keymap: ControlKeymap?
     /// The current or terminal picker outcome for `pick.result`.
     public var pick: ControlPickResult?
+    /// The addressed surface's cursor position for `surface.cursor`.
+    public var cursor: ControlCursor?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
@@ -858,7 +868,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
                 sync: Bool? = nil, light: String? = nil, dark: String? = nil,
                 events: ControlEventBatch? = nil, keymap: ControlKeymap? = nil,
-                pick: ControlPickResult? = nil) {
+                pick: ControlPickResult? = nil, cursor: ControlCursor? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
@@ -875,6 +885,24 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.events = events
         self.keymap = keymap
         self.pick = pick
+        self.cursor = cursor
+    }
+}
+
+/// `surface.cursor`'s payload, nested so a `row` could join it additively rather than by a rename.
+///
+/// There is no row: `tl_px_y` is the text BASELINE against an IME point at the cell bottom, leaving a term
+/// no probe separates from the row, and `adjust-font-baseline = 30` was measured reporting row 5 for a caret
+/// on row 4. `GhosttySurfaceView.readCursorColumn` owns why the horizontal twin is exact.
+///
+/// A column is a signal, not an assertion about content: past the prompt it proves the line is not empty,
+/// AT the prompt it proves nothing, the caret having possibly moved back over text.
+public struct ControlCursor: Codable, Sendable, Equatable {
+    /// Zero-based, counted from the left edge of the grid.
+    public let column: Int
+
+    public init(column: Int) {
+        self.column = column
     }
 }
 
@@ -897,6 +925,10 @@ public enum OverlayHudError {
     public static let fullResize = "a hud is always floating: pass --size-percent, not --full"
     /// `session.hud.update`/`.close` against a slot that holds no HUD — empty, or running a caller's program.
     public static let noHud = "no hud"
+    /// `session.overlay.copy`/`.text` against a HUD. The panel paints agterm's own message, so reading it
+    /// would hand a caller back the text it wrote rather than a program's output, and the slot being
+    /// occupied is not enough to tell the two apart.
+    public static let noRead = "no overlay to read: the slot holds a hud"
     /// The body file the helper reads could not be written, so the panel would paint nothing or stale text.
     public static let writeFailed = "could not write the hud message"
 }

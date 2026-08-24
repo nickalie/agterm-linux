@@ -418,6 +418,39 @@ struct ControlDispatcherTests {
         ])
     }
 
+    @Test func workspaceGoRoutesBothDirectionsThroughActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let next = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(window: "win", to: "next")))
+        let prev = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "prev")))
+        let spelled = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "previous")))
+
+        #expect(next == ControlResponse(ok: true))
+        #expect(prev == ControlResponse(ok: true))
+        #expect(spelled == ControlResponse(ok: true))
+        #expect(actions.calls == [
+            .workspaceGo(window: "win", .next),
+            .workspaceGo(window: nil, .previous),
+            .workspaceGo(window: nil, .previous)
+        ])
+    }
+
+    @Test func workspaceGoRejectsMissingOrUnknownDirectionWithoutCallingActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let missing = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo))
+        let unknown = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "sideways")))
+        // session.go accepts these two, workspace.go does not — a workspace has no ends to jump to
+        let sessionOnly = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "first")))
+
+        #expect(missing == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(unknown == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(sessionOnly == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func workspaceRenameRejectsMissingOrBlankNameWithoutCallingActions() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -1549,6 +1582,34 @@ struct ControlDispatcherTests {
 
         #expect(response == ControlResponse(ok: false, error: "invalid surface zoom mode: zoom"))
         #expect(actions.calls.isEmpty)
+    }
+
+    @Test func surfaceCursorRoutesTargetAndWindow() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextSurfaceCursorResponse = ControlResponse(
+            ok: true, result: ControlResult(id: "surface:s1:right", cursor: ControlCursor(column: 7))
+        )
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .surfaceCursor,
+            target: "surface:s1:right",
+            args: ControlArgs(window: "win")
+        ))
+
+        #expect(response == ControlResponse(
+            ok: true, result: ControlResult(id: "surface:s1:right", cursor: ControlCursor(column: 7))
+        ))
+        #expect(actions.calls == [.surfaceCursor(target: "surface:s1:right", window: "win")])
+    }
+
+    @Test func surfaceCursorDefaultsTargetAndWindowToNil() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .surfaceCursor))
+
+        #expect(actions.calls == [.surfaceCursor(target: nil, window: nil)])
     }
 
     @Test func dashboardOpenRoutesTargetsWindowAndFixedFontMode() async {

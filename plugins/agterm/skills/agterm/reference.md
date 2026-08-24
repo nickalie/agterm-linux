@@ -203,12 +203,15 @@ visible before), `sidebarMode` (`tree` or `flagged` — the sidebar view mode, t
 `sidebar mode`), `workspaceFilter` (whether the window's workspace focus filter is currently APPLIED —
 the flag half of the focus set, whose member half is each workspace node's `focused`; the read side of
 `workspace filter`, so a script can record the filter state, restore it, or make the toggle idempotent),
-`quickVisible` (whether the window's quick terminal is currently shown — the read
-side of the write-only `quick` command, so a script can make the toggle idempotent), `zoomedSurface`
+`quickVisible` (whether the quick terminal is currently shown — the read
+side of the write-only `quick` command, so a script can make the toggle idempotent; it is app-level, so
+every window reports the same value), `zoomedSurface`
 (the control id of the surface terminal zoom currently fills the window with —
 `surface:<session-id>:<kind>` or `quick`; omitted when nothing is zoomed — the read side of the
 write-only `surface zoom` command, so a script can check "is it already zoomed" and
-record-then-restore), and the four read sides of the write-only `dashboard` command (all omitted when
+record-then-restore. `quick` is app-level and independent of any window's zoom, and it WINS: with the
+panel zoomed this reports `quick` even while that window's own session zoom is armed and rendering, so
+record-then-restore must read it BEFORE zooming the panel, not after), and the four read sides of the write-only `dashboard` command (all omitted when
 no dashboard is open): `dashboardMembers` (the pane refs the open dashboard shows, in grid order —
 `<session-id>:left` for a primary pane, `<session-id>:right` for a split pane, so a split session appears
 as both), `dashboardHighlighted` (the highlighted cell's pane ref — the one Enter jumps into, focusing
@@ -235,6 +238,14 @@ All twelve are read-only projections of GUI state.
 - `workspace rename <name> [--target] [--window W]`.
 - `workspace delete [--target] [--window W]` — keep-at-least-one; deleting the last workspace errors.
 - `workspace select [--target] [--window W]`.
+- `workspace go --to next|prev [--window W]` — step the CURRENT workspace one place through the
+  sidebar's visible order, wrapping at both ends, and select the workspace it lands on. Relative, so it
+  takes NO `--target`; `workspace move` is the neighbouring verb that REORDERS a workspace instead.
+  Landing selects that workspace's FIRST session, exactly as `workspace select` does. Returns the
+  workspace id. A workspace's COLLAPSED state does not affect it — a folded workspace is stepped into
+  like any other. While the focus filter is applied, stepping is confined to the marked workspaces, the
+  same scoping `session go` gets. Errors with `no other workspace to navigate to` when there is nowhere
+  to step: the flagged flat list (which renders no workspace rows), or a single visible workspace.
 - `workspace move --to up|down|top|bottom [--target] [--window W]` — reorder among siblings. Missing
   or invalid `--to` errors. Note: `--target active` resolves to the current workspace — a
   foreground-created workspace that still holds the target, else the selected session's, else
@@ -390,11 +401,17 @@ error keeps those names for compatibility.
   (errors with `session has no split pane` when the session has no split), `--pane scratch` into the
   session's scratch terminal even while it is hidden (`session has no scratch terminal` when none opened);
   like `session text`, no `other` value. `--select` realizes the MAIN pane only — a split pane must
-  already exist.
+  already exist. Also like `session text`, there is no overlay value: every `--pane` types into the surface
+  UNDER a covering overlay, so the keystrokes reach the hidden shell and run there unseen until the overlay
+  closes — the call still answers `ok`. That is deliberate: the panes stay drivable whatever is drawn over
+  them, so an overlay never has to be closed to keep automation running. It has no read-back twin either —
+  `session overlay text` exists because an overlay's output is otherwise unobservable, while its program is
+  the caller's own, so there is no way and no need to type into one.
 - `session copy [--target] [--window W]` — returns `result.text` with the session's current selection.
   Does NOT touch the system clipboard (pipe the returned text into another `session type`). No/empty
-  selection → `no selection` error. Selection is readable on any realized session regardless of focus;
-  a never-shown session → `session not realized`, as with `session select-all`.
+  selection → `no selection` error. Selection is readable on any realized session regardless of focus, but
+  always from the main PANE — a selection made in a covering overlay is `session overlay copy`'s, not this
+  command's. A never-shown session → `session not realized`, as with `session select-all`.
 - `session paste [--target] [--window W]` — paste the system clipboard (`NSPasteboard.general`) into the
   session's main pane, the socket analogue of ⌘V / Edit ▸ Paste. Runs libghostty's `paste_from_clipboard`
   (bracketed paste, no prompt), so the text lands at the prompt without auto-submitting. Read it back with
@@ -411,7 +428,9 @@ error keeps those names for compatibility.
   session's scratch terminal even while it is hidden (its buffer is kept alive; `session has no scratch
   terminal` when none opened); omit `--pane` for the visible pane (the scratch terminal when it covers the
   session, else the focused pane). NOTE: unlike
-  `session focus`, `--pane` here has NO `other` value — only `left`/`right`/`scratch`. A genuinely BLANK screen is
+  `session focus`, `--pane` here has NO `other` value — only `left`/`right`/`scratch`, and no overlay value:
+  every one of them reads the surface UNDER a covering overlay, whose buffer is `session overlay text`'s.
+  A genuinely BLANK screen is
   NOT an error (returns `ok` with an empty string, unlike `session copy`'s `no selection`), but a failed
   read IS an error (`failed to read surface buffer`). Pipe the text into `grep`/`fzf` to extract URLs,
   paths, etc.
@@ -623,6 +642,21 @@ error keeps those names for compatibility.
   not a caller's program, so there is no status to report and the session-wide arm errors
   `no overlay result: the slot holds a hud`; the `--pane` arm is unaffected, since a HUD only ever takes
   the session-wide slot.
+- `session overlay copy [--pane left|right] [--target] [--window W]` — returns `result.text` with the
+  selection made INSIDE the overlay. `session copy` cannot reach it: that one addresses the pane the overlay
+  covers, so a selection the user made in the overlay reads as `no selection` there. Does NOT touch the
+  system clipboard. `--pane` reads that pane's overlay; omit it for the session-wide one. Errors
+  `no overlay` with nothing in the slot, `overlay not realized` in the moment after `open` before its
+  terminal is up, `no selection` when nothing is selected, and
+  `no overlay to read: the slot holds a hud` for a HUD, whose text is agterm's own.
+- `session overlay text [--all] [--lines N] [--pane left|right] [--target] [--window W]` — returns
+  `result.text` with the overlay's terminal buffer. `session text` reads the surface UNDERNEATH — its
+  `--pane right` returns the shell, not the program drawn over it. `--all` and `--lines N` mean what they do
+  on `session text` and are mutually exclusive. What comes back is a TUI's DRAWN screen, wrapped as
+  rendered, not the output the program would have printed — for output, prefer the program's own output
+  file. Errors `no overlay`, `overlay not realized` and `no overlay to read: the slot holds a hud` as
+  `session overlay copy` does, plus `failed to read surface buffer` on a real read failure. It has no
+  `no selection`: a blank realized screen is `ok` with an empty string.
 - `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--target] [--window W]`
   — post a PASSIVE message panel over the session and return its id. It occupies the same session-wide slot
   as `session overlay open`, but carries a message rather than a program: it takes no input, the session
@@ -782,8 +816,10 @@ lights and an exit button remains). `SURFACE_ID` comes from
 `agtermctl tree --json` at `.result.tree.workspaces[].sessions[].surfaces[].id`, for example
 `surface:<session-id>:right` for the split pane or `surface:<session-id>:overlay-right` for a pane
 overlay covering it. Omit `--target` (or pass `active`) to act on the active surface in the
-frontmost or `--window` window; `quick` addresses a quick-terminal zoom (the id the command itself
-returns when the quick terminal is the zoom target). A HUD is not a zoom target: while one is up the
+frontmost or `--window` window. `quick` is the one target that is not a window surface: it grows the
+quick-terminal panel to fill its screen instead, takes no `--window`, is refused with `surface not
+available: quick` while the panel is hidden, and is never what an omitted `--target` resolves to.
+A HUD is not a zoom target: while one is up the
 session lists no overlay surface and `surface:<session-id>:overlay` is refused with `surface not
 available`, the same answer an empty slot gives.
 
@@ -794,11 +830,24 @@ back from the tree's top-level `zoomedSurface` (the zoomed surface's control id,
 is zoomed). This is NOT
 `window zoom`: it does not change the macOS window frame and it must not mutate split ratios, focus,
 sidebar state, or split/scratch visibility. Entering zoom does close the window's transient chrome —
-an open command palette, an active in-terminal search, and (for a session-surface zoom) a visible
-quick terminal. While zoomed, the hidden deck keeps running: `session.split`/`session.scratch`/overlay
+an open command palette and an active in-terminal search. The quick terminal is NOT closed: it is a panel
+above every window rather than a surface inside one. While zoomed, the hidden deck keeps running: `session.split`/`session.scratch`/overlay
 opens on the zoomed session still spawn their shells behind the zoom layer. A notification-banner
 click exits zoom before revealing its session. Use `surface zoom` when the user/agent needs a pane
 fullscreen inside agterm; use `window zoom` only to maximize the whole window on screen.
+
+`agtermctl surface cursor [--target SURFACE_ID|active|quick] [--window W]` — the surface's zero-based
+cursor column, counted from the left edge of the grid. Plain output is the bare number, so
+`col=$(agtermctl surface cursor)` works; under `--json` it is `.result.cursor.column`. The target
+vocabulary and its refusals are `surface zoom`'s, so an explicit `SURFACE_ID` reads a hidden pane or a
+background session as readily as the visible one. It is a pure read: it neither selects nor realizes the
+target, and it reports no field in `tree`, so poll it when you need it.
+
+There is no row. The pinned libghostty exposes no cursor accessor and the vertical metrics it does export
+cannot recover a row that survives a custom `adjust-font-baseline`; a `row` would join the same `cursor`
+object if that ever changes. Treat the column as a one-way signal about the line: past the prompt it
+proves the line is NOT empty, at the prompt it proves nothing, because the caret may have been moved back
+over text that is still there. Never read "column equals the prompt" as "the composer is empty".
 
 ## dashboard
 
@@ -917,11 +966,14 @@ it waited for. Results age out oldest-first: the 8 most recent per open window, 
 
 ## quick
 
-`agtermctl quick [show|hide|toggle]` — the frontmost window's quick terminal (a single scratch
-terminal at 90% of the window, not in the tree; its shell stays alive across hides). Errors with
-`no open window` when none is open. Read its visibility back from the tree's top-level `quickVisible`.
-While terminal zoom is active, `show` errors with `terminal zoom active`; `hide` always succeeds (a
-zoomed quick terminal exits its zoom first), so cleanup scripts can dismiss it unconditionally.
+`agtermctl quick [show|hide|toggle]` — the app's one quick terminal (a single scratch terminal in a
+floating panel at 90% of the focused screen up to 1100x700, not in the tree and owned by no window; its
+shell stays alive across hides). Errors with `no open window` when none is open, and with `pick pending`
+while a picker is up. Read its visibility back from the tree's top-level `quickVisible`.
+A panel YOU open with `show` stays up when agterm loses focus — including when it was already visible
+because the user had summoned it by hotkey — so a following `quick type` / `quick text` /
+`surface zoom --target quick` still finds it. A window's terminal zoom is not a term either way: the panel
+floats above every window, so `show` is never refused for it.
 
 `agtermctl quick type TEXT` (or `--stdin`) — inject `TEXT` as literal keystrokes into the frontmost
 window's quick terminal, the quick-terminal twin of `session type`. There is no `--target`/`--window`
@@ -1042,20 +1094,28 @@ line can express — such an item is AppKit's own and never matches an action.
 ### keymap.conf format
 
 The file lives at `<config dir>/keymap.conf` (default `~/.config/agterm`; the dir is set in Settings ▸
-Key Mapping). Two verbs, line-based; blank lines and `#` comments ignored:
+Key Mapping). Three verbs, line-based; blank lines and `#` comments ignored:
 
 - `map <chord> <action>` — rebind a built-in menu action.
 - `command "<name>" [chord] <shell...>` — define a custom shell command, listed in the action palette
   marked `custom`. The quoted name may contain spaces. The post-name token is the chord only if it
   parses AND carries a modifier (a bare modifier-less key is rejected). A custom chord may be a leader
   sequence (chords joined by `>`, e.g. `ctrl+a>g`). No chord → palette-only.
+- `global-hotkey <chord>` — bind ONE system-wide chord that summons the quick terminal while any
+  application is frontmost. Unset unless the line is present. Exactly one chord: no alternatives, no
+  leader sequence, and it must carry a modifier. A second line replaces the first. macOS registers it
+  by physical key position, so it survives a layout switch. It is registered with the OS rather than
+  agterm's own monitor, so it takes NO part in the collision rules below — it may share a chord with a
+  menu item, and whichever application is frontmost decides who gets the key.
 
 Either verb's chord token may hold **alternatives** joined by `|`, with no spaces around it (everything
 after the first token is the shell line): `map cmd+t|ctrl+space>s toggle_split` fires the action from
 either. A built-in's first single-chord alternative the menu can carry becomes its menu shortcut (one that
 names a reserved chord or a bare arrow is diagnosed and dropped, and the next single chord takes the slot);
 every other alternative, and every alternative of a `command`, is delivered by a key monitor and so must
-carry a modifier on its first chord. A `map` line with no single-chord alternative
+carry a modifier on its first chord. `global-hotkey` is outside all of this: the OS owns it, and it WINS —
+agterm frontmost included — so a chord it shares with a menu action fires the panel and the menu binding
+never sees it. A `map` line with no single-chord alternative
 (`map ctrl+a>s toggle_split`) leaves the action with NO menu shortcut — its shipped default is gone, not
 kept. A malformed alternative rejects the whole line; one that merely breaks a rule or collides with
 another binding drops by itself and its siblings keep working. A line left binding nothing at all leaves

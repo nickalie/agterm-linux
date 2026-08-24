@@ -42,8 +42,8 @@ paths:
   and `runIfEnabled()` asks it again at the keystroke, returning whether it ran — which is the only thing
   that dismisses the palette, so an inert row cannot close it on a keystroke that did nothing.
 - `toggleQuickTerminal` gates on all `uiActionsEnabled`, including terminal zoom and dashboard.
-  Control drives `QuickTerminalRegistry` directly. The titlebar button is replaced by dashboard chrome,
-  which hides an open quick terminal before showing the grid.
+  Control drives `QuickTerminalController.shared` directly, there being one panel per app. The titlebar
+  button is replaced by dashboard chrome, which hides an open quick terminal before showing the grid.
 - Every new action must satisfy the control contract in [[control-api]]: protocol, dispatch, CLI, and
   protocol/end-to-end tests. Do not restate per-action audits here.
 
@@ -142,15 +142,21 @@ paths:
 
 ## Close and reselection
 
-- Command-W first dismisses the frontmost cover: quick terminal, then overlay, then scratch, then the
+- Command-W first dismisses the frontmost cover: the quick-terminal panel (un-zoom, then hide), then
+  overlay, then scratch, then the
   FOCUSED pane's own overlay (`focusedOverlayPane`; one on the sibling pane is not in front of the user and
   does not intercept). Only then close the active session. If no cover or session exists, the menu performs
   window close. Keep the cover check inside `closeActiveSession`, since a sessionless window can still show
   quick terminal.
+- The panel's two rungs read `holdsKey`, not `isVisible`. A PINNED panel (a control `quick show`) stays on
+  screen without owning the keyboard, and Command-W in a terminal window must then close that session
+  rather than reach past it to the panel.
 - The menu item diverts to a plain `performClose` when the key window is not an agterm terminal window —
   Settings, the About panel, an open/save panel — because `applyCloseSessionChord` takes ⌘W off the stock
   File ▸ Close item and nothing else would close them (issue #401). `WindowRegistry.contains` is the
-  predicate, as in `CustomCommandRunner`. A `nil` key window still runs the deck sequence: with every
+  predicate, as in `CustomCommandRunner`, EXCEPT for `QuickTerminalPanel`: it is unregistered too but it is
+  a cover, not an auxiliary window, and being borderless it has no close button, so `performClose` would
+  only beep and the ladder's own panel rungs would never run. A `nil` key window still runs the deck sequence: with every
   window minimized the equivalent still dispatches, and `performClose` on nothing would make ⌘W silently
   no-op. The divert is gated on `close_session` still holding ⌘W, the same condition
   `applyCloseSessionChord` splits on: rebound off it, the stock item takes the chord back and the
@@ -179,6 +185,12 @@ paths:
   Option-Command-Left/Right remains pane focus.
 - `navigateSession` uses `navigableSessions`, wraps previous/next, selects ends for first/last, chooses
   first on nil/invalid selection, and no-ops when empty. Menu, palette, and `session.go` share it.
+- Previous/Next Workspace are the level above: `navigateWorkspace` steps `currentWorkspaceID` through
+  `visibleWorkspaces` and lands on the target's FIRST session, so the keybind, the palette row and
+  `workspace.go` mean one thing. Keyless, tree mode only, and it reveals a landed pane off the step's
+  captured indicator exactly as plain session nav does. **Collapse is not a navigation filter** —
+  `navigableSessions` and `navigateWorkspace` both ignore `isExpanded`, and adding a term to either would
+  silently rewrite where every existing keystroke, `session.go` call and Ctrl-Tab candidate lands.
 - When selection moves, GUI callers reveal a captured blocked/completed pane; unchanged plain navigation
   only refocuses, preventing a one-item wrap from resetting split focus. Modal focus guards still apply.
 - Attention navigation defaults to Control-Option-Up/Down, includes blocked/completed only, wraps, and

@@ -131,16 +131,18 @@ paths:
 
 ## Public catalog
 
-There are 75 public commands:
+The public commands, which no surface states a COUNT of: a total is stated nowhere and pinned by nothing, so
+adding one is an edit to this list and the surfaces that document the command itself, never a synchronized
+renumbering. Do not reintroduce a count anywhere.
 
 - `tree`, `events.read`
-- `workspace.new`, `.rename`, `.delete`, `.select`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
+- `workspace.new`, `.rename`, `.delete`, `.select`, `.go`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
 - `session.new`, `.duplicate`, `.close`, `.select`, `.rename`, `.reveal`, `.move`, `.type`, `.split`,
   `.split.close`,
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
-  `.overlay.result`, `.hud.open`, `.hud.update`, `.hud.close`
-- `surface.zoom`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`
+  `.overlay.result`, `.overlay.copy`, `.overlay.text`, `.hud.open`, `.hud.update`, `.hud.close`
+- `surface.zoom`, `surface.cursor`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`
 - `quick`, `quick.type`, `quick.text`
 - `sidebar`, `sidebar.mode`, `sidebar.expand`, `sidebar.collapse`, `notify`
 - `font.inc`, `font.dec`, `font.reset`
@@ -148,7 +150,7 @@ There are 75 public commands:
   `.fullscreen`, `.minimize`
 - `keymap.reload`, `keymap.list`, `config.reload`, `theme.set`, `theme.list`, `restore.clear`
 
-`debug.appearance` is a private 76th `Command` case used only by `AppearanceFlipUITests`.
+`debug.appearance` is a private `Command` case, absent from the list above, used only by `AppearanceFlipUITests`.
 It accepts light/dark, sets `NSApp.appearance`, posts `.agtermSystemAppearanceChanged`, echoes the effective
 side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provide no CLI or skill entry.
 
@@ -172,6 +174,13 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   between-row surface. `active` resolves through `currentWorkspaceID` — a foreground-created workspace
   first, then the selected session's, then `workspaces.last` — so repeated moves may target a different
   workspace; use an ID to keep one target.
+- `workspace.go --to next|prev` steps the CURRENT workspace through `visibleWorkspaces`, wrapping, and
+  routes through `selectWorkspace`, so it lands on the target's FIRST session and inherits the
+  empty-workspace reveal. Relative like `session.go`, so it takes no target; `workspace.move` is the
+  neighbouring verb that reorders instead. Returns the workspace id it landed on. Collapse state is NOT a
+  term — a folded workspace is stepped into like any other, and issue #435 assumed otherwise. Errors with
+  `no other workspace to navigate to` where there is nowhere to step: flagged mode, or one visible
+  workspace. Read back through `tree` selection; the GUI twins are `previous_workspace`/`next_workspace`.
 - `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. `--axis
   vertical|horizontal` selects left/right or top/bottom; omitting it preserves an existing split's axis
   and defaults a new split to left/right. Off hides and retains the shell; `session.split.close` and the
@@ -236,6 +245,14 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   unrealized session, with or without `select`, so `session.new --no-select` plus an immediate type does
   not race the mount+layout gap (#349). The probe precedes every sleep, so a realized session pays nothing
   and `select` moves selection only when the surface was not ready. `right`/`scratch` still fail fast.
+- `injectText` resolves only `surface`/`splitSurface`/`scratchSurface`, so like `session.text` every `--pane`
+  addresses the pane UNDER a covering overlay: the keystrokes run in the hidden shell, unseen until it closes,
+  while the call answers ok. This is the intended behavior, not a gap — the panes are the session's durable
+  input surfaces and stay drivable whatever is drawn over them, so a cover never has to be torn down to keep
+  automation running. Reads are the asymmetric half by design: `overlay.copy`/`overlay.text` exist because an
+  overlay's output is otherwise unobservable, while its program is the caller's own and needs no second way in.
+  Do not add a write twin, and do not make a covered `session.type` fail — a caller would lose the pane it
+  still legitimately addresses.
 - `session.type` ok means the keystrokes were queued to the pty, not that the shell read or ran them (#350).
   Nothing is lost in between: libghostty's write mailbox blocks instead of dropping, messages queued before
   the io thread starts are drained once the subprocess is up, and no code path flushes pending tty input.
@@ -246,7 +263,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   markers under rapid use.
 - `session.copy` returns the addressed main selection without touching clipboard; empty is `no selection`,
   and an unrealized pane is `session not realized` — `readSelection` cannot tell the two apart, and copy is
-  select-all's read-back, so both name that state the same way.
+  select-all's read-back, so both name that state the same way. It stays on the PANE while an overlay covers
+  it, so a selection made inside one is `session.overlay.copy`'s, not this command's.
   `session.paste` and `.selectall` run Ghostty bindings on main. They use
   `Session.addressableSurface = surface ?? splitSurface`, never focus-aware `activeSurface`, so select-all
   and copy share one pane. Read paste through text and select-all through copy.
@@ -271,6 +289,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   never happened. `failed to read surface buffer` is left to a real read failure on a realized surface.
   `quick.text` keeps its own vocabulary and still reports that string for an unrealized quick surface.
   Output is plain text because pinned Ghostty exposes no styled-cell read.
+  `onScreenSurface` is pane-vs-scratch only, so every `--pane` and the default alike read the surface
+  UNDER an overlay; the covering program is `session.overlay.text`.
 - `session.search` selects and realizes the target, then searches its focused surface. Text opens/updates;
   to next/prev navigates; close ends; no arguments opens empty UI. Poll async SEARCH_TOTAL and return count
   plus `searchDisplayText`. Search fields are ephemeral and shared with the GUI.
@@ -304,6 +324,18 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   output, and exits with captured status.
 - `overlay.resize` requires an open overlay and exactly one valid percent or `--full`; mutate the same
   surface host. Read `overlaySizePercent`, gated by overlay-active because nil means either full or absent.
+- `overlay.copy`/`overlay.text` read the COVERING surface, which `session.copy`/`session.text` cannot reach
+  (#434) — those address the pane the overlay hides, so a selection made in the overlay reads as
+  `no selection` and `--pane right` returns the shell underneath. Both take the overlay family's own
+  `--pane`, never the shared `left|right|scratch` one: widening that would let `session.status`/`.restore`
+  reach a `StatusPane` that has no overlay case, over persisted state. `ControlServer.overlayReadSurface`
+  resolves both, so an empty slot (`no overlay`) and a filled one whose surface has not come up
+  (`overlay not realized`, naming the cover rather than borrowing `session not realized`) cannot mean
+  different things on one command than the other. A HUD is refused ahead of both with
+  `OverlayHudError.noRead`: it paints the app's own message, and `overlayActive` alone cannot tell it from
+  a caller's program. `overlay.text` validates `--all`/`--lines` through the same `parseBufferExtent` as
+  `session.text`, before the pane, so identical flags produce the identical first error. These are reads,
+  so they add no read-back field.
 - `session.hud.*` puts a passive message panel in the SESSION-WIDE overlay slot rather than adding a cover,
   so the Command-W ladder, `coverHidesActiveSession`, `searchTarget`, and session-close teardown are
   unchanged. It is control-native: no menu item, chord, or palette entry, a deliberate exemption from
@@ -425,15 +457,40 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   arrives because the pty's session leader is the surviving `login`. Without it every crash, `kill -9` and
   XCUITest `terminate()` leaves a 2-10 Hz repaint loop running forever.
 - `surface.zoom show|hide|toggle` reparents exactly one surface below a slim titlebar. Explicit IDs are
-  `surface:<session-id>:<left|right|scratch|overlay|overlay-left|overlay-right>` or `quick`, including
-  hidden live panes. The active target is the single case `TerminalZoomSurface.isActive` accepts: quick,
-  then the session overlay, then scratch, then the focused pane's own overlay, then that pane. Those
+  `surface:<session-id>:<left|right|scratch|overlay|overlay-left|overlay-right>`, including hidden live
+  panes. The active target is the single case `TerminalZoomSurface.isActive` accepts: the session overlay,
+  then scratch, then the focused pane's own overlay, then that pane. Those
   predicates are mutually exclusive and total, resting on `Session.focusedPane`, so widening one without
   narrowing its neighbour silently picks the wrong surface.
+- `surface.cursor` reports a zero-based COLUMN and nothing else, nested as `result.cursor.column` so a `row`
+  could join it additively; the human form is the bare integer and must stay one value. libghostty exports no
+  cursor accessor, so the column is solved for: `ghostty_surface_ime_point` gives the cell midpoint including
+  an unknown padding term, and reading the viewport's top-left cell MEASURES that term as
+  `ghostty_text_s.tl_px_x`, which cancels. Verified exact under asymmetric `window-padding-*` with
+  `window-padding-balance`, across font sizes, on both split panes and on a hidden background session.
+  There is NO row, and the vertical twin is not a near miss to be finished later: `tl_px_y` is the text
+  BASELINE against an IME point at the cell bottom, and `adjust-font-baseline = 30` was measured reporting
+  row 5 for a caret on row 4 while the column stayed right — a silent off-by-one, so a row waits for a real
+  accessor. Use `TerminalZoomSurface.surface(in:)`, never a second inline switch over the six slots.
+- It shares `surface.zoom`'s target vocabulary AND its gates, which is not cosmetic: `active` must consult
+  the window's `TerminalZoomRegistry` target BEFORE the store's focused pane, or zooming a nonfocused pane
+  reads the hidden one; and both paths must pass `TerminalZoomController.isTargetValid`, or a guessed
+  `surface:<id>:overlay` reads a HUD the tree omits and zoom rejects. `quick` gates on
+  `QuickTerminalController.isVisible`, not on `currentSurface()`, which `hide()` deliberately keeps alive.
+  All three shipped as bugs once; `ControlSurfaceCursorUITests` pins each.
+- It is a pure read that adds NO tree field, a deliberate exception to the state-command read-back rule
+  (it sets no state) and to the temptation to project it: `ghostty_surface_read_text` allocates and takes the
+  renderer lock, so paying it per live and hidden surface on every tree poll is the wrong trade.
+- `quick` is the one target that names no window surface: it grows the quick-terminal PANEL to fill its
+  screen. `setSurfaceZoom` routes it before resolving a window, so it takes no `--window` and never reaches
+  `resolveSurfaceZoom`; it is refused `surface not available: quick` while the panel is hidden, and an
+  omitted `--target` never resolves to it. See [[windows]].
 - Host-free `TerminalZoomController` owns mode/state. Zoom must not change ratios, focus, sidebar, or pane
-  visibility; deck slots remain constant and focus reporting is suppressed. Opening closes palette/search
-  and conflicting quick terminal; banner reveal and Command-W exit. Font remains live. Reject quick show
-  and search-open while zoomed, but keep hides idempotent even if the target vanished. Read
+  visibility; deck slots remain constant and focus reporting is suppressed. Opening closes palette/search;
+  banner reveal and Command-W exit. Font remains live. Reject search-open while zoomed, but keep hides
+  idempotent even if the target vanished. Zoom neither closes nor blocks the quick terminal any more — the
+  panel floats above every window instead of being hosted by one, so `quick show` is no longer refused with
+  `terminal zoom active`. Read
   top-level live `zoomedSurface`; surface node active/visible describes pane state, not zoom.
 - `dashboard` opens explicit IDs or `--mru`, or closes. Font-size and auto-size are exclusive; close accepts
   no IDs/MRU/font; open needs IDs or MRU; fixed size must be finite positive.
@@ -564,6 +621,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   which preempts `initialCommand` in `restorePlan` and would drop the exec path.
 - Top-level tree includes idle/auto-follow, live sidebar visibility/mode, workspace filter, quick
   visibility, zoom, dashboard, and picker state. Prefer live tree sidebar state over cached window list.
+  `quickVisible` and a `quick` `zoomedSurface` are APP-level, so every projected window reports the same
+  value for them; the rest stay per-window.
 - Window nodes include open/active, open-store sidebar/auto-follow, geometry, fullscreen, zoomed, minimized.
   Closed live fields are omitted. Geometry is top-left display-relative y-down and round-trips move/resize.
 - Window list is cached. Refresh after commands and frontmost/sidebar/attachment/move/resize/fullscreen/
@@ -618,9 +677,6 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 ## Documentation mirrors
 
-- Keep the bundled skill synchronized with commands, arguments, results, keymap, model, and command count.
-  `SkillInstallTests` checks its `Command summary (N commands)`.
-- `site/commands.html` documents every command, invocation, arguments, and read-back. Keep its four count
-  mentions, README, docs mirror, skill, and test aligned.
-- Search count patterns, not an assumed old/new value, then inspect every two/three-digit number in this
-  file. Counting only explicit raw-value assignments undercounts implicit cases.
+- Keep the bundled skill synchronized with commands, arguments, results, keymap, and model.
+- `site/commands.html` documents every command, invocation, arguments, and read-back; `site/docs.html`,
+  README and the skill link to it rather than restating the catalog.

@@ -24,6 +24,16 @@ paths:
 - `<configDir>/keymap.conf` (default `~/.config/agterm`) rebinds built-in menu shortcuts and defines
   custom shell commands, which appear in the action palette as `custom`. One parsed `Keymap` drives the
   menu, custom-command monitor, and palette; host-free logic lives in `agtermCore`.
+- `global-hotkey <chord>` is the third verb: ONE chord, modifier required, no `|` alternatives and no
+  leader sequence (`RegisterEventHotKey` expresses neither), last line wins. It is registered with the OS
+  by `GlobalHotkey`, never with `KeybindMatcher`, so it is deliberately OUTSIDE the conflict model below —
+  it may share a chord with a menu item — but the OS hotkey WINS and CONSUMES the key, agterm frontmost
+  included, so the menu binding then never fires. Say that rather than "whichever app is in front decides",
+  which is the precise inversion. `parseGlobalHotkeyLine` diagnoses a base key no physical position produces,
+  since the verb has no read-back anywhere and a silent drop at registration would be the user's only signal.
+  `keyCode(forChordKey:)` resolves it
+  by physical position, inverting `namedKey`/`latinKey` rather than adding a third table, so it survives a
+  layout switch. It summons the quick terminal; see [[windows]] for the panel.
 - `parseKeymap` never throws. `map <chord> <action>` takes one whitespace-delimited chord token.
   `command "<name>" [chord] <shell...>` treats the token after the quoted name as a shortcut only when
   `parseKeybinds` accepts it with a modifier; a bare key is diagnosed and the command stays palette-only.
@@ -57,7 +67,7 @@ paths:
   alternative, `alternative skipped`/`alternative dropped` with more), pinned by
   `KeymapTests.pipeFreeKeymapParsesExactlyAsItDidBeforeAlternatives`.
 - Pure types live in `Keybind.swift`, `KeybindMatcher`, `CustomCommand`/`CommandContext`,
-  `BuiltinAction` (43 cases, pinned by `BuiltinActionTests`), `Keymap`, and `ConfigPaths`.
+  `BuiltinAction` (46 cases, pinned by `BuiltinActionTests`), `Keymap`, and `ConfigPaths`.
   `CommandContext` owns the shared expansion/environment token table.
 - Built-ins use AppKit menu key equivalents from `keymap.equivalent(for:)`; apply only non-nil
   `KeyboardShortcut`s. SwiftUI rebuilds menu shortcuts on the next activation, not immediately after
@@ -103,12 +113,17 @@ paths:
   in `{...}` or `$...` form, no-op with notice; empty `{AGT_SESSION_PWD}` can turn `rm -rf .../*` into a
   root glob. Commands using only `AGT_SOCKET`/`AGT_WINDOW`/`AGT_PANE` may run sessionless.
 - `{AGT_PANE}`/`$AGT_PANE` is `left`, `right`, or `scratch`, derived from the firing surface for keybinds
-  and `splitFocused` for palette runs. Scratch is the only sessionless surface with a pane; quick terminal
-  and overlays use active-session context. A single pane is always `left`. Primary exit promotes the
+  and `splitFocused` for palette runs. The scratch and both overlay kinds are the sessionless surfaces with
+  a pane, resolved together in `sessionlessPane`; the quick terminal is nobody's pane and takes the plain
+  active-session path. An overlay reads its OWN selection into `$AGT_SELECTION` but names the pane
+  UNDERNEATH it (#434), so a note taken in one still pastes back through `session type --pane` — which is
+  why `CommandContext.Pane` deliberately cannot spell an overlay; its buffer is `session overlay copy`/
+  `text`, owned by [[control-api]]. A single pane is always `left`. Primary exit promotes the
   split into the main slot, clears `isSplitPane`, and makes it addressable only as `left`.
 - `resolveBuiltinOverrides` is order-independent: fold last-wins candidates, resolve all final chords,
-  then detect collisions. An override loses to another action's unmoved default; for two overrides, the
-  later line loses. Diagnostics name the owner and sort by line. Moving `toggle_split` off `cmd+d` lets
+  then drop every overridden owner of each collision together. A drop reverts to the shipped default, so
+  repeat to a fixpoint; distinct shipped defaults and strict candidate removal guarantee termination.
+  Diagnostics name a conflicting owner and sort by line. Moving `toggle_split` off `cmd+d` lets
   `new_session` take it in either line order, and an action in `builtinUnbound` resolves to no chord at
   all, so it stops occupying its shipped default here too.
 - Final cross-section `validateBindings` runs after parsing all lines, over every monitor-bound

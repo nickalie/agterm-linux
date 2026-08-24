@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.24.0 - 2026-08-17
+
+### New Features
+
+- the quick terminal is a floating panel with a system-wide hotkey, so it can be summoned over any application and dismissed straight back to it. `keymap.conf` gains a `global-hotkey` verb for the chord #441 @umputun
+- keyboard navigation between workspaces: `previous_workspace` and `next_workspace` builtins, `workspace.go --to next|prev`, and `toggle_workspace_collapse` to fold the workspace you are in. All three ship keyless #436 @umputun
+- `session.overlay.copy` and `session.overlay.text` read an overlay's own surface. Both `session copy` and `session text` address the pane underneath, so a selection made inside an overlay used to read as `no selection` #437 @umputun
+- `surface.cursor` reports a surface's cursor column, printed as a bare number so it drops into a command substitution #451 @umputun
+
+### Improved
+
+- libghostty advances to upstream main, fixing a crash on surface teardown and lifting the pin held since April. Building now needs Zig 0.16 #449 @umputun
+- the shipped app drops three hardened-runtime exceptions it never used. The TCC entitlements are untouched #450 @umputun
+- `ControlServer` logs through `os.Logger`, so the control socket is queryable under the subsystem `docs/troubleshooting.md` tells you to filter on #442 @umputun
+- a cookbook recipe reporting a hook-driven agent's status onto its sidebar row when the agent runs inside a container #428 @nquo
+
+### Bug Fixes
+
+- an unattended restart lost every captured running command. The quit confirmation went up even for a quit the system asked for, and with nobody there to answer it the app was killed before it could save. Shutdown, restart and logout skip the prompt now, while a scripted quit still gets it. Reported by @ssgreg, who also sent the follow-up #446 #447 @umputun @ssgreg
+- two `keymap.conf` lines colliding on one chord were settled by file order, so reordering unrelated lines could silently take a custom command's shortcut away #444 @umputun
+
 ## v0.23.0 - 2026-08-13
 
 ### New Features

@@ -67,8 +67,8 @@ C-boundary concurrency before changing the bridge.
 - Every change must build, pass `swift test`, `make test-app`, and `make lint`.
 - Run each gate ONCE, at the end, and scope everything else to what changed: a new or changed test runs
   via `-only-testing:<Target>/<Class>/<test>`. Never re-run a whole XCUITest suite to verify a narrow
-  change; `agtermUITests/ControlAPIUITests` alone is about 7 minutes and tells you nothing the targeted
-  run did not.
+  change; `agtermUITests/ControlAPIUITests` alone is 82 methods and about 7.5 minutes, and tells you
+  nothing the targeted run did not.
 - For maintainer work, ask before splitting a touched long file and do not raise limits reflexively.
   Contributors need not refactor preexisting length; mention it without blocking or suggesting a limit bump.
 
@@ -76,9 +76,10 @@ C-boundary concurrency before changing the bridge.
 
 - Fetch `origin master` before creating a native Claude worktree so it forks the current remote tip.
   Do not manually `git worktree add`.
-- Fresh worktrees lack ignored `GhosttyKit.xcframework` and
-  `agterm/Resources/{ghostty,terminfo}`. Symlink all three from the main checkout instead of rebuilding;
-  use absolute targets for resources. They remain untracked and disappear with worktree removal.
+- Fresh worktrees lack ignored `GhosttyKit.xcframework`, `agterm/Resources/{ghostty,terminfo}` and
+  `.ghostty-build-stamp`. Symlink all four from the main checkout instead of rebuilding; use absolute
+  targets for resources. The stamp is what makes the other three count as current — without it `setup.sh`
+  rebuilds libghostty in every new worktree. They remain untracked and disappear with worktree removal.
 - After merge, verify the PR merge commit on fetched `origin/master`, then remove the worktree without
   changing the main checkout's branch. Squash/rebase makes removal report unmerged commits; after
   verification, discard the worktree safely. Native removal may leave a renamed branch, which must be
@@ -133,8 +134,14 @@ C-boundary concurrency before changing the bridge.
 
 - `scripts/setup.sh` builds upstream `ghostty-org/ghostty` at `GHOSTTY_REV` using
   `zig build -Demit-xcframework=true -Dxcframework-target=native`. No fork or disposable daily build is used.
-- The pin stays at or before `4dcb09ada` (2026-04-30) because later renderer builds blank scrollback on
-  font-size increase; decrease works and no app-side fix exists. Re-test increase before advancing.
+- `GHOSTTY_REV` is `0ba6250` (2026-08-16), a plain reproducibility pin with no workaround attached.
+  It sat at `4dcb09ada` (2026-04-30) from June while later builds blanked scrollback on a font-size
+  increase; upstream fixed that and the case was re-verified by hand before the bump. Re-test the
+  font-increase case when moving it, and check `minimum_zig_version` in `build.zig.zon` against
+  `ZIG_FORMULA` — the 0.15 to 0.16 jump came with this bump.
+- `.ghostty-build-stamp` records the rev the staged artifacts came from and is what decides a rebuild.
+  Presence alone would serve an xcframework built from a different rev silently, so a `GHOSTTY_REV`
+  change costs everyone exactly one libghostty rebuild and nobody keeps a stale core by accident.
 - Setup stages the xcframework and `zig-out/share/{ghostty,terminfo}`. All are ignored build artifacts.
 - Link the xcframework with `embed: false`; embedding breaks non-Developer-ID signatures.
 
@@ -150,9 +157,10 @@ C-boundary concurrency before changing the bridge.
 - `GhosttyCallbacks` is `@unchecked Sendable`, not `@MainActor`. C closures capture nothing and reach
   `GhosttyApp.shared`. Copy `char*` before hopping; every main-actor touch uses
   `DispatchQueue.main.async`.
-- Rendering is demand-driven. Wakeup coalesces through an `OSAllocatedUnfairLock` into one main-queue
-  `ghostty_app_tick`; RENDER calls `renderNow`. Never restore the rejected continuous 120Hz poll or use
-  `assumeIsolated`.
+- Wakeup coalesces through an `OSAllocatedUnfairLock` into one main-queue `ghostty_app_tick`. Painting is
+  libghostty's own render thread, not an app callback: the embedded apprt cannot emit
+  `GHOSTTY_ACTION_RENDER`, so agterm handles no draw action. Never restore the rejected continuous 120Hz
+  poll or use `assumeIsolated`. See [[libghostty]] before advancing `GHOSTTY_REV`.
 - `close_surface_cb` only recovers the view and dispatches; it never frees synchronously.
 - The session-wide overlay slot holds either a caller's program or a HUD. Raw `overlayActive` answers only
   "the slot is occupied"; every layer asking "is a program covering this session" reads

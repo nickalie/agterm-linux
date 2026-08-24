@@ -260,6 +260,9 @@ struct SocketClientTests {
             toggle_flag                 cmd+shift+f
             focus_workspace             -
             toggle_workspace_filter     -
+            previous_workspace          -
+            next_workspace              -
+            toggle_workspace_collapse   -
           * focus_left_pane             ctrl+cmd+left
             focus_right_pane            cmd+opt+right
             previous_session            cmd+opt+up
@@ -753,6 +756,13 @@ struct SocketClientTests {
     @Test func formatResponseText() {
         let response = ControlResponse(ok: true, result: ControlResult(text: "selected\nlines"))
         #expect(SocketClient.formatResponse(response, json: false) == "selected\nlines")
+    }
+
+    @Test(arguments: [0, 42])
+    func formatResponseCursorPrintsTheBareColumn(_ column: Int) {
+        let response = ControlResponse(ok: true, result: ControlResult(id: "surface:s1:left",
+                                                                      cursor: ControlCursor(column: column)))
+        #expect(SocketClient.formatResponse(response, json: false) == "\(column)")
     }
 
     @Test func formatResponseZeroCountIsOk() {

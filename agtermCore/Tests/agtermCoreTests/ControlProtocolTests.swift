@@ -61,6 +61,16 @@ struct ControlProtocolTests {
         #expect(try JSONDecoder().decode(ControlResult.self, from: Data(json.utf8)).pick == nil)
     }
 
+    @Test func controlResultCursorRoundTripsAndOmitsWhenNil() throws {
+        let carried = ControlResponse(ok: true, result: ControlResult(id: "surface:s1:left",
+                                                                     cursor: ControlCursor(column: 12)))
+        #expect(try roundTrip(carried) == carried)
+
+        let json = String(decoding: try JSONEncoder().encode(ControlResult(id: "surface:s1:left")), as: UTF8.self)
+        #expect(!json.contains("\"cursor\""), "a nil cursor must be omitted from the JSON; got \(json)")
+        #expect(try JSONDecoder().decode(ControlResult.self, from: Data(json.utf8)).cursor == nil)
+    }
+
     @Test func controlTreePickPendingOmitsWhenNil() throws {
         let tree = ControlTree(workspaces: [])
         let json = String(decoding: try JSONEncoder().encode(tree), as: UTF8.self)
@@ -134,8 +144,14 @@ struct ControlProtocolTests {
             ControlRequest(cmd: .sessionOverlayResize, target: "9f3c", args: ControlArgs(sizePercent: 60)),
             ControlRequest(cmd: .sessionOverlayResize, target: "9f3c", args: ControlArgs(full: true)),
             ControlRequest(cmd: .sessionOverlayResult, target: "9f3c"),
+            ControlRequest(cmd: .sessionOverlayCopy, target: "9f3c"),
+            ControlRequest(cmd: .sessionOverlayCopy, target: "9f3c", args: ControlArgs(pane: "right")),
+            ControlRequest(cmd: .sessionOverlayText, target: "9f3c", args: ControlArgs(pane: "left", all: true)),
+            ControlRequest(cmd: .sessionOverlayText, target: "9f3c", args: ControlArgs(lines: 20)),
             ControlRequest(cmd: .surfaceZoom, target: "surface:5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9:right",
                            args: ControlArgs(mode: "show", window: "win")),
+            ControlRequest(cmd: .surfaceCursor, target: "surface:5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9:left",
+                           args: ControlArgs(window: "win")),
         ]
         for request in cases {
             #expect(try roundTrip(request) == request)
@@ -1312,6 +1328,24 @@ struct ControlProtocolTests {
         #expect(decoded == request)
         #expect(decoded.args?.to == "next-attention")
         #expect(SessionNavigation(wire: decoded.args!.to!) == .nextAttention)
+    }
+
+    @Test func workspaceGoRoundTripsWithDirection() throws {
+        let request = ControlRequest(cmd: .workspaceGo, args: ControlArgs(window: "w1", to: "prev"))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.cmd == .workspaceGo)
+        #expect(decoded.args?.window == "w1")
+        #expect(WorkspaceNavigation(wire: decoded.args!.to!) == .previous)
+    }
+
+    @Test func workspaceNavigationWireMapping() {
+        #expect(WorkspaceNavigation(wire: "next") == .next)
+        #expect(WorkspaceNavigation(wire: "prev") == .previous)
+        #expect(WorkspaceNavigation(wire: "previous") == .previous)
+        #expect(WorkspaceNavigation(wire: "first") == nil)
+        #expect(WorkspaceNavigation(wire: "next-attention") == nil)
+        #expect(WorkspaceNavigation(wire: "") == nil)
     }
 
     @Test func sessionMoveReorderRoundTripsWithDirection() throws {

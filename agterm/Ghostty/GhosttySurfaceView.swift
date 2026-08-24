@@ -515,12 +515,6 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         onFontSizeChange?(size) // the store no-ops a same-value write.
     }
 
-    /// Draws the surface now, servicing libghostty's `GHOSTTY_ACTION_RENDER` demand. Main-actor.
-    func renderNow() {
-        guard let surface else { return }
-        ghostty_surface_draw(surface)
-    }
-
     // MARK: - Surface lifecycle
 
     func createSurface() {
@@ -721,6 +715,12 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         focusObservers = []
         if let surface { ghostty_surface_free(surface) }
         surface = nil
+        // release the custom layer libghostty installed and this view still retains. The current pin clears
+        // its display callback in `IOSurfaceLayer.release`, so this defends builds predating that fix, where
+        // the callback kept pointing at the freed renderer and the next CoreAnimation display locked a mutex
+        // in freed memory (#443). Must follow the free, which joins the render thread: dropping the layer
+        // while it still paints trades one use-after-free for another.
+        dropGhosttyLayer()
         // the other end of the `surface != nil` term: this element just left the a11y tree, and a client
         // holding it needs to re-resolve rather than keep writing into a closed session's pane.
         postAccessibilityExposureChange()
@@ -763,6 +763,20 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         onSearchEnd = nil
         onSearchTotal = nil
         onSearchSelected = nil
+    }
+
+    /// Swaps libghostty's `CALayer` subclass out for a plain one, keeping the last painted frame as its
+    /// contents so a pane about to be unmounted does not blank for a frame first. The contents are an
+    /// `IOSurface` the layer retains, so carrying the reference over outlives the freed renderer.
+    private func dropGhosttyLayer() {
+        let plain = CALayer()
+        if let stale = layer {
+            plain.frame = stale.frame
+            plain.contentsScale = stale.contentsScale
+            plain.contentsGravity = stale.contentsGravity
+            plain.contents = stale.contents
+        }
+        layer = plain
     }
 
     /// `TerminalSurface` conformance: the model calls this when the owning session is closed.

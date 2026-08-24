@@ -528,7 +528,7 @@ These local commands ignore `--socket` and do not require a running app.
 
 Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
 
-The same interface covers windows, splits, overlays, dashboards, HUDs, notifications, events, themes, and restoration. All 75 commands are at [agterm.com/commands](https://agterm.com/commands).
+The same interface covers windows, splits, overlays, dashboards, HUDs, notifications, events, themes, and restoration. Every command is at [agterm.com/commands](https://agterm.com/commands).
 
 ### Native picker
 

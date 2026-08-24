@@ -243,6 +243,33 @@ agtermctl session overlay open "make test" --target "$AGTERM_SESSION_ID"   # thi
 agtermctl session overlay result --json   # errors "still running" until it exits, then result.exitCode
 ```
 
+## Read what the user highlighted inside an overlay
+
+`session copy` and `session text` address the pane the overlay COVERS, so a selection the user made in
+the overlay reads as `no selection` there and `session text --pane right` returns the shell underneath.
+`session overlay copy`/`text` read the covering surface instead:
+
+```bash
+agtermctl session overlay copy --target "$AGTERM_SESSION_ID" --json   # result.text = the overlay's selection
+agtermctl session overlay text --target "$AGTERM_SESSION_ID" --lines 40
+```
+
+Both take the overlay family's `--pane left|right` for a pane-scoped overlay; omit it for the
+session-wide one.
+
+A chord bound to a custom command gets this for free — `$AGT_SELECTION` already carries the selection of
+the surface the chord fired in, the overlay included, while `$AGT_PANE` keeps naming the pane underneath
+so the reply routes back with `session type --pane`:
+
+```bash
+# keymap.conf: command "note" ctrl+a>n ...
+printf '%s' "$AGT_SELECTION" > /tmp/note.txt
+agtermctl session type "see /tmp/note.txt" --target "$AGT_SESSION_ID" --pane "$AGT_PANE"
+```
+
+Reach for `session overlay copy` when the read is NOT chord-driven — an agent polling from outside, or a
+script that needs the selection some time after the fact.
+
 ## Cover only your own pane, leaving the user's other pane usable
 
 `--pane left|right` scopes the overlay to ONE split pane instead of the whole session. Your shell
@@ -594,6 +621,12 @@ agtermctl events --json --kind session.closed |
   done
 ```
 
+The stream does not say what closed a session: a closed row, another client's `session.close`, and the
+exit of a `session.new --command` process are identical in it. Creating that session with `--wait`
+removes the third, parking the row on the exit prompt rather than closing it, so a `session.closed`
+under `--wait` is always a person or a client. App quit
+emits no `session.closed` at all, since window teardown is skipped while terminating.
+
 For resumable consumers, save the `run` and `next` fields from raw `events.read` batch responses and
 restart with `agtermctl events --run "$run" --after "$next" --json`. The streaming JSON lines are bare
 events and do not include the run id. If the command reports `event run changed`, `event cursor
@@ -666,6 +699,25 @@ agtermctl tree --json | jq -r '.result.tree.zoomedSurface'
 
 `surface zoom` is not `window zoom`: it does not move/resize the macOS window and must not change split
 ratios, sidebar state, focus, or split/scratch visibility. Surface ids come from `tree --json`.
+
+## Read a surface's cursor column
+
+```bash
+# The active surface's zero-based column, as a plain number.
+col=$(agtermctl surface cursor)
+
+# Any addressable surface, including a pane that is not on screen.
+agtermctl surface cursor --target "surface:${AGTERM_SESSION_ID:?}:right"
+
+# Under --json it is nested, so a future row would not move it.
+agtermctl surface cursor --json | jq -r '.result.cursor.column'
+```
+
+Use it as a ONE-WAY signal about the line the caret is on. A column past the prompt proves the line is not
+empty. A column AT the prompt proves nothing — the caret may have been moved back over text that is still
+there — so never read it as "the input is empty". There is no row: the pinned libghostty exposes no cursor
+accessor, and the vertical metrics it does export cannot recover a row that survives a custom
+`adjust-font-baseline`. The command reports no field in `tree`, so poll it when you need it.
 
 ## Watch several sessions at once in a dashboard grid
 
@@ -841,6 +893,8 @@ a RUNNING program is refused instead: a message is replaceable, a program is not
 ```bash
 agtermctl session go --to next            # step selection to the next session
 agtermctl session go --to next-attention  # jump to the next blocked/completed session
+agtermctl workspace go --to next          # step a whole workspace, landing on its first session
+agtermctl workspace go --to prev          # wraps at both ends; no --target, it is relative
 w=$(agtermctl window new "scratch" --json | jq -r '.result.id')
 # or park one in the Dock right after creating it (it appears briefly on its way there):
 # p=$(agtermctl window new "proj-b" --minimized --json | jq -r '.result.id')
