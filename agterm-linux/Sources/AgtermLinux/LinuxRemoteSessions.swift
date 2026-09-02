@@ -24,7 +24,7 @@ enum LinuxRemoteSessions {
             // characters, which agtermctl would print to a terminal after decoding
             return ControlResponse(ok: false, error: "invalid host")
         }
-        let result = RemoteCommandProcessRunner.runBlocking(argv, deadline: treeDeadline)
+        let result = LinuxRemoteCommandRunner.run(argv, deadline: treeDeadline)
         guard result.status == 0 else {
             // stdout first: the remote's agtermctl prints a not-ok response there and exits nonzero, so
             // its own sentence never reaches stderr, and an ok-looking payload from a nonzero process is

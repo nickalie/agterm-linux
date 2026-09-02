@@ -60,6 +60,11 @@ verify_payload() {
   test -x "$payload/share/agterm/agent-status/agterm-agent-status.sh"
   test -x "$payload/share/agterm/agent-status/agterm-codex-status.sh"
   test -x "$payload/share/agterm/agent-status/agterm-claude-restore.sh"
+  test -x "$payload/share/agterm/agent-status/agterm-claude-status.sh"
+  # Live sessions keep each pane's process inside this; the launcher exports its path as AGTERM_ZMX
+  test -x "$payload/libexec/zmx"
+  test -f "$payload/share/agterm/zmx-LICENSE"
+  "$payload/libexec/zmx" version >/dev/null
   verify_pi_extension "$payload/share/agterm/agent-status/pi/agterm-status.ts"
   verify_opencode_plugin "$payload/share/agterm/agent-status/opencode/agterm-status.js"
   test -f "$payload/share/agterm/agent-skill/SKILL.md"
@@ -120,6 +125,9 @@ test -x "$APPROOT/usr/bin/agtermctl.bin"
 test -x "$APPROOT/usr/share/agterm/agent-status/agterm-agent-status.sh"
 test -x "$APPROOT/usr/share/agterm/agent-status/agterm-codex-status.sh"
 test -x "$APPROOT/usr/share/agterm/agent-status/agterm-claude-restore.sh"
+test -x "$APPROOT/usr/share/agterm/agent-status/agterm-claude-status.sh"
+test -x "$APPROOT/usr/libexec/zmx"
+"$APPROOT/usr/libexec/zmx" version >/dev/null
 verify_pi_extension "$APPROOT/usr/share/agterm/agent-status/pi/agterm-status.ts"
 verify_opencode_plugin "$APPROOT/usr/share/agterm/agent-status/opencode/agterm-status.js"
 test -f "$APPROOT/usr/share/agterm/agent-skill/SKILL.md"

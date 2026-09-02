@@ -1,33 +1,20 @@
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
+import agtermCore
 
 /// Runs an ssh invocation off the main actor so the UI is free while the network is slow.
 ///
 /// The deadline is the caller's, not ssh's: `ConnectTimeout` ends at the handshake and cannot bound a
 /// remote command that never returns.
-public struct RemoteCommandProcessRunner: RemoteCommandRunner {
-    public init() {}
-
-    /// Grace between SIGTERM and SIGKILL, matching the zmx client's.
+struct RemoteCommandProcessRunner: RemoteCommandRunner {
+    /// Grace between SIGTERM and SIGKILL, matching `ZmxClient.terminationGrace`.
     private static let terminationGrace: TimeInterval = 0.25
 
-    public func run(_ argv: [String], deadline: TimeInterval) async -> RemoteCommandResult {
+    func run(_ argv: [String], deadline: TimeInterval) async -> RemoteCommandResult {
         await withCheckedContinuation { continuation in
             Thread.detachNewThread {
                 continuation.resume(returning: Self.execute(argv, deadline: deadline))
             }
         }
-    }
-
-    /// The same run, blocking the CALLING thread. For a host whose main loop does not drain the Swift
-    /// Concurrency executor and so drives this from a worker thread of its own; never call it on the
-    /// thread that owns the UI.
-    public static func runBlocking(_ argv: [String], deadline: TimeInterval) -> RemoteCommandResult {
-        execute(argv, deadline: deadline)
     }
 
     private static func execute(_ argv: [String], deadline: TimeInterval) -> RemoteCommandResult {
@@ -60,7 +47,7 @@ public struct RemoteCommandProcessRunner: RemoteCommandRunner {
         if timedOut {
             process.terminate()
             if finished.wait(timeout: .now() + terminationGrace) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
+                Darwin.kill(process.processIdentifier, SIGKILL)
                 process.waitUntilExit()
             }
         }
