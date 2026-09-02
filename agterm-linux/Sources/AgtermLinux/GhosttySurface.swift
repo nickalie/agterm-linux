@@ -395,6 +395,51 @@ final class GhosttySurface: TerminalSurface {
         return s.isEmpty ? nil : s
     }
 
+    /// This surface's zero-based cursor COLUMN (`surface.cursor`), nil when the surface is not created or
+    /// the geometry cannot be trusted. Row is deliberately absent: see the type comment on `ControlCursor`.
+    ///
+    /// libghostty exports no cursor accessor, so the column is solved for. `ghostty_surface_ime_point`
+    /// reports the cursor cell's horizontal MIDPOINT as
+    /// `(column * cellWidth + paddingLeft + cellWidth / 2) / contentScale`, and the padding term is the
+    /// unknown a caller cannot recover from config. Reading the viewport's top-left cell MEASURES it:
+    /// `ghostty_text_s.tl_px_x` is `(column * cellWidth + paddingLeft) / contentScale`, so at column zero it
+    /// is the padding term in the same units and subtracting leaves `column + 0.5` cells. That holds under
+    /// asymmetric padding because neither side is derived.
+    ///
+    /// Each libghostty call takes the renderer lock separately, so geometry moving between them would mix two
+    /// coordinate systems; the grid is re-read afterwards and a change abandons the reading. Padding cannot
+    /// move under a live surface — libghostty derives it at first layout, which is why `window-padding-*`
+    /// needs a new pane.
+    func readCursorColumn() -> Int? {
+        guard let surface else { return nil }
+        var sel = ghostty_selection_s()
+        let origin = ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: 0)
+        sel.top_left = origin
+        sel.bottom_right = origin
+        sel.rectangle = false
+        var probe = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, sel, &probe) else { return nil }
+        let columnZeroX = probe.tl_px_x
+        ghostty_surface_free_text(surface, &probe)
+        // libghostty reports -1 for a cell it could not place; the viewport's own top-left should always
+        // resolve, so treat it as a failed calibration rather than clamping to a padding of zero.
+        guard columnZeroX >= 0 else { return nil }
+
+        let size = ghostty_surface_size(surface)
+        // the scale libghostty was actually given, not the monitor's: `resize` pushes this widget's factor.
+        let scale = Double(gtk_widget_get_scale_factor(W(glArea)))
+        guard scale > 0, size.cell_width_px > 0, size.columns > 0 else { return nil }
+        let cellWidth = Double(size.cell_width_px) / scale
+
+        var x = 0.0, y = 0.0, w = 0.0, h = 0.0
+        ghostty_surface_ime_point(surface, &x, &y, &w, &h)
+        let after = ghostty_surface_size(surface)
+        guard after.cell_width_px == size.cell_width_px, after.columns == size.columns else { return nil }
+        let column = Int(((x - columnZeroX) / cellWidth).rounded(.down))
+        guard column >= 0, column < Int(size.columns) else { return nil }
+        return column
+    }
+
     func readScreenText(all: Bool, lines: Int?) -> String? {
         guard let surface else { return nil }
         let tag = (all || lines != nil) ? GHOSTTY_POINT_SCREEN : GHOSTTY_POINT_VIEWPORT

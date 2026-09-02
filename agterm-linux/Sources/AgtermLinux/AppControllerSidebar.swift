@@ -152,6 +152,11 @@ extension AppController {
                 appendSection(ws.name, ws.sessions, workspace: ws.id, settings: settings)
             }
         }
+        // what the rows now show open, which `isCurrentWorkspaceCollapsed` reads instead of the persisted
+        // flag. Flagged mode renders no workspace rows, so the mirror empties with them.
+        store.noteSidebarExpansion(store.sidebarMode == .flagged
+            ? []
+            : Set(store.visibleWorkspaces.filter(\.isExpanded).map(\.id)))
     }
 
     private func updateWorkspaceFilterButton() {

@@ -3,11 +3,21 @@ import agtermCore
 
 @MainActor
 extension AppController {
+    /// This window's zoom target, quick panel included. Upstream detached its quick terminal into one
+    /// app-global panel and so dropped `.quick` from `TerminalZoomController`; the Linux panel still lives in
+    /// this window's overlay, which keeps it a surface this window can zoom and this the only place that
+    /// precedence is spelled.
+    func resolveZoomTarget() -> TerminalZoomTarget? {
+        quickVisible ? .quick : TerminalZoomController.resolveTarget(store: store)
+    }
+
+    /// The counterpart gate: core answers `.quick` invalid unconditionally for the same reason.
+    func isZoomTargetValid(_ target: TerminalZoomTarget) -> Bool {
+        target == .quick ? quickVisible : TerminalZoomController.isTargetValid(target, in: store)
+    }
+
     func clearInvalidTerminalZoom() {
-        guard let target = terminalZoom.target,
-              !TerminalZoomController.isTargetValid(target, in: store, quickTerminalVisible: quickVisible) else {
-            return
-        }
+        guard let target = terminalZoom.target, !isZoomTargetValid(target) else { return }
         setTerminalZoom(.off, target: target)
     }
 

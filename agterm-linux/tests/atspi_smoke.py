@@ -882,6 +882,78 @@ def verify_upstream_control_parity(env):
             stop(process)
 
 
+def verify_v024_control_parity(env):
+    """Round-trip the upstream v0.24 control additions through the real Linux socket and GTK host."""
+    process, app = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        first_workspace = window_tree(env, window_id)["workspaces"][0]["id"]
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        second_workspace = control_json(
+            env, "workspace", "new", "go-target", "--window", window_id, "--json",
+        )["result"]["id"]
+        control_json(env, "session", "new", "--workspace", second_workspace,
+                     "--window", window_id, "--json")
+
+        def active_workspace():
+            return next((workspace["id"] for workspace in window_tree(env, window_id)["workspaces"]
+                         if workspace.get("active")), None)
+
+        # `workspace.go` is relative and takes no target, so the id it returns IS the read-back the
+        # tree has to agree with. Stepping both ways proves the wrap rather than one lucky direction.
+        step_response = raw_control_json(env, {"cmd": "workspace.go",
+                                               "args": {"window": window_id, "to": "next"}})
+        assert step_response["ok"], f"workspace.go next failed: {step_response}"
+        stepped = step_response["result"]["id"]
+        wait_for(lambda: active_workspace() == stepped, "workspace.go next did not move the tree's active workspace")
+        back = control_json(env, "workspace", "go", "--to", "prev",
+                            "--window", window_id, "--json")["result"]["id"]
+        wait_for(lambda: active_workspace() == back, "workspace.go prev did not step back")
+        assert {stepped, back} == {first_workspace, second_workspace}, (
+            f"workspace.go visited {stepped}/{back}, not the two workspaces that exist"
+        )
+
+        # The column is solved for out of two libghostty readings, so an in-range answer here is what
+        # proves the padding term cancelled — a wrong padding lands outside the grid and reports nil.
+        cursor = control_json(env, "surface", "cursor", "--target", "active",
+                              "--window", window_id, "--json")
+        assert cursor["ok"], f"surface.cursor failed: {cursor}"
+        column = cursor["result"]["cursor"]["column"]
+        assert isinstance(column, int) and column >= 0, f"surface.cursor returned {column!r}"
+
+        # An overlay's buffer is otherwise unobservable: `session.text` reads the pane UNDERNEATH it.
+        empty = raw_control_json(env, {"cmd": "session.overlay.text", "target": session_id,
+                                       "args": {"window": window_id}})
+        assert not empty["ok"] and empty["error"] == "no overlay", (
+            f"session.overlay.text over an empty slot answered {empty}"
+        )
+
+        needle = "overlay-read-marker"
+        control_json(
+            env, "session", "overlay", "open", f"/bin/sh -c 'printf {needle}; sleep 30'",
+            "--follow", "--target", session_id, "--window", window_id, "--json",
+        )
+
+        def overlay_text():
+            response = raw_control_json(env, {"cmd": "session.overlay.text", "target": session_id,
+                                              "args": {"window": window_id}})
+            return response["result"]["text"] if response.get("ok") else ""
+
+        wait_for(lambda: needle in overlay_text(), "session.overlay.text did not read the covering surface")
+        under = control_json(env, "session", "text", "--target", session_id,
+                             "--window", window_id, "--json")["result"]["text"]
+        assert needle not in under, "session.text read the overlay instead of the pane under it"
+        control_json(env, "session", "overlay", "close", "--target", session_id,
+                     "--window", window_id, "--json")
+        print("OK: workspace.go, surface.cursor, and overlay reads round-trip")
+    except AssertionError:
+        describe_tree(app)
+        raise
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2078,7 +2150,7 @@ def main():
     scenario = os.environ.get("AGTERM_ATSPI_SCENARIO")
     if scenario is None:
         for child_scenario in (
-            "normal", "upstream-controls", "dashboard-modal", "context-menu",
+            "normal", "upstream-controls", "v024-controls", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "sidebar-row-height",
@@ -2120,6 +2192,8 @@ def main():
             verify_normal_toolbar(env, state, home)
         elif scenario == "upstream-controls":
             verify_upstream_control_parity(env)
+        elif scenario == "v024-controls":
+            verify_v024_control_parity(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

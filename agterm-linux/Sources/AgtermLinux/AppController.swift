@@ -299,7 +299,7 @@ final class AppController {
         adw_application_window_set_content(cast(window), W(toast))
         terminalZoom.targetResolver = { [weak self] in
             guard let self else { return nil }
-            return TerminalZoomController.resolveTarget(store: self.store, quickTerminalVisible: self.quickVisible)
+            return self.resolveZoomTarget()
         }
         TerminalZoomRegistry.shared.register(windowID, controller: terminalZoom)
         DashboardControllerRegistry.shared.register(windowID, controller: dashboard)
@@ -342,13 +342,7 @@ final class AppController {
         let prev = store.selectedSessionID
         let focusWasEnabled = store.focusEnabled
         let needsRefresh = clearedRowChanges(id) || (prev.map(clearedRowChanges) ?? false)
-        if prev != id, let owner = searchSurface {
-            owner.endSearch()
-            endSearchAutoFollowSuppression()
-            searchSessionID = nil
-            searchSurface = nil
-            gtk_widget_set_visible(W(searchBar), 0)
-        }
+        dropSearchOnSelectionChange(from: prev, to: id)
         if userInitiated { noteUserActivity() }
         store.selectSession(id)
         let focusFilterChanged = focusWasEnabled != store.focusEnabled
@@ -359,6 +353,17 @@ final class AppController {
         updateRecentSessionsButton()
         if needsRefresh || focusFilterChanged { rebuildSidebar() }
     }
+    /// Close the search bar when the selection leaves the session it was pinned to — it searches ONE
+    /// surface, so left open it would step through scrollback the user is no longer looking at.
+    private func dropSearchOnSelectionChange(from prev: UUID?, to id: UUID?) {
+        guard prev != id, let owner = searchSurface else { return }
+        owner.endSearch()
+        endSearchAutoFollowSuppression()
+        searchSessionID = nil
+        searchSurface = nil
+        gtk_widget_set_visible(W(searchBar), 0)
+    }
+
     /// Whether selecting `id` would change its sidebar row (an unseen badge or an auto-reset glyph clears).
     private func clearedRowChanges(_ id: UUID) -> Bool {
         guard let s = store.session(withID: id) else { return false }
@@ -383,6 +388,41 @@ final class AppController {
             updateAttentionButton()
         }
     }
+    /// Step the current workspace one place through the sidebar's visible order. Rebuilds rather than only
+    /// re-selecting: an empty destination reveals itself through `freshWorkspaceID`, which changes which rows
+    /// exist. Returns whether the step went anywhere, so a caller can stay silent when it did not.
+    @discardableResult
+    func navigateWorkspace(_ direction: WorkspaceNavigation, userInitiated: Bool = true) -> UUID? {
+        if userInitiated { noteUserActivity() }
+        let prev = store.selectedSessionID
+        guard let step = store.navigateWorkspace(direction) else { return nil }
+        applyWorkspaceStep(from: prev)
+        return step.workspaceID
+    }
+
+    /// The window-level work a workspace step owes once core has moved the selection itself — the half
+    /// `selectSession` would have run. An EMPTY destination selects nothing, and then none of it applies.
+    /// Reconciles rather than only re-selecting: such a destination reveals itself through
+    /// `freshWorkspaceID`, which changes which rows exist.
+    func applyWorkspaceStep(from prev: UUID?) {
+        let selected = store.selectedSessionID
+        if selected != prev {
+            dropSearchOnSelectionChange(from: prev, to: selected)
+            if let selected { NotificationManager.withdraw(windowID: windowID, sessionID: selected) }
+            updateRecentSessionsButton()
+        }
+        reconcile()
+        syncSidebarSelection()
+    }
+
+    /// Fold or unfold the current workspace's own subtree — the per-row twin of Expand / Collapse Workspaces.
+    func toggleCurrentWorkspaceCollapse() {
+        guard let id = store.currentWorkspaceID else { return }
+        store.setWorkspaceExpanded(id, expanded: store.isCurrentWorkspaceCollapsed)
+        rebuildSidebar()
+        syncSidebarSelection()
+    }
+
     /// Defer scrolling until the selected sidebar row is allocated.
     func scrollRowIntoView(_ row: OpaquePointer) {
         guard let scroller = sidebarScroller else { return }
@@ -505,6 +545,17 @@ final class AppController {
         if let b = scratchToggleBtn { gtk_button_set_icon_name(cast(b), scratchOn ? "agterm-scratch-fill-symbolic" : "agterm-scratch-symbolic") }
     }
 
+    /// The quick shell's environment. Upstream's panel is app-global and so carries no window id; the Linux
+    /// panel belongs to this window, so it keeps one and `--window "$AGTERM_WINDOW_ID"` from inside it still
+    /// names the window it is drawn over.
+    private func quickTerminalEnvironment() -> [String: String] {
+        var env = SurfaceEnvironment.quickTerminal(
+            socketPath: gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath(),
+            programVersion: LinuxAppMetadata.version)
+        env["AGTERM_WINDOW_ID"] = windowID.uuidString
+        return env
+    }
+
     /// Show/hide the window-level quick terminal — a fixed-height drop-down panel above the deck running
     /// a login shell, kept alive when hidden, recreated after its shell exits. The control `quick` arm
     /// and Ctrl+` both drive it.
@@ -512,9 +563,7 @@ final class AppController {
         if !visible, terminalZoom.target == .quick { setTerminalZoom(.off, target: .quick) }
         if quickFrame == nil, visible, let overlay = deckOverlay {
             let q = GhosttySurface(sessionID: UUID(), cwd: Self.homeCwd,
-                                   env: SurfaceEnvironment.quickTerminal(windowID: windowID,
-                                                                         socketPath: gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath(),
-                                                                         programVersion: LinuxAppMetadata.version),
+                                   env: quickTerminalEnvironment(),
                                    controller: self, role: .quick, reportsPaneState: false)
             q.onExit = { [weak self] in self?.closeQuick() }
             // A floating card panel over the FULL window content: rounded + shadowed by .agterm-quick

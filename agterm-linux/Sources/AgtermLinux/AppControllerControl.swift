@@ -245,6 +245,16 @@ extension AppController {
         return focusedSurface(for: id)
     }
 
+    /// `session.text`'s default surface: the scratch when it covers, else the focused pane —
+    /// `Session.onScreenSurface`'s pane-vs-scratch rule, deliberately NOT `searchTargetSurface`. That one
+    /// follows a program overlay, and `session.text` addresses the pane UNDERNEATH a cover, which is what
+    /// leaves `session.overlay.text` the only way to read the covering surface.
+    func onScreenSurface(for id: UUID) -> GhosttySurface? {
+        guard let s = store.session(withID: id) else { return nil }
+        if s.scratchActive, !s.programOverlayActive, let scratch = scratchSurfaces[id] { return scratch }
+        return focusedSurface(for: id)
+    }
+
     var configurableSurfaces: [GhosttySurface] {
         Array(surfaces.values) + Array(splitSurfaces.values) + Array(scratchSurfaces.values)
             + Array(overlaySurfaces.values) + (quickSurface.map { [$0] } ?? [])

@@ -137,6 +137,7 @@ final class ControlServer: @unchecked Sendable {
              .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus,
              .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch,
              .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
+             .sessionOverlayCopy, .sessionOverlayText,
              .sessionHudOpen, .sessionHudUpdate, .sessionHudClose,
              .sessionBackground, .sessionResize, .sessionText, .notify,
              .fontInc, .fontDec, .fontReset:
@@ -146,7 +147,8 @@ final class ControlServer: @unchecked Sendable {
             return routeOwningWorkspace(req.target) ?? .controller(gController)
         case .sessionNew:
             return routeOwningWorkspace(req.args?.workspace) ?? .controller(gController)
-        case .tree, .eventsRead, .workspaceNew, .quick, .quickType, .quickText, .surfaceZoom, .dashboard,
+        case .tree, .eventsRead, .workspaceNew, .workspaceGo, .quick, .quickType, .quickText,
+             .surfaceZoom, .surfaceCursor, .dashboard,
              .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .workspaceFilter,
              .windowNew, .windowList, .windowSelect, .windowClose, .windowRename, .windowDelete,
              .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,

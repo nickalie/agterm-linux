@@ -233,11 +233,20 @@ extension AppController: ControlActions {
         switch resolveWorkspaceResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            if let first = store.workspaces.first(where: { $0.id == id })?.sessions.first {
-                selectSession(first.id, userInitiated: false)
-            }
+            // through the store, not a bare session select: an EMPTY target has nothing to select and only
+            // `selectWorkspace` makes it current anyway, which is what `tree`'s active workspace now reports.
+            let prev = store.selectedSessionID
+            guard store.selectWorkspace(id) != nil else { return err("no such workspace") }
+            applyWorkspaceStep(from: prev)
             return ok(id)
         }
+    }
+
+    func goWorkspace(window: String?, direction: WorkspaceNavigation) -> ControlResponse {
+        guard let id = navigateWorkspace(direction, userInitiated: false) else {
+            return err("no other workspace to navigate to")
+        }
+        return ok(id)
     }
 
     func renameWorkspace(_ target: String?, window: String?, name: String) -> ControlResponse {
@@ -501,8 +510,7 @@ extension AppController: ControlActions {
         let resolved: TerminalZoomTarget?
         if raw == "active" {
             if mode == .off, terminalZoom.target == nil { return ok() }
-            resolved = terminalZoom.target
-                ?? TerminalZoomController.resolveTarget(store: store, quickTerminalVisible: quickVisible)
+            resolved = terminalZoom.target ?? resolveZoomTarget()
         } else if raw == "quick" {
             resolved = .quick
         } else if let surfaceID = TerminalSurfaceID(rawValue: raw) {
@@ -512,8 +520,7 @@ extension AppController: ControlActions {
         }
         if mode == .off, resolved == nil { return ok() }
         guard let resolved else { return err("no active surface") }
-        if mode != .off,
-           !TerminalZoomController.isTargetValid(resolved, in: store, quickTerminalVisible: quickVisible) {
+        if mode != .off, !isZoomTargetValid(resolved) {
             return err("surface not available: \(resolved.controlID)")
         }
         setTerminalZoom(mode, target: resolved)
@@ -939,25 +946,6 @@ extension AppController: ControlActions {
             _ = store.setBackgroundWatermark(options.watermark, forSession: id)
             applySessionWatermark(id)
             return ok(id)
-        }
-    }
-
-    func readSessionText(_ target: String?, window: String?, options: ControlSessionTextOptions) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            let surface: GhosttySurface?
-            switch options.pane {
-            case nil: surface = searchTargetSurface(for: id)
-            case "left": surface = surfaces[id]
-            case "right": surface = splitSurfaces[id]
-            case "scratch": surface = scratchSurfaces[id]
-            default: surface = nil
-            }
-            guard let text = surface?.readScreenText(all: options.all, lines: options.lines) else {
-                return err("session not realized")
-            }
-            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, text: text))
         }
     }
 

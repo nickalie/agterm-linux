@@ -398,6 +398,9 @@ extension AppController {
         case .toggleFlag: toggleFlagActive()
         case .focusWorkspace: focusActiveWorkspace()   // toggle focus on the active session's workspace
         case .toggleWorkspaceFilter: toggleWorkspaceFilter()
+        case .previousWorkspace: navigateWorkspace(.previous)
+        case .nextWorkspace: navigateWorkspace(.next)
+        case .toggleWorkspaceCollapse: toggleCurrentWorkspaceCollapse()
         case .focusLeftPane: focusPane(left: true)
         case .focusRightPane: focusPane(left: false)
         case .previousSession: navigate(.previous)

@@ -23,6 +23,8 @@ extension AppController {
                                             activeSessionFlagged: activeSession?.flagged ?? false,
                                             hasMarkedWorkspaces: !store.focusedWorkspaceIDs.isEmpty,
                                             activeWorkspaceMarked: store.isCurrentWorkspaceFocusMember,
+                                            activeWorkspaceCollapsed: store.isCurrentWorkspaceCollapsed,
+                                            canStepWorkspaces: store.canStepWorkspaces,
                                             activeSessionHasSplit: activeSession?.hasSplit ?? false,
                                             activeSplitAxis: activeSession?.hasSplit == true
                                                 ? activeSession?.splitAxis : nil,
@@ -100,6 +102,9 @@ extension AppController {
         case .clearStatus: return { self.clearActiveStatus() }
         case .previousSession: return { self.navigate(.previous) }
         case .nextSession: return { self.navigate(.next) }
+        case .previousWorkspace: return { self.navigateWorkspace(.previous) }
+        case .nextWorkspace: return { self.navigateWorkspace(.next) }
+        case .toggleWorkspaceCollapse: return { self.toggleCurrentWorkspaceCollapse() }
         case .previousAttentionSession: return { self.navigate(.previousAttention) }
         case .nextAttentionSession: return { self.navigate(.nextAttention) }
         case .firstSession: return { self.navigate(.first) }

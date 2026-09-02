@@ -26,13 +26,15 @@ struct LinuxControlDispatcher {
                 .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus, .sessionRestore:
             return dispatchSessionCommand(request)
         case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
+                .surfaceCursor,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
+                .sessionOverlayCopy, .sessionOverlayText,
                 .sessionBackground, .sessionText:
             return dispatchSessionSurfaceCommand(request)
         case .sessionType, .quickType, .quickText:
             return nil
-        case .workspaceNew, .workspaceSelect, .workspaceRename, .workspaceDelete,
+        case .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand:
             return dispatchWorkspaceCommand(request)
         case .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .configReload, .notify,
@@ -313,6 +315,11 @@ struct LinuxControlDispatcher {
                                            collapsed: request.args?.collapsed ?? false)
         case .workspaceSelect:
             return actions.selectWorkspace(request.target, window: request.args?.window)
+        case .workspaceGo:
+            guard let dir = (request.args?.to).flatMap(WorkspaceNavigation.init(wire:)) else {
+                return ControlResponse(ok: false, error: "workspace.go requires --to next|prev")
+            }
+            return actions.goWorkspace(window: request.args?.window, direction: dir)
         case .workspaceRename:
             guard let name = request.args?.name?.linuxTrimmedOrNil else {
                 return ControlResponse(ok: false, error: "workspace.rename requires a name")
@@ -451,6 +458,17 @@ struct LinuxControlDispatcher {
             }
         case .sessionBackground:
             return dispatchSessionBackground(request)
+        case .surfaceCursor:
+            return actions.readSurfaceCursor(request.target, window: request.args?.window)
+        case .sessionOverlayCopy:
+            switch parseOverlayPane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return actions.copySessionOverlaySelection(request.target, window: request.args?.window,
+                                                           pane: pane)
+            }
+        case .sessionOverlayText:
+            return dispatchSessionOverlayText(request)
         case .sessionText:
             return dispatchSessionText(request)
         default:
@@ -562,19 +580,56 @@ struct LinuxControlDispatcher {
                                             options: ControlSessionBackgroundOptions(watermark: watermark))
     }
 
-    private func dispatchSessionText(_ request: ControlRequest) -> ControlResponse {
-        let all = request.args?.all ?? false
-        let lines = request.args?.lines
+    /// How much of a buffer a read covers, or the rejection its arm returns as-is. Shared by `session.text`
+    /// and `session.overlay.text` so the two cannot drift; an unchecked nonpositive `lines` would fall
+    /// through to the full buffer.
+    private enum BufferExtent {
+        case extent(all: Bool, lines: Int?)
+        case rejected(ControlResponse)
+    }
+
+    private func parseBufferExtent(_ args: ControlArgs?) -> BufferExtent {
+        let all = args?.all ?? false
+        let lines = args?.lines
         if all, lines != nil {
-            return ControlResponse(ok: false, error: "use either --all or --lines, not both")
+            return .rejected(ControlResponse(ok: false, error: "use either --all or --lines, not both"))
         }
         if let lines, lines <= 0 {
-            return ControlResponse(ok: false, error: "--lines must be greater than 0")
+            return .rejected(ControlResponse(ok: false, error: "--lines must be greater than 0"))
         }
-        return actions.readSessionText(request.target, window: request.args?.window,
-                                       options: ControlSessionTextOptions(pane: request.args?.pane,
-                                                                          all: all,
-                                                                          lines: lines))
+        return .extent(all: all, lines: lines)
+    }
+
+    private func dispatchSessionText(_ request: ControlRequest) -> ControlResponse {
+        switch parseBufferExtent(request.args) {
+        case .rejected(let response): return response
+        case .extent(let all, let lines):
+            return actions.readSessionText(request.target, window: request.args?.window,
+                                           options: ControlSessionTextOptions(pane: request.args?.pane,
+                                                                              all: all,
+                                                                              lines: lines))
+        }
+    }
+
+    /// The extent is checked before the pane, so the same flags produce the same first error here and on
+    /// `session.text`.
+    private func dispatchSessionOverlayText(_ request: ControlRequest) -> ControlResponse {
+        let all: Bool
+        let lines: Int?
+        switch parseBufferExtent(request.args) {
+        case .rejected(let response): return response
+        case .extent(let parsedAll, let parsedLines):
+            all = parsedAll
+            lines = parsedLines
+        }
+        switch parseOverlayPane(request.args?.pane) {
+        case .rejected(let response): return response
+        case .pane(let pane):
+            return actions.readSessionOverlayText(request.target, window: request.args?.window,
+                                                  options: ControlSessionOverlayTextOptions(pane: pane,
+                                                                                            all: all,
+                                                                                            lines: lines))
+        }
     }
 
     private func dispatchWindowCommand(_ request: ControlRequest) -> ControlResponse {

@@ -41,7 +41,9 @@ Code layout:
 
 ### Linux feature parity and platform differences
 
-The `linux-port` branch carries the upstream v0.23.0 terminal model and control protocol, including
+The `linux-port` branch carries the upstream v0.24.0 terminal model and control protocol, including
+keyboard workspace navigation and per-workspace collapse, surface cursor-column reads, overlay selection
+and buffer reads,
 horizontal (top/bottom) splits and split teardown, keymap bind alternatives, split/scratch/overlay
 terminals, Quick terminal input and read-back, terminal zoom, fullscreen,
 recently closed sessions with grouped undo, light/dark themes, configurable toolbar and sidebar text,
@@ -58,6 +60,12 @@ Its desktop, notification, and Flatpak application ID is `io.github.melonamin.ag
 Ctrl+Shift+M toggles the most-recently-used dashboard because Ctrl+Shift+D remains the split shortcut.
 Ctrl+Shift+H toggles the top/bottom split, the sibling macOS spells ⌘⇧D: Linux already spends Shift on
 every default, so the second arrangement takes H for horizontal rather than a second modifier.
+The quick terminal stays a per-window drop-down panel rather than the detached, app-wide floating panel
+upstream moved to in v0.24.0, and there is no `global-hotkey` verb to summon it: a system-wide hotkey needs
+the `org.freedesktop.portal.GlobalShortcuts` portal on Wayland and an always-on-top detached panel needs
+layer-shell, neither of which GTK4 exposes to the frontend.
+Because the Linux panel belongs to one window, its shell keeps `AGTERM_WINDOW_ID`, and a bare
+`agtermctl surface zoom` with the panel up still zooms it.
 The content header exposes the same dashboard toggle as a grid button, grouped beside Quick Terminal.
 Dashboard and terminal-zoom views use stripped native headers: `Dashboard` or the active session title is
 shown with a custom window name when one exists, beside the matching exit button.
