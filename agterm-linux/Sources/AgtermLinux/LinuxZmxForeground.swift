@@ -68,13 +68,20 @@ final class LinuxZmxForegroundResolver {
     }
 
     /// `/proc/<pid>/stat` field 8 is the pty's foreground process group — the Linux answer to macOS's
-    /// `kinfo_proc.kp_eproc.e_tpgid`. The scan starts after the LAST `)`: field 2 is the executable name
-    /// in parentheses and may contain both spaces and parentheses of its own.
+    /// `kinfo_proc.kp_eproc.e_tpgid`.
     nonisolated static func probe(_ leader: Int32) -> LeaderProbe {
-        guard let raw = try? String(contentsOfFile: "/proc/\(leader)/stat", encoding: .utf8),
-              let close = raw.lastIndex(of: ")") else { return .dead }
+        guard let raw = try? String(contentsOfFile: "/proc/\(leader)/stat", encoding: .utf8) else {
+            return .dead
+        }
+        return parse(stat: raw)
+    }
+
+    /// The scan starts after the LAST `)`: field 2 is the executable name in parentheses and may contain
+    /// both spaces and parentheses of its own, so splitting from the front misreads every such process.
+    nonisolated static func parse(stat raw: String) -> LeaderProbe {
+        guard let close = raw.lastIndex(of: ")") else { return .dead }
+        // after the name come state, ppid, pgrp, session, tty_nr, tpgid
         let fields = raw[raw.index(after: close)...].split(separator: " ")
-        // after the name, the fields are state, ppid, pgrp, session, tty_nr, tpgid
         guard fields.count >= 6, let foreground = Int32(fields[5]) else { return .dead }
         return foreground > 0 ? .foreground(foreground) : .noForeground
     }
