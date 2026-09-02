@@ -30,7 +30,7 @@ public enum AgentHooksInstall {
 
     /// The bundled Pi extension's path relative to the agent-status package, and its destination filename.
     public static let piExtensionRelativePath = "pi/agterm-status.ts"
-    static let piExtensionName = "agterm-status.ts"
+    public static let piExtensionName = "agterm-status.ts"
 
     /// Ownership sentinel in the bundled Pi extension: a reinstall refuses to overwrite an unmarked same-named
     /// extension, preserving a user-authored integration.
@@ -38,7 +38,7 @@ public enum AgentHooksInstall {
 
     /// The bundled OpenCode plugin's path relative to the agent-status package, and its destination filename.
     public static let opencodePluginRelativePath = "opencode/agterm-status.js"
-    static let opencodePluginName = "agterm-status.js"
+    public static let opencodePluginName = "agterm-status.js"
 
     /// Ownership sentinel in the bundled OpenCode plugin, same policy as `piExtensionMarker`. Named `*Plugin*`
     /// (not `*Extension*`) because OpenCode's host term is plugin — a deliberate divergence from `piExtension*`.
@@ -54,8 +54,8 @@ public enum AgentHooksInstall {
 
     /// Marker lines bracketing the agterm-managed block in a shell rc file; the opening marker is also the
     /// idempotency probe (present → already installed).
-    static let rcMarkerBegin = "# >>> agterm agent-status >>>"
-    static let rcMarkerEnd = "# <<< agterm agent-status <<<"
+    public static let rcMarkerBegin = "# >>> agterm agent-status >>>"
+    public static let rcMarkerEnd = "# <<< agterm agent-status <<<"
 
     /// One installed Claude Code hook: which event fires it, which installed script it runs, and the
     /// arguments that script takes. `script` is also the idempotency probe, so two hooks may share an event.
@@ -99,7 +99,7 @@ public enum AgentHooksInstall {
     ]
 
     /// The destination directory for Pi's auto-discovered global extensions.
-    static func piExtensionDirectory(home: String) -> String {
+    public static func piExtensionDirectory(home: String) -> String {
         home + "/.pi/agent/extensions"
     }
 
@@ -116,7 +116,7 @@ public enum AgentHooksInstall {
     }
 
     /// The destination directory for OpenCode's auto-discovered global plugins.
-    static func opencodePluginDirectory(home: String) -> String {
+    public static func opencodePluginDirectory(home: String) -> String {
         home + "/.config/opencode/plugins"
     }
 
@@ -364,11 +364,11 @@ public enum AgentHooksInstall {
 
     /// the absolute wrapper-script path the installed hooks invoke (`<scriptDir>/agterm-agent-status.sh`); the
     /// caller's hook entry appends the state.
-    static func wrapperPath(scriptDir: String) -> String {
+    public static func wrapperPath(scriptDir: String) -> String {
         scriptDir + "/" + wrapperName
     }
 
-    static func codexWrapperPath(scriptDir: String) -> String {
+    public static func codexWrapperPath(scriptDir: String) -> String {
         scriptDir + "/" + codexWrapperName
     }
 
@@ -381,7 +381,7 @@ public enum AgentHooksInstall {
     /// merge declines, and nothing checks the two against each other.
     /// The wrapper's absolute path is baked into each command — shell-quoted (so a path with spaces stays one
     /// token) inside a TOML basic string — so the hook fires without the CLI on PATH.
-    static func codexHooksBlock(scriptDir: String) -> String {
+    public static func codexHooksBlock(scriptDir: String) -> String {
         let wrapper = shellQuote(codexWrapperPath(scriptDir: scriptDir))
         return codexHooks.map { hook in
             """

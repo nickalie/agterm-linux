@@ -264,15 +264,20 @@ extension AppController {
         reconcile()
     }
 
-    /// Capture each pane's live foreground command into the session model so a restart can re-run it.
-    func captureForegroundCommands() {
+    /// Capture each pane's live foreground command into the session model so a restart can re-run it,
+    /// returning how many panes ended up holding one. `restore.capture` reports that count; the exit path
+    /// ignores it.
+    @discardableResult
+    func captureForegroundCommands() -> Int {
         let denylistPath = ConfigPaths.restoreDenylistPath(configDirectory: configDirectory())
         let denylist = (try? String(contentsOf: denylistPath, encoding: .utf8)).map(CommandRestore.parseDenylist)
             ?? ["tmux", "screen", "zellij"]
+        var captured = 0
         for ws in store.workspaces {
             for s in ws.sessions {
                 if let argv = surfaces[s.id]?.foregroundCommand(), CommandRestore.shouldRestore(argv: argv, denylist: denylist) {
                     s.foregroundCommand = argv
+                    captured += 1
                 } else {
                     s.foregroundCommand = nil
                 }
@@ -280,8 +285,10 @@ extension AppController {
                 s.splitForegroundCommand = splitArgv.flatMap {
                     CommandRestore.shouldRestore(argv: $0, denylist: denylist) ? $0 : nil
                 }
+                if s.splitForegroundCommand != nil { captured += 1 }
             }
         }
+        return captured
     }
 
     private var restoreEnabled: Bool { linuxSettingsStore().load().restoreRunningCommand ?? false }

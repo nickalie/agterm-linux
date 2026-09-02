@@ -11,6 +11,49 @@ extension AppController {
         scratchSurfaces[id]?.applyWatermarkFromSession()
     }
 
+    func appIdentity() -> ControlResponse {
+        ControlResponse(ok: true, result: ControlResult(app: LinuxAppMetadata.identity))
+    }
+
+    /// `restore.capture`: fill every open pane's capture slot now, the read the app-exit close already
+    /// does. Rerun only, like upstream: a fresh-shell launch ignores the slot, and live mode keeps the
+    /// process instead of replaying it.
+    func captureRestoreCommands() -> ControlResponse {
+        let configured = linuxSettingsStore().load().effectiveRestoreMode
+        guard configured == .rerun else {
+            return ControlResponse(ok: false, error: "restore.capture requires rerun mode; configured restore mode is "
+                + configured.rawValue)
+        }
+        let captured = gWindows.values.reduce(0) { $0 + $1.captureForegroundCommands() }
+        // the command's whole claim is that the argv reached disk, so the ack waits on the write
+        guard library.saveAllOpenChecked() else {
+            return ControlResponse(ok: false, error: "captured \(captured) pane\(captured == 1 ? "" : "s") "
+                + "but at least one window's save failed; failed windows keep their argv in memory until they "
+                + "save successfully")
+        }
+        var result = ControlResult(count: captured)
+        result.text = "captured \(captured) pane\(captured == 1 ? "" : "s")"
+        return ControlResponse(ok: true, result: result)
+    }
+
+    func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse {
+        switch resolveSessionResponse(target) {
+        case .failure(let response): return response
+        case .success(let id):
+            guard let refusal = swapPanes(id) else {
+                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+            }
+            let error: String
+            switch refusal {
+            case .noSession: error = "session closed during swap"
+            case .noSplit: error = "session has no split pane"
+            case .slotNotRealized: error = "session not realized"
+            case .roleNotMutable: error = "session panes do not support swapping"
+            }
+            return ControlResponse(ok: false, error: error)
+        }
+    }
+
     func readEvents(_ options: ControlEventReadOptions) -> ControlResponse {
         library.readEvents(options)
     }

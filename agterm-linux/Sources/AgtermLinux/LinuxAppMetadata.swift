@@ -1,4 +1,5 @@
 import Foundation
+import agtermCore
 
 enum LinuxAppMetadata {
     /// Linux application identity used by GApplication, desktop integration, notifications, and packaging.
@@ -24,4 +25,22 @@ enum LinuxAppMetadata {
         }
         return "dev"
     }()
+
+    /// The build's commit, staged beside VERSION by `scripts/stage-linux.sh`. Diagnostics only, so an
+    /// unstaged source build simply reports none.
+    static let commit: String? = {
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["AGTERM_COMMIT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
+            return value
+        }
+        let executable = URL(fileURLWithPath: CommandLine.arguments.first ?? "")
+        let installed = executable.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("share/agterm/COMMIT")
+        return try? String(contentsOf: installed, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }()
+
+    /// Which agterm serves the control socket, projected into both `tree` and `version` so the two agree.
+    static let identity = AppIdentity(version: version, recordedCommit: commit)
 }

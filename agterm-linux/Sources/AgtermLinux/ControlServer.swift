@@ -139,7 +139,7 @@ final class ControlServer: @unchecked Sendable {
              .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
              .sessionOverlayCopy, .sessionOverlayText,
              .sessionHudOpen, .sessionHudUpdate, .sessionHudClose,
-             .sessionBackground, .sessionResize, .sessionText, .notify,
+             .sessionBackground, .sessionResize, .sessionText, .sessionContext, .sessionSwap, .notify,
              .fontInc, .fontDec, .fontReset:
             return routeOwningSession(req.target) ?? .controller(gController)
         case .workspaceRename, .workspaceDelete, .workspaceSelect, .workspaceMove, .workspaceFocus,
@@ -149,11 +149,12 @@ final class ControlServer: @unchecked Sendable {
             return routeOwningWorkspace(req.args?.workspace) ?? .controller(gController)
         case .tree, .eventsRead, .workspaceNew, .workspaceGo, .quick, .quickType, .quickText,
              .surfaceZoom, .surfaceCursor, .dashboard,
-             .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .workspaceFilter,
+             .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sidebarWidth, .workspaceFilter,
              .windowNew, .windowList, .windowSelect, .windowClose, .windowRename, .windowDelete,
              .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
              .keymapReload, .keymapList, .configReload, .themeSet, .themeList,
-             .pickOpen, .pickResult, .pickCancel, .restoreClear, .debugAppearance:
+             .pickOpen, .pickResult, .pickCancel, .restoreClear, .restoreCapture, .restoreMode,
+             .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach, .version, .debugAppearance:
             return .controller(gController)
         }
     }

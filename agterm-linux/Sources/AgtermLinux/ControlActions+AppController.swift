@@ -94,7 +94,8 @@ extension AppController: ControlActions {
                 case .fixed: return "fixed"
                 case .auto: return "auto"
                 }
-            }
+            },
+            app: LinuxAppMetadata.identity
         )
         let tree = projectingLinuxAutoFollow(baseTree)
         return ControlResponse(ok: true, result: ControlResult(tree: tree))

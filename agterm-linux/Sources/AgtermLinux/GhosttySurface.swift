@@ -7,7 +7,7 @@ import agtermCore
 import Foundation
 
 @MainActor
-final class GhosttySurface: TerminalSurface {
+final class GhosttySurface: PaneRoleMutableSurface {
     /// The GtkGLArea widget (stored as OpaquePointer; cast at GTK call sites).
     let glArea: OpaquePointer
     private(set) var surface: ghostty_surface_t?
@@ -732,6 +732,12 @@ final class GhosttySurface: TerminalSurface {
 
     func promoteToPrimaryPane() {
         role = .main
+    }
+
+    /// `AppStore.swapPanes` exchanges the two panes in place: the terminal, its stable token and its GL
+    /// context stay put, only notification and status routing follow the new role.
+    func setPaneRole(_ role: SwappablePaneRole) {
+        self.role = role == .primary ? .main : .split
     }
 
     func terminalNotificationOrigin() -> LinuxTerminalNotificationOrigin? {
