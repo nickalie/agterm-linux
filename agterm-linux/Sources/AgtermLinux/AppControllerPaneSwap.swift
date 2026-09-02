@@ -26,12 +26,17 @@ extension AppController {
         let overlays = paneOverlaySurfaces[id] ?? [:]
         paneOverlaySurfaces[id] = [.left: overlays[.right], .right: overlays[.left]].compactMapValues { $0 }
 
-        // detach both before reattaching: a widget still parented to the slot it is moving out of cannot
-        // be set as the other slot's child
+        // Detach both before reattaching — a widget still parented to the slot it is moving out of cannot
+        // be set as the other slot's child — and hold a reference across the gap. Unparenting drops the
+        // paned's own reference, which is the host's last one, so without the ref the widget is finalized
+        // between the two calls and the reattach lands on freed memory.
+        let moved = [paneHosts[id]?[.left], paneHosts[id]?[.right]].compactMap { $0 }
+        moved.forEach { _ = g_object_ref(RAW($0)) }
         gtk_paned_set_start_child(paned, nil)
         gtk_paned_set_end_child(paned, nil)
         if let primaryHost = paneHosts[id]?[.left] { gtk_paned_set_start_child(paned, W(primaryHost)) }
         if let splitHost = paneHosts[id]?[.right] { gtk_paned_set_end_child(paned, W(splitHost)) }
+        moved.forEach { g_object_unref(RAW($0)) }
 
         surfaces[id]?.onExit = { [weak self] in self?.closePrimaryPane(id) }
         splitSurfaces[id]?.onExit = { [weak self] in self?.closeSplitPane(id) }

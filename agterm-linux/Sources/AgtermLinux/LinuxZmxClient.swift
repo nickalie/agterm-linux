@@ -55,6 +55,10 @@ final class LinuxZmxClient {
         self.runner = runner
     }
 
+    /// Whether the bundled binary is there at all. A source build without it has no daemons to reason
+    /// about, and every command answers `zmx is unavailable in this instance` rather than an error per call.
+    var isAvailable: Bool { FileManager.default.isExecutableFile(atPath: executablePath) }
+
     /// What a caller on another machine needs to reach these daemons.
     var endpoint: ControlZmxEndpoint {
         ControlZmxEndpoint(executable: executablePath, socketDirectory: socketDirectory)
@@ -62,6 +66,8 @@ final class LinuxZmxClient {
 
     @discardableResult
     func reap(knownPaneIdentities: Set<UUID>?, launchDecision: RestoreLaunchDecision) -> ReapOutcome {
+        // nothing to reap without the binary, and nothing to say about it every launch
+        guard isAvailable else { return ReapOutcome(runningNames: nil, killedAll: true) }
         if launchDecision.requested == .live, knownPaneIdentities == nil {
             log("skipping the live reap: the persisted pane inventory is incomplete")
             return ReapOutcome(runningNames: nil, killedAll: true)
@@ -79,12 +85,14 @@ final class LinuxZmxClient {
 
     @discardableResult
     func kill(paneIdentities: [UUID]) -> Bool {
-        kill(names: paneIdentities.map(ZmxSupport.daemonName(for:)))
+        guard isAvailable else { return true }
+        return kill(names: paneIdentities.map(ZmxSupport.daemonName(for:)))
     }
 
     /// The parsed listing. Nil when it could not be read or parsed, which is NOT the same answer as an
     /// empty namespace: a failure must not read as "nothing to see" and let a caller act on that silence.
     func listSessions() -> [ZmxSessionRecord]? {
+        guard isAvailable else { return nil }
         do {
             return try ZmxListParser.parse(invoke(["list"]))
         } catch {
@@ -94,6 +102,7 @@ final class LinuxZmxClient {
     }
 
     func sessionLeaderPIDs(timeout override: TimeInterval? = nil) -> [String: Int32]? {
+        guard isAvailable else { return nil }
         do {
             return ZmxLeaderMap.leaders(in: try ZmxListParser.parse(invoke(["list"], timeout: override)))
         } catch {

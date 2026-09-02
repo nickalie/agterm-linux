@@ -18,6 +18,8 @@ export LD_LIBRARY_PATH="$COMPAT${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # Point the dev build at the vendored ghostty resources (shell-integration + sibling terminfo) so
 # GHOSTTY_RESOURCES_DIR resolves to them (else the resolver falls back to a system/installed dir).
 export AGTERM_GHOSTTY_RESOURCES="$(pwd)/agterm-linux/vendor/ghostty/share/ghostty"
+# the packaged launcher exports this from libexec; a source build points at the vendored copy
+export AGTERM_ZMX="$(pwd)/agterm-linux/vendor/zmx/zmx"
 
 cd agterm-linux
 swift build "$@"

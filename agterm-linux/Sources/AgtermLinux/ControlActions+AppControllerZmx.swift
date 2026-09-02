@@ -121,6 +121,9 @@ extension AppController {
     }
 
     private func inventory() -> ResolveResponse<ZmxInventoryResult> {
+        guard gZmx.client.isAvailable else {
+            return .failure(ControlResponse(ok: false, error: ControlZmxError.unavailable))
+        }
         guard let observed = gZmx.client.listSessions() else {
             return .failure(ControlResponse(ok: false, error: "could not read the zmx session list"))
         }

@@ -133,6 +133,9 @@ extension AppController {
     /// and does not distinguish "not running live" from "live with nothing eligible"; `zmx list` is the
     /// restore-mode diagnostic.
     func localAttachableSessions() -> ControlResponse {
+        guard gZmx.client.isAvailable else {
+            return ControlResponse(ok: false, error: ControlZmxError.unavailable)
+        }
         guard let observed = gZmx.client.listSessions() else {
             return ControlResponse(ok: false, error: "could not read the zmx session list")
         }
