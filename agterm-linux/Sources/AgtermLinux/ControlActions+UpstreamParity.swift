@@ -132,8 +132,9 @@ extension AppController {
             )
         }
         var result = ControlResult(id: id.uuidString)
-        if case .pin = update.pin, linuxSettingsStore().load().restoreRunningCommand != true {
-            result.text = "saved, but \"Restore running commands on restart\" is off, so the override will not run"
+        let configured = linuxSettingsStore().load().effectiveRestoreMode
+        if case .pin = update.pin, configured != .rerun {
+            result.text = "saved, but Restore sessions is \(configured.displayName), so the override will not run"
         }
         return ControlResponse(ok: true, result: result)
     }
