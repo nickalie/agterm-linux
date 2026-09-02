@@ -39,10 +39,13 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [claude-clear](claude-clear/) | one chord sends /clear to the pane's Claude Code run, and nothing when it is not running | 0.13.0, python3, Claude Code |
 | [claude-conversation-picker](claude-conversation-picker/) | pick a past Claude Code conversation by what it was about and resume it in the pane | 0.21.0, python3, Claude Code |
 | [claude-recap](claude-recap/) | one key lists what the Claude Code run in a session was working on | 0.10.0, zsh, jq, Claude Code |
+| [close-tab-when-done](close-tab-when-done/) | arm a tab with a chord and it closes itself when the agent stops replying | 0.22.0, jq, Claude Code |
 | [container-agent-status](container-agent-status/) | a containerized agent reports status onto its sidebar row via a TCP notification to the host | 0.7.1, nc, timeout, Claude Code |
+| [copilot-agent-status](copilot-agent-status/) | Copilot CLI sessions report active, blocked, and completed onto their sidebar row | 0.7.1, Copilot CLI |
 | [kimi-agent-status](kimi-agent-status/) | Kimi Code sessions report agent status onto their sidebar row | 0.3.1, Kimi Code |
 | [kiro-agent-status](kiro-agent-status/) | Kiro CLI sessions report active, blocked, and completed onto their sidebar row | 0.7.1, Kiro CLI |
 | [status-announcer](status-announcer/) | demo: speak agent status changes from a dedicated session | 0.16.0, jq |
+| [two-agent-chat](two-agent-chat/) | let Claude Code and Codex talk to each other in one split | 0.24.0, python3, Claude Code, Codex |
 
 ### Panes, pickers and input
 
@@ -52,6 +55,7 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [fzf-path-picker](fzf-path-picker/) | pick a path with fzf and type it into the shell | 0.8.0, fzf, fd, zsh |
 | [native-dir-picker](native-dir-picker/) | pick a directory in the native picker and type it into the shell | 0.19.0, fd, jq |
 | [overlay-and-split](overlay-and-split/) | keymap lines: a stateful split toggle and TUI overlays | 0.10.0, jq |
+| [remote-session-picker](remote-session-picker/) | pick a session running on another Mac and attach it here | 0.26.0, jq |
 | [same-dir](same-dir/) | sync working directory to target split pane | 0.10.0, jq, zsh |
 | [sqlite-browser](sqlite-browser/) | pick one of the repo's SQLite databases and browse it in an overlay | 0.22.0, python3, tabiew |
 

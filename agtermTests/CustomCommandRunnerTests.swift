@@ -272,7 +272,8 @@ final class CustomCommandRunnerTests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            if let written = try? String(contentsOf: probe, encoding: .utf8) { return written }
+            // sh truncates the redirect target before printf writes; poll past that zero-byte window.
+            if let written = try? String(contentsOf: probe, encoding: .utf8), !written.isEmpty { return written }
         }
         return nil
     }
@@ -355,5 +356,26 @@ final class CustomCommandRunnerTests: XCTestCase {
         let written = try fired(fix.runner, from: stray, writing: "\"$AGT_PANE $AGT_SESSION_ID\"")
 
         XCTAssertEqual(written, "left \(session.id.uuidString)")
+    }
+
+    func testAChordFiredInSplitPaneResolvesSplitPaneWorkingDirectory() throws {
+        let fix = try fixture()
+        let leftDir = stateDir.appendingPathComponent("left-cwd")
+        let rightDir = stateDir.appendingPathComponent("right-cwd")
+        try FileManager.default.createDirectory(at: leftDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: rightDir, withIntermediateDirectories: true)
+
+        let owner = try XCTUnwrap(fix.store.currentWorkspaceID)
+        let session = try XCTUnwrap(fix.store.addSession(toWorkspace: owner, cwd: leftDir.path))
+        let split = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        split.session = session
+        session.splitSurface = split
+        session.splitCwd = rightDir.path
+        session.hasSplit = true
+        session.isSplit = true
+        session.splitFocused = true
+
+        let written = try fired(fix.runner, from: split, writing: "\"$AGT_SESSION_PWD\"")
+        XCTAssertEqual(written, rightDir.path)
     }
 }

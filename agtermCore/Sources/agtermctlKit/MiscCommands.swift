@@ -57,8 +57,71 @@ struct Config: ParsableCommand {
 struct Restore: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Restore-running-command commands.",
-        subcommands: [Clear.self]
+        subcommands: [Capture.self, Clear.self, Mode.self]
     )
+
+    struct Capture: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Capture every pane's running command now, so a forced exit restores it.",
+            discussion: """
+            agterm captures the running commands when it quits, so an exit that never gets there leaves \
+            every pane restoring a plain shell: a force quit, a crash, a hard reset, a power loss. This \
+            runs the same capture on demand, app-global across every open window, and prints how many \
+            panes had a command to capture. Consumption is unchanged: the next launch arms each captured \
+            command once and clears it.
+
+            A capture is only as fresh as its last run, so a pager or a build that has finished since still \
+            re-runs after a crash. "restore clear" drops every captured command, and restore-denylist.conf \
+            in the config directory keeps a named program from re-running at all.
+
+            Typed at a prompt it records ITSELF: while it runs it is that pane's foreground process, so that \
+            pane comes back running the capture command. Bind it or run it from a scheduled job rather than \
+            by hand; "restore clear" is app-global, so it is no per-pane undo.
+
+            This command is available only when this launch is in rerun mode. In fresh-shell or live mode \
+            it fails and names the active mode.
+            """)
+        // app-global, like `restore clear`: every open window, so no `--window` selector.
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .restoreCapture) }
+    }
+
+    struct Mode: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Read or set what a restart does with your sessions.",
+            discussion: """
+            With no argument this reports the policy: what settings hold for the next launch, what THIS \
+            launch asked for, and what it actually got. The two requested values differ once the mode has \
+            been changed since this instance started, which is exactly when a caller is confused about why \
+            nothing happened.
+
+            Setting one writes it for the NEXT launch. This process keeps the mode it started with, and \
+            that is not a shortcut: a pane is wrapped in a zmx daemon or not at the moment it is created, \
+            so no setting can retrofit a shell that is already running.
+
+            fresh shells (none) re-spawns each pane in its saved directory. re-run (rerun) starts the \
+            command each pane had at the last clean quit. live keeps the actual processes alive.
+
+            Switching away from live and restarting ends every detached live process in this state \
+            directory. If live was requested but could not be used, the reason is reported here.
+            """)
+        @Argument(help: "none|rerun|live. Omit to read the current policy.")
+        var mode: String?
+
+        @OptionGroup var options: BasicOptions
+
+        func validate() throws {
+            guard let mode else { return }
+            guard RestoreMode(rawValue: mode) != nil else {
+                throw ValidationError("mode must be none, rerun, or live")
+            }
+        }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .restoreMode, args: mode.map { ControlArgs(mode: $0) })
+        }
+    }
 
     struct Clear: RequestCommand {
         static let configuration = CommandConfiguration(
@@ -150,16 +213,16 @@ struct Quick: ParsableCommand {
         @OptionGroup var options: BasicOptions
 
         func makeRequest() throws -> ControlRequest {
-            let payload: String
             if stdin {
-                // non-UTF8 stdin decodes to nil and injects nothing — terminal input is UTF-8 text.
-                let data = FileHandle.standardInput.readDataToEndOfFile()
-                payload = String(data: data, encoding: .utf8) ?? ""
-            } else if let text {
-                payload = text
-            } else {
-                throw ValidationError("provide TEXT or --stdin")
+                return try makeRequest(input: FileHandle.standardInput.readDataToEndOfFile())
             }
+            guard let text else { throw ValidationError("provide TEXT or --stdin") }
+            return makeRequest(payload: text)
+        }
+
+        func makeRequest(input: Data) throws -> ControlRequest { makeRequest(payload: try decodeTypedStdin(input)) }
+
+        private func makeRequest(payload: String) -> ControlRequest {
             return ControlRequest(cmd: .quickType, args: ControlArgs(text: payload))
         }
     }
@@ -511,7 +574,7 @@ struct Pick: ParsableCommand {
 struct Sidebar: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Sidebar visibility and view mode.",
-        subcommands: [Visibility.self, Mode.self, Expand.self, Collapse.self],
+        subcommands: [Visibility.self, Mode.self, Expand.self, Collapse.self, Width.self],
         defaultSubcommand: Visibility.self
     )
 
@@ -559,6 +622,23 @@ struct Sidebar: ParsableCommand {
         @OptionGroup var options: ClientOptions
 
         func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .sidebarCollapse, args: options.withWindow()) }
+    }
+
+    /// `agtermctl sidebar width <points> [--window W]` — move the divider a drag would move. Prints the
+    /// APPLIED width, so a value outside the bounds reads back as the clamped one rather than as what was
+    /// asked for. Range validation stays server-side, against the same bounds the drag clamps to.
+    struct Width: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Set the sidebar width in points.")
+        @Argument(help: "Sidebar width in points, clamped to the drag range.") var points: Double
+        @OptionGroup var options: ClientOptions
+
+        func validate() throws {
+            guard points.isFinite else { throw ValidationError("points must be a number") }
+        }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .sidebarWidth, args: options.withWindow(ControlArgs(sidebarWidth: points)))
+        }
     }
 }
 
@@ -625,5 +705,37 @@ struct Font: ParsableCommand {
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .fontReset, target: target.target, args: options.withWindow(pane.map { ControlArgs(pane: $0) }))
         }
+    }
+}
+
+// MARK: - version
+
+/// Which agterm is serving the socket this client reached. The app answers from its own bundle, so a
+/// stale `agtermctl` earlier on `PATH` than the bundled helper cannot misreport it. The resolved client
+/// path prints beside it as a diagnostic for exactly that case, and stays OUT of `--json`, which keeps its
+/// promise of being the raw server response: a JSON consumer ran the binary and can resolve its own path.
+struct Version: RequestCommand {
+    static let configuration = CommandConfiguration(abstract: "Print the version of the app serving the socket.")
+    @OptionGroup var options: BasicOptions
+
+    func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .version) }
+
+    func run() throws {
+        try defaultRun()
+        if !options.json, let path = Version.clientPath() {
+            print("client: \(path)")
+        }
+    }
+
+    /// The running executable's real path. `_NSGetExecutablePath` rather than `argv[0]`, which is whatever
+    /// the caller chose to exec with, and `realpath` because the installed CLI is a symlink into the bundle.
+    static func clientPath() -> String? {
+        var size = UInt32(0)
+        _ = _NSGetExecutablePath(nil, &size)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        guard _NSGetExecutablePath(&buffer, &size) == 0 else { return nil }
+        guard let resolved = realpath(buffer, nil) else { return String(cString: buffer) }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 }

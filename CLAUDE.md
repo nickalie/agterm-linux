@@ -53,7 +53,7 @@ C-boundary concurrency before changing the bridge.
 - Xcodegen creates the app project; Xcode 26 builds it. Call `xcodegen`, `xcodebuild`, and `swift`
   directly through repository scripts; `mise` is unused.
 - Swift 6 `agtermCore` uses complete concurrency checking and has no Xcode/libghostty dependency.
-- `scripts/setup.sh` builds pinned libghostty with Homebrew zig 0.15.2 and Xcode's Metal Toolchain.
+- `scripts/setup.sh` builds pinned libghostty and zmx with Homebrew `zig@0.16` and Xcode's Metal Toolchain.
   It is idempotent after artifacts exist.
 - Commands:
   - `scripts/run.sh`: setup, generate, Debug build, launch.
@@ -76,10 +76,15 @@ C-boundary concurrency before changing the bridge.
 
 - Fetch `origin master` before creating a native Claude worktree so it forks the current remote tip.
   Do not manually `git worktree add`.
-- Fresh worktrees lack ignored `GhosttyKit.xcframework`, `agterm/Resources/{ghostty,terminfo}` and
-  `.ghostty-build-stamp`. Symlink all four from the main checkout instead of rebuilding; use absolute
-  targets for resources. The stamp is what makes the other three count as current — without it `setup.sh`
-  rebuilds libghostty in every new worktree. They remain untracked and disappear with worktree removal.
+- Fresh worktrees lack ignored `GhosttyKit.xcframework`, `agterm/Resources/{ghostty,terminfo,zmx}`,
+  `.ghostty-build-stamp`, and `.zmx-build-stamp`. Symlink all six from the main checkout instead of rebuilding;
+  use absolute targets for resources. Each stamp makes its staged artifacts count as current. They remain
+  untracked and disappear with worktree removal.
+- Symlink an artifact set only while the main checkout's matching stamp equals that set's revision in the
+  worktree's `setup.sh`. When `GHOSTTY_REV` or `ZMX_REV` differs, remove that set's artifact and stamp
+  links before setup runs and let it build locally. `setup.sh` writes stamps through symlinks while
+  replacing linked artifacts with local files and directories, so a linked build leaves the main checkout
+  claiming a revision its artifacts were never built from.
 - After merge, verify the PR merge commit on fetched `origin/master`, then remove the worktree without
   changing the main checkout's branch. Squash/rebase makes removal report unmerged commits; after
   verification, discard the worktree safely. Native removal may leave a renamed branch, which must be
@@ -134,11 +139,12 @@ C-boundary concurrency before changing the bridge.
 
 - `scripts/setup.sh` builds upstream `ghostty-org/ghostty` at `GHOSTTY_REV` using
   `zig build -Demit-xcframework=true -Dxcframework-target=native`. No fork or disposable daily build is used.
-- `GHOSTTY_REV` is `0ba6250` (2026-08-16), a plain reproducibility pin with no workaround attached.
+- `GHOSTTY_REV` is `683d8db` (2026-08-25), a plain reproducibility pin carrying upstream's hidden-surface
+  GPU release.
   It sat at `4dcb09ada` (2026-04-30) from June while later builds blanked scrollback on a font-size
   increase; upstream fixed that and the case was re-verified by hand before the bump. Re-test the
   font-increase case when moving it, and check `minimum_zig_version` in `build.zig.zon` against
-  `ZIG_FORMULA` — the 0.15 to 0.16 jump came with this bump.
+  `ZIG_FORMULA`. The 0.15 to 0.16 jump came with the `0ba6250` bump, not this one.
 - `.ghostty-build-stamp` records the rev the staged artifacts came from and is what decides a rebuild.
   Presence alone would serve an xcframework built from a different rev silently, so a `GHOSTTY_REV`
   change costs everyone exactly one libghostty rebuild and nobody keeps a stale core by accident.
@@ -154,6 +160,10 @@ C-boundary concurrency before changing the bridge.
   `agtermCore`; keep the app target a side-effect adapter, continuing the #78 hoist series. Control uses `ControlDispatcher` plus
   `ControlActions`, with unmigrated commands returning nil to the app switch. Installers, status sound,
   and watermark follow the same split.
+- `agtermCore` is a `.library` product consumed by the `agterm-linux` fork, so a `public` symbol may have
+  a caller outside this repo and narrowing it can break that build.
+  GitHub code search excludes forks by default; use `fork:true` or inspect a clone before concluding no
+  downstream caller exists. The app target has no downstream consumer.
 - `GhosttyCallbacks` is `@unchecked Sendable`, not `@MainActor`. C closures capture nothing and reach
   `GhosttyApp.shared`. Copy `char*` before hopping; every main-actor touch uses
   `DispatchQueue.main.async`.
@@ -170,6 +180,15 @@ C-boundary concurrency before changing the bridge.
   teardown, and no SIGHUP reaches the process because the pty's session leader is the surviving `login`, so
   it outlives the app in whatever loop it was in. `hud.sh` takes the app's pid through its input file and
   exits on a builtin `kill -0`.
+- Live-session reap follows the requested restore mode. A requested-live launch preserves claimed daemons
+  when eligibility falls back to fresh shells; a deliberate Fresh shells or Re-run commands launch reaps
+  every detached app daemon in the state directory. Semantic deletion kills the named daemon, while app and
+  reopenable-window close only end attach clients. Keep reap, semantic kill, and leader refresh synchronous:
+  launch ordering, termination finalization, and same-call tree foreground depend on their completion.
+- Live fallback capture and replay are paired across two boundaries. Clean-exit capture reads zmx-backed panes
+  from one fresh resolver snapshot under the exit deadline. A restored factory consumes the pending argv only
+  after `.wrapped` is established, then passes it to zmx as a create-only attach payload. A surviving daemon
+  ignores it; a missing daemon runs it. Never add an app-side daemon preflight or consume on fallback.
 
 ## Cross-surface contracts
 
@@ -178,15 +197,19 @@ C-boundary concurrency before changing the bridge.
 - A state-setting command must expose its result on `ControlSessionNode`, window node, or tree top level.
   Examples include background, unseen, status and overrides, flag, split focus/ratio, overlay size,
   sidebar state/mode, workspace focus, quick visibility, geometry, fullscreen, zoom, and minimize.
+  A deliberate exemption is recorded where the command's own contract lives, never left implicit; the
+  captured restore slots are the one today, in `control-api.md`'s Restore section.
 - Event arguments must appear in `EventFormatter.human`, not only JSON payloads.
 - Control API, keymap, and model changes also update bundled
   `plugins/agterm/skills/agterm/`, the sole source for installed Claude/Codex copies.
 - `site/docs.html` is the canonical user guide and `site/commands.html` the canonical command reference.
   `README.md` is the product synopsis: pitch, install, the model, and the control-API demo.
   `site/llms.txt` is the crawler-oriented summary and discovery index.
-  These four facts stay synchronized across every surface that states them: the command count, the install
-  commands, the minimum macOS version, and the positioning claim
+  These three facts stay synchronized across every surface that states them: the install commands, the
+  minimum macOS version, and the positioning claim
   (`a simply good terminal with a full control API`).
+  The command count is NOT one of them and must not become one: no surface states a total, which is what
+  keeps a new command off every page that merely mentions the catalog. `control-api.md` owns that rule.
   The positioning claim must stay consistent in substance, not byte-identical: `site/index.html`'s title and
   social tags insert `macOS` for search intent, and `site/llms.txt` carries a libghostty-based variant.
 - `site/index.html` reflects major features and current `softwareVersion`; `site/commands.html` mirrors

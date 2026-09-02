@@ -771,6 +771,15 @@ struct SocketClientTests {
         #expect(SocketClient.formatResponse(response, json: false) == "ok")
     }
 
+    /// `restore.capture` carries both `count` and its own `text`; the text must win, or the shared `count`
+    /// branch below would render a pane count as "3 diagnostic(s)".
+    @Test func formatResponsePrefersTextOverCount() {
+        var result = ControlResult(count: 3)
+        result.text = "captured 3 panes"
+        let response = ControlResponse(ok: true, result: result)
+        #expect(SocketClient.formatResponse(response, json: false) == "captured 3 panes")
+    }
+
     @Test func formatResponseNonZeroCountPluralizes() {
         let response = ControlResponse(ok: true, result: ControlResult(count: 3))
         #expect(SocketClient.formatResponse(response, json: false) == "3 diagnostic(s)")
@@ -789,6 +798,15 @@ struct SocketClientTests {
     @Test func formatResponseRatio() {
         let response = ControlResponse(ok: true, result: ControlResult(id: "9f3c", ratio: 0.85))
         #expect(SocketClient.formatResponse(response, json: false) == "0.850")
+    }
+
+    // the caller compares its request against the echo to detect a clamp, so both directions are pinned:
+    // rounding 271.34 would report a clamp that never happened, and trimming 300.0's tail would contradict
+    // the integral example the CLI docs tell callers to expect.
+    @Test(arguments: [(271.3, "271.3"), (271.34, "271.34"), (300.0, "300.0")])
+    func formatResponseSidebarWidth(_ stored: Double, _ rendered: String) {
+        let response = ControlResponse(ok: true, result: ControlResult(sidebarWidth: stored))
+        #expect(SocketClient.formatResponse(response, json: false) == rendered)
     }
 
     @Test func formatResponseErrorFallback() {
@@ -918,6 +936,26 @@ struct SocketClientTests {
         #expect(lines.contains("* Builtin Light"))
         #expect(lines.contains("  Nord"))
         #expect(lines.contains("  default ghostty"))
+    }
+
+    @Test func formatsAppIdentityAndOmitsAnEmptyCommit() {
+        let withCommit = ControlResponse(ok: true, result: ControlResult(app: AppIdentity(version: "0.24.0", commit: "a1b2c3d")))
+        #expect(SocketClient.formatResponse(withCommit, json: false) == "0.24.0 (a1b2c3d)")
+
+        for commit in [nil, ""] as [String?] {
+            let response = ControlResponse(ok: true, result: ControlResult(app: AppIdentity(version: "0.24.0", commit: commit)))
+            #expect(SocketClient.formatResponse(response, json: false) == "0.24.0")
+        }
+    }
+
+    @Test func versionJSONCarriesTheRawResponseWithoutTheClientPath() throws {
+        let response = ControlResponse(ok: true, result: ControlResult(app: AppIdentity(version: "0.24.0", commit: "a1b2c3d")))
+        let line = SocketClient.formatResponse(response, json: true)
+        #expect(!line.contains("client"))
+        #expect(!line.contains(Version.clientPath() ?? "agtermctl"))
+
+        let decoded = try JSONDecoder().decode(ControlResponse.self, from: Data(line.utf8))
+        #expect(decoded == response)
     }
 }
 
@@ -1251,4 +1289,5 @@ private final class OverlayResultScript: @unchecked Sendable {
             return ControlResponse(ok: false, error: "unexpected cmd \(request.cmd)")
         }
     }
+
 }

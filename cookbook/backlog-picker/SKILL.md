@@ -34,7 +34,9 @@ sharpens it, which is the one case **Appending** below allows:
 
 - **`worth: yes | no | later`** — the honest triage call. **`no` is a valid answer**: a real item not worth
   the edit still belongs here, because writing it down is what stops it being rediscovered every review.
-- **`where: path:line`** — omit when the item is not anchored to one place. The dedupe key alongside the slug.
+- **`where: path:line`** — omit when the item is not anchored to one place. Its path narrows the dedupe
+  search alongside the slug and the line is a navigation hint that moves. Compare paths only when both
+  items have `where`; two items missing it are not thereby the same item.
 - **`added: YYYY-MM-DD`** — never updated, so it reads as age. A year-old item is itself information.
   Zero-pad it: a reader sorting on this field has nothing to fall back on when the value is not an ISO date.
 
@@ -47,12 +49,34 @@ Create the file. When the work lands, `git rm` it in the commit that lands the f
 commit. There is no checkbox, no in-progress marker: the staged deletion is the state. Dropping an item
 decided against is the same operation with a different reason.
 
+## Briefing an item
+
+Put these four things on screen before asking anything about an item, as ordinary output rather than
+inside the `AskUserQuestion`. The widget covers roughly five lines above itself, so the question text
+still names the item and carries the one-line reason for its recommendation.
+
+- **Summary** — what the item is and why it was filed, in your own words, one or two sentences. Not the
+  H1 restated and not the body pasted back.
+- **Effort** — what the fix costs: the files and call sites it touches, whether a test already covers the
+  path, and whether it is mechanical or a design decision still to be made.
+- **Blast radius** — what else the change can reach. Callers, generated files, anything sharing the code
+  path, and whether it reverts cleanly. "Contained" is a claim about what depends on the code, so check
+  before making it.
+- **Materiality** — who is affected today, how badly, and what leaving it costs. Most items have no
+  user-visible symptom; say so rather than inflating one.
+
+Each of the last three is ONE line carrying a word and the fact behind it — the word alone asks the user
+to take the call on trust, the fact is what lets him disagree with it, and the length is what keeps the
+briefing readable above its question. Judge all four against the repo as it stands rather than against
+the item's own account: the reasoning in a file goes stale the same way its `where` does.
+
 ## A slug as the argument
 
 `/backlog <slug>` names one item: `docs/backlog/<slug>.md`, the file name without its extension. Read
-that file alone, verify its `where` the same way step 2 below does, and go straight to the fix-or-drop
-question for it — skip the listing, which is not what was asked for. A slug matching no file is a
-mistake worth saying plainly: report it and list what is there instead of guessing at the nearest name.
+that file alone, verify its `where` the same way step 2 below does, print the briefing above for it, and
+go straight to the fix-or-drop question — skip the listing, which is not what was asked for. A slug
+matching no file is a mistake worth saying plainly: report it and list what is there instead of guessing
+at the nearest name.
 
 The picker types this form, so the argument arrives already matching a real file name.
 
@@ -87,7 +111,9 @@ someone else's in-progress branch it gets swept into that branch's diff or vanis
 - any other branch — write it against the default branch instead, from a throwaway checkout or worktree
   outside this one. Never switch the current checkout's branch to do it.
 
-**Dedupe before writing**, on `where` first and the slug second. A pre-existing defect surfaces in every
+**Dedupe before writing.** The `where` path and the slug find the candidates; what settles it is the defect
+each one claims. A shared path is not a duplicate on its own, since one file holds several unrelated defects,
+and the trailing line moves with any edit above it. A pre-existing defect surfaces in every
 review that touches its file, so the same item arrives repeatedly. If it is already there, say so and leave
 it alone. If the new sighting sharpens the description or changes the `worth` call, edit that file in place
 rather than adding a second one.
@@ -109,4 +135,6 @@ answer.
   maintainer's cleanup notes; surfacing them on a contributor's change reads as scope pressure.
 - **Never auto-commit** an item file, and never commit it alongside unrelated work.
 - **Do not fix an item without being asked.** Reading the backlog is not permission to work it.
-- **Prefer deleting to demoting.** An item nobody will ever do is noise; say so and offer to drop it.
+- **Prefer deleting to demoting** for an item nobody will ever do and whose reasoning nobody needs — say
+  so and offer to drop it. This does not reach a `no` that is still doing its job of stopping a
+  rediscovery; that one stays.

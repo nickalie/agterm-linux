@@ -144,4 +144,11 @@ public struct AgentIndicator: Equatable, Sendable {
               let next = status.afterKeystroke(isInterrupt: isInterrupt) else { return nil }
         return next == .idle ? AgentIndicator() : AgentIndicator(status: next, blink: true, statusPane: pane)
     }
+
+    /// normalizedPane: the tag as the store keeps it — a `.right` tag on a splitless session folds to `.left`,
+    /// since a promoted survivor's shell keeps its baked `AGTERM_PANE=right` and the sole (`.left`-role-aware)
+    /// pane could never keystroke-clear a `.right` tag. nil is preserved so the read-back omits the field.
+    func normalizedPane(hasSplit: Bool) -> StatusPane? {
+        statusPane == .right && !hasSplit ? .left : statusPane
+    }
 }

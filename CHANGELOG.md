@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.26.0 - 2026-09-02
+
+### New Features
+
+- **Live sessions, an experimental restore mode.** Sessions have always come back after a restart with their directory, font size and split state, but what comes back is a fresh shell, so whatever was running is gone. Live mode keeps the process instead: each local primary and split pane runs through the bundled zmx multiplexer, so quitting agterm ends the connection to the pane while the process itself keeps running, and the next launch reattaches to it. A build still compiling or an agent halfway through a task is still there. Turn it on in Settings ▸ General ▸ Sessions, where **Restore sessions** now offers **Live sessions** beside the existing Fresh shells and Re-run commands, or with `agtermctl restore mode live`. The mode is frozen for the life of the process, so it takes effect after restarting agterm. It needs zsh as the macOS login shell; an unsupported shell falls back to fresh shells and Settings says why. Experimental because this is its first release and it changes what a quit means: `agtermctl zmx list` shows every daemon and the pane holding it, `agtermctl zmx prune` clears unclaimed daemons with no attached clients, and switching back to Fresh shells or Re-run commands and restarting reaps every detached agterm daemon in that state directory #515 @umputun
+- **Remote sessions, a first and deliberately limited version.** A session running on another Mac can be attached here, where it appears in the sidebar as an ordinary session marked remote, its split included. `agtermctl zmx tree HOST` lists what that machine has to offer and `agtermctl zmx attach HOST SESSION` grabs one of them. Everything goes over ssh and nothing else: no agterm-to-agterm protocol, no port, no listener. Each attached pane is an ssh process holding a connection for as long as the session is open, so closing it here ends your side while the far-side processes carry on. What this version does not do: one attach imports one session rather than a whole workspace, and because the attach is a follower the remote screen arrives at the far side's geometry and does not reflow until the first classified keystroke reaches it, which also means mouse input and Ctrl-L do nothing until then. The requirements sit on the far side rather than this one: it runs 0.26.0 too, its restore mode is Live sessions since that is what puts a daemon behind each pane, and it has `agtermctl` on the PATH that ssh gives a remote command. Key-based ssh auth is a precondition, because a non-interactive connection has nobody to answer a password prompt #524 @umputun
+- no built-in remote picker ships with this yet. The two commands are the whole feature, and the cookbook's `remote-session-picker` recipe is what turns them into something to use: it lists the far side, puts the rows through agterm's own picker with each one's window, workspace, purpose, directory and running command underneath, then attaches whatever you choose. Wire it to a chord or a palette entry in `keymap.conf`. Building a selector into the app is deliberately left until the shape settles #524 @umputun
+- `session.context` sets a per-session line saying what a session is for, shown in the title bar and carried on the tree. It survives relaunch and restore, and `session.duplicate` does not copy it #522 @umputun
+- `session.swap` exchanges a split's two panes, moving the terminals rather than the layout: axis and ratio stay put while focus, overlays, status ownership and wait policy follow their terminal #513 @umputun
+- `sidebar.width` sets the sidebar divider position from the control API, per window, and echoes the stored width so a clamped request is distinguishable from an honored one #512 @umputun
+- `restore.capture` fills the captured-command slots on demand instead of only at exit, for the cases where an orderly quit never happens #452 @ssgreg
+- cursor shape and blink are settable in Settings ▸ Appearance, which also gets its cursor and font controls rearranged #487 @s1ovac #489 @umputun
+- the tree names the shell holding a pane's foreground, so a caller can tell a pane held by a recognized shell from one whose foreground state could not be read. It is not a prompt signal: a shell builtin or a loop runs inside the shell process, so a pane blocked on input looks the same #525 @umputun
+
+### Improved
+
+- hidden panes release their GPU buffers instead of holding them for the life of the app. agterm reports occlusion for panes that are not on screen, so a hidden shell stays live while its Metal swap chain is freed after a short grace. Measured on a Debug build with 12 sessions all printing output: 1.1 GB peak with every surface realized, settling to 199 MB once the 11 hidden ones released. It comes with a libghostty pin bump to 683d8db, which carries upstream's hidden-surface GPU work #492 @paul-nameless
+- a launch that replays commands paces its pane startup rather than spawning everything at once, which was enough to make a large window's restore stutter #526 @umputun
+- a sidebar row whose name is truncated reveals it on hover #520 @umputun
+- `session.restore` reports which pane it actually wrote, which a caller addressing by pane token could not otherwise work out #495 @ssgreg
+- a cookbook recipe closing a session automatically once the command in it finishes #488 @andr81
+- the bundled agent skill writes every command with its area prefix. Six families were missing it, so an agent copying a command out of the summary ran something that does not exist #507 @umputun
+- the two-agent chat recipe survives labelled Claude composers, multi-agent Codex resume, and transcripts recovered from a bridge #496 #505 #509 #514 @paskal #506 @umputun
+
+### Bug Fixes
+
+- an agent spawned from another agent's session repainted the spawner's sidebar row, so the wrong session showed the status #461 @x9x9x9x9x9x91
+- one split pane's agent status could erase the other pane's block. A blocked pane now owns the status until it is answered, and a write from the sibling is refused whole rather than half-applied #523 @umputun
+- the agent-hooks installer overwrote existing Claude hook data it could not read, and a bad custom regex printed a compile error before every zsh prompt #500 @umputun
+- a failed restore save was acknowledged as ok, so a pin the disk had rejected read back as if it were in place #485 @umputun
+- `session.overlay.open` accepted a `--size-percent` outside 1 to 100 instead of refusing it #498 @ssgreg
+- the cookbook's session-badging recipe failed open when it could not badge an armed session #491 @andr81
+- `session type --stdin` and `quick type --stdin` emptied the whole payload on one invalid UTF-8 byte and still answered ok, having typed nothing. Both refuse now. CI jobs also run under timeouts, where all six previously inherited GitHub's 360-minute default #521 @umputun
+
+## v0.25.0 - 2026-08-25
+
+### New Features
+
+- the quick terminal can be sized as a share of the screen instead of a fixed ceiling. It was sized `min(90% on each axis, 1100x700 points)`, so past roughly 1222x780 the cap was the only term acting: on a 2560x1440-point display that is 21% of the screen area where the 90% share intends 81%, which meant scrolling sideways through a wide `git diff` with empty space around the panel. Settings ▸ Interface now offers Default plus a discrete 40, 50, 60, 70, 80 or 90 percent, and leaving it unset keeps the old size exactly. Reported in discussion #453 #459 @umputun
+- `agtermctl version` reports which agterm is serving the socket, with no target and no window needed. Its human output also names the resolved path of the `agtermctl` that ran, which catches a stale CLI sitting ahead of the bundled one on `PATH`. The bundled agent skill learns the cookbook in the same release, so an agent asked to list recipes or set one up has something to work from instead of a bare URL #476 @umputun
+- the tree's session node reports `statusChangedAt`, so anything reasoning about how old a status glyph is stops keeping shadow state of its own. Epoch seconds on the same clock as `ControlEvent.ts`, and it records when the status was last WRITTEN rather than when it last changed, so a hook re-asserting `active` on every tool event refreshes it #465 @umputun
+
+### Improved
+
+- a cookbook recipe putting two coding agents in one split, each typing a line straight into the other's composer, so you watch both halves of the exchange without relaying anything by hand #466 @umputun
+- a cookbook recipe giving GitHub Copilot CLI the same per-session sidebar glyphs the installer already wires up for Claude Code, through Copilot's own hook support #464 @rychkov
+- the macOS permission story is documented and its prompts say why. The troubleshooting guide explains the seven entitlement-gated services and what a grant actually covers, then separately covers the Files & Folders family, a different mechanism a user whose `ls ~/Downloads` failed had reason to read as unfixable. macOS asks for Desktop, Documents, Downloads, removable and network volumes in agterm's own words now too: the app already explained its other privacy prompts, and those five previously fell back to Apple's generic copy 1f9d673 #470 #474 @umputun
+- the docs teach how to extend agterm rather than only documenting the pieces: a four-step section between Install and the concepts tour, each step adding one building block, ending at asking an agent that carries the bundled skill. A file browser is one keymap line, and nothing in the docs used to put that within reach #471 @umputun
+- the backlog-picker recipe stopped offering to delete the records whose whole job is stopping a rediscovery. Its rules told the agent to drop any item nobody will ever do, which is what a `worth: no` record is, and it named a field as the dedupe key that the same file calls stale. It also briefs the decision before asking now. Reported in #478 a322fa6 @umputun
+
+### Bug Fixes
+
+- `ssh` inside agterm died the moment it started for anyone who had turned on ghostty's `ssh-env` or `ssh-terminfo` shell integration, a regression in 0.24.0. Both features work by replacing `ssh` with a wrapper calling a `ghostty` CLI that agterm's bundle does not carry. agterm now loads both flags off after the user's config, so the wrapper is never defined. Reported in #463 #475 @umputun
+- the agent-status hooks stopped working silently whenever the app bundle moved after they were installed, with installing from the mounted DMG and then ejecting it the easy way in. The installed wrapper baked an absolute path and never checked it still existed, and it suppresses output and exits 0 by design, so the only symptom was sidebar glyphs quietly not appearing. It now tests the baked path and falls back to `PATH` #473 @bot-rogerthat
+- a NUL byte in `session.type` or `quick.type` text truncated the injection and still answered ok. Worse than silent: the text run and its Return are separate keystrokes, so when a newline followed that run, the shortened line still got its Return and ran. Both commands reject it now #458 @umputun
+- restoring a captured running command could leave a pane at a continuation prompt or run a different command. The line is typed through `initial_input`, so control bytes in it reach the shell's line editor before anything parses them as a command. A capture carrying one is refused instead of replayed #457 @umputun
+- a custom command or chord fired from the right split pane exported the primary pane's working directory as `$AGT_SESSION_PWD`, and spawned its child there #482 @vladislav-yevtushenko
+- the seeded `keymap.conf`'s Lazygit example omitted `--target`, so the overlay it opens could land in whatever session you had switched to by the time the command reached the server rather than the one the chord fired in #474 @umputun
+
 ## v0.24.0 - 2026-08-17
 
 ### New Features

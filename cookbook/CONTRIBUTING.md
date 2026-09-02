@@ -8,13 +8,14 @@ These rules cover recipes. The project-wide rules for everything else are in [CO
 
 ## Layout
 
-One directory per recipe, kebab-case, named after what the recipe does rather than after its script (`park-and-resume`, not `agt-park`). It holds a `README.md` and the scripts, nothing else — with one exception: a recipe whose chord hands work to a coding agent may ship the agent skill it needs, as `SKILL.md` beside the scripts, and *Setup* says where to copy it. The skill is part of the recipe and is read the same way, so keep it to what this recipe needs rather than shipping your whole configuration.
+One directory per recipe, kebab-case, named after what the recipe does rather than after its script (`park-and-resume`, not `agt-park`). It holds a `README.md` and the scripts, nothing else, with two exceptions. A recipe whose chord hands work to a coding agent may ship the agent skill it needs, as `SKILL.md` beside the scripts, and *Setup* says where to copy it. A recipe that drives more than one agent ships one `SKILL-<agent>.md` per agent it supports instead, and *Setup* says where each goes; every loader requires the installed file to be named exactly `SKILL.md`, so the suffix belongs to the recipe rather than to the agent. The skill is part of the recipe and is read the same way, so keep it to what this recipe needs rather than shipping your whole configuration. A recipe that is configuration rather than code may ship that config as a file the reader copies into place, named after the recipe, instead of a block he retypes out of the README, since a brace lost in transcription kills every hook silently. Nothing lints it, so say in the pull request what reads it, the same as a script in an extension CI does not know.
 
 Name scripts by their language, because the extension decides what CI does with them:
 
 - `.sh` is POSIX or bash. CI runs `shellcheck` over every one, and it has to be clean.
 - `.zsh` is zsh. CI parses every one with `zsh -n`, so a syntax error is caught, but shellcheck cannot read zsh and nothing lints these. A parse is not a lint, so run `zsh -n` yourself and read the script over before sending.
-- `.py` is Python 3. CI runs `ruff check` over every one, and it has to be clean. Say which Python version the recipe needs in *Requirements*, the same as any other external tool, and depend on the standard library unless the recipe genuinely cannot.
+- `.fish` is fish. CI parses every one with `fish --no-execute`, the fish analogue of the `zsh -n` gate above. Nothing lints these either, so run it yourself and read the script over before sending.
+- `.py` is Python 3. CI runs `ruff check` over every one, and it has to be clean. A regression script named `test_*.py` is also executed directly by CI. Say which Python version the recipe needs in *Requirements*, the same as any other external tool, and depend on the standard library unless the recipe genuinely cannot.
 
 A recipe in another language is welcome, but say so in the pull request: nothing lints an extension CI does not know, and a recipe that arrives ungated is one the reader has to trust entirely on review.
 

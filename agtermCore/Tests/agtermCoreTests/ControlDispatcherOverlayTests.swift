@@ -148,6 +148,24 @@ struct ControlDispatcherOverlayTests {
         #expect(actions.calls.isEmpty)
     }
 
+    @Test func sessionOverlayOpenRejectsOutOfRangeSizePercent() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let tooBig = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionOverlayOpen, target: "session", args: ControlArgs(command: "cat", sizePercent: 101)))
+        let tooSmall = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionOverlayOpen, target: "session", args: ControlArgs(command: "cat", sizePercent: 0)))
+        let withPane = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionOverlayOpen, target: "session",
+            args: ControlArgs(command: "cat", sizePercent: 500, pane: "right")))
+
+        #expect(tooBig == ControlResponse(ok: false, error: "session.overlay.open: --size-percent must be 1...100"))
+        #expect(tooSmall == ControlResponse(ok: false, error: "session.overlay.open: --size-percent must be 1...100"))
+        #expect(withPane == ControlResponse(ok: false, error: PaneOverlayError.sizePercentConflict))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func sessionOverlayOpenRoutesPaneAndClearsSizePercent() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)

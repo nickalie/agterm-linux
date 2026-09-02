@@ -100,9 +100,13 @@ What it does:
 
 - **Workspaces.** Sessions are grouped under named workspaces like "work" and "personal", which keeps a screen of concurrent sessions organized. You reach a session by name, by recency, or from the keyboard.
 - **Control API and CLI.** A bundled tool, `agtermctl`, drives almost everything over a local socket: create sessions, type into them, run a program in an overlay and read its exit status, move and resize windows, or post a notification tied to a specific session. A script or an agent can set up and drive its own layout, and send you a notification from the session it was working in.
-- **Splits, scratch, and overlays.** Split a session into two shells, open a scratch terminal over it, or run a program in a full or floating overlay without disturbing the shell underneath.
+- **Splits, scratch, and overlays.** Split a session into two shells side by side or top and bottom, open a scratch terminal over it, or run a program in a full or floating overlay without disturbing the shell underneath.
 - **Agent skill.** An installable skill teaches Claude Code or Codex the control model and the `agtermctl` commands, so an agent running inside agterm can build its own layout, run overlays, manage windows, and show images inline without you explaining the API. On Linux, manage it from **Preferences ▸ Integrations**.
 - **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. On Linux, inspect and install the Claude Code, Codex, Pi, OpenCode, and shell hooks from **Preferences ▸ Integrations**.
+
+A lot of "does it have X?" questions have the same answer: bind X yourself. A `command` line in `keymap.conf` turns any shell line into a key chord, and an overlay gives an interactive program a real terminal over the session, so a file manager, a git UI, or a database browser is one line away. Bigger workflows become scripts, which is what the [cookbook](cookbook/) collects.
+
+You are not meant to write those lines by hand. Install the agent skill (Help ▸ Install Agent Skill…) and ask the agent in your session for what you want, and it writes the line with the right syntax, targeting, and PATH handling. [Extend agterm](https://agterm.com/docs#extend) shows that, and teaches enough of the model to read and change what comes back.
 
 For the real terminal work, rendering, VT parsing, and shell I/O, `agterm` embeds [Ghostty](https://ghostty.org)'s engine (libghostty); everything above is `agterm`'s own.
 

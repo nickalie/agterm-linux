@@ -117,3 +117,5 @@ The typed instruction is where it stops. What happens next is the agent's, and t
 A session whose repo has no `docs/backlog/` gets a notification saying so, not an empty picker. The recipe never creates the directory.
 
 The picker lists one repo, the session's own. There is no cross-repo view here.
+
+The generic backlog workflow is maintained in [umputun/cc-thingz](https://github.com/umputun/cc-thingz/tree/master/plugins/workflow/skills/backlog). This bundled `SKILL.md` is a standalone recipe-specific variant: it keeps the single-item flow the picker drives, while the maintained one also walks the whole list with `--all`. Nothing in this recipe requires that plugin.

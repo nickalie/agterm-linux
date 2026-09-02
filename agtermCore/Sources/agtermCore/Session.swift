@@ -81,6 +81,10 @@ public struct PaneOverlay: Equatable, Sendable {
 @MainActor
 public final class Session: Identifiable {
     public let id: UUID
+    /// Stable process identity for the primary pane. It follows a promoted split survivor.
+    public var paneIdentity: UUID
+    /// Stable process identity for an existing split pane, including a hidden split.
+    public var splitPaneIdentity: UUID?
     public var customName: String?
     /// Live cwd from the latest OSC 7 / PWD report; the sidebar row refreshes. Persisted by `snapshot()` on
     /// quit + structural mutations only (OSC 7 fires constantly), so a crash loses cwd since the last save.
@@ -104,8 +108,10 @@ public final class Session: Identifiable {
     public var agentIndicator = AgentIndicator()
 
     /// Last time the status was set non-idle — stamped by `AppStore.setAgentIndicator` on EVERY non-idle set
-    /// (nil on idle), not just on an idle→non-idle transition. Ephemeral sort key: the attention list orders
-    /// same-status sessions newest-change-first.
+    /// (nil on idle), not just on an idle→non-idle transition. Ephemeral. Sorts the attention list
+    /// newest-change-first, and `controlTree` publishes it as the node's `statusChangedAt`. That read-back
+    /// ships epoch seconds compared against `ControlEvent.ts`, so it must stay a wall-clock `Date` — a
+    /// monotonic instant would keep the sort working and make a client's computed age meaningless.
     @ObservationIgnored public var statusChangedAt: Date?
 
     /// Whether idle auto-follow already pulled the user to THIS blocked episode; ephemeral. Set on jumping
@@ -114,9 +120,34 @@ public final class Session: Identifiable {
     /// transition, not `statusChangedAt`, so a hook re-asserting `blocked` over `blocked` stays muted.
     @ObservationIgnored public var autoFollowConsumed = false
 
+    /// The host this session is teleported from, nil for a local one. NOT persisted, and excluded from
+    /// every snapshot: a persisted ssh command would reconnect on a `rerun` launch or come back as a
+    /// plain shell under a marker that lies.
+    ///
+    /// Immutable and set at construction, because the first save happens inside `addSession`: a marker
+    /// written afterwards would let one snapshot go to disk carrying the ssh command.
+    public let remoteHost: String?
+
+    /// Whether this session may be written to disk at all. Every persistence producer gates on it: the
+    /// launch snapshot, the Recent Closed session record, and a closed workspace's record.
+    public var isPersistable: Bool { remoteHost == nil }
+
+    /// The pane identities this instance's zmx owns — none for a remote session, whose panes run ssh.
+    /// Every reader of local daemon ownership goes through this, or a remote pane reports as a claimed
+    /// local daemon that does not exist. Structural `paneIdentity` stays valid either way.
+    public var locallyManagedPaneIdentities: [UUID] {
+        guard remoteHost == nil else { return [] }
+        return [paneIdentity] + [splitPaneIdentity].compactMap { $0 }
+    }
+
     /// User-set flagged working-set membership: surfaces the session in the sidebar's flat cross-workspace
     /// flagged view with a filled row icon. Persisted, surviving a relaunch and a workspace move.
     public var flagged: Bool = false
+
+    /// What the session is FOR, set only over `session.context` and shown in the title bar. Durable purpose
+    /// held until an explicit clear, never a claim about current activity — nothing expires it and no command
+    /// exit drops it. Persisted; validated by `validateContext` before it lands here.
+    public var context: String?
 
     /// Changes only when one live primary-slot surface replaces another; SwiftUI hosts fold it into their
     /// identity, so lazy nil→first creation stays at zero while split-survivor promotion remounts the view.
@@ -155,6 +186,18 @@ public final class Session: Identifiable {
     /// hiding the split keeps the shell alive. Freed only on `closeSplit`/`closeSession`.
     @ObservationIgnored public var splitSurface: (any TerminalSurface)?
 
+    public func zmxBacking(for surface: TerminalZoomSurface) -> Bool? {
+        switch surface {
+        case .primary: self.surface?.backedByZmx ?? false
+        case .split: splitSurface?.backedByZmx ?? false
+        default: nil
+        }
+    }
+
+    public var allPanesBackedByZmx: Bool {
+        (surface?.backedByZmx ?? false) && (!hasSplit || (splitSurface?.backedByZmx ?? false))
+    }
+
     /// Where the split (right) pane re-spawns on restore (the split factory reads it), from the persisted
     /// `SessionSnapshot.splitCwd`, so each pane keeps its own cwd across a relaunch; nil for a fresh split,
     /// which seeds from `effectiveCwd`.
@@ -173,7 +216,7 @@ public final class Session: Identifiable {
     /// `command`), set via `session.new --command`. The surface factory reads it once; the session closes when
     /// the command exits. Persisted, so a command session — e.g. an `ssh …` shortcut, which escapes the
     /// foreground-pid capture because that pane's group is led by unreadable setuid-root `login` — re-runs it
-    /// on restore when `restoreRunningCommand` is on (via `wasRestored`); a fresh session always runs it.
+    /// on restore in `rerun` launch mode (via `wasRestored`); a fresh session always runs it.
     @ObservationIgnored public var initialCommand: String?
 
     /// Whether a `--command` session HOLDS its surface after the command exits — libghostty's "press any key
@@ -182,9 +225,16 @@ public final class Session: Identifiable {
     /// only with `initialCommand`. Persisted, so a restored session that re-runs its command holds again.
     @ObservationIgnored public var commandWait: Bool = false
 
+    /// The split pane's creation command, the split analogue of `initialCommand`. Persisted so a pane moved
+    /// into the split role by a swap keeps its exec lifecycle across restore.
+    @ObservationIgnored public var splitInitialCommand: String?
+
+    /// The split pane's hold-after-exit policy, meaningful only with `splitInitialCommand`.
+    @ObservationIgnored public var splitCommandWait: Bool = false
+
     /// True when the session was rebuilt by `AppStore.restore(from:)` rather than freshly created; gates the
-    /// `initialCommand` re-run on `restoreRunningCommand` (a fresh session always runs it, a restored one gets
-    /// a plain shell when off). Never persisted.
+    /// `initialCommand` re-run on `rerun` launch mode (a fresh session always runs it, a restored one gets
+    /// a plain shell in any other mode). Never persisted.
     @ObservationIgnored public var wasRestored = false
 
     /// The main pane's foreground command (full argv) for restore-running-command, read once by the surface
@@ -220,8 +270,9 @@ public final class Session: Identifiable {
     /// goes nil the moment the replay is armed, so no save landing before the surface spawns can write the
     /// argv back over the file the strip just cleaned.
     @ObservationIgnored public var pendingForegroundCommand: [String]?
-    /// The split analogue of `pendingForegroundCommand`, seeded only when the restored split was SHOWN
-    /// (`isSplit`) — a hidden split builds no right surface at bootstrap.
+    /// The split analogue of `pendingForegroundCommand`, seeded for every surviving split (`hasSplit`),
+    /// hidden included: a hidden split builds no right surface at bootstrap, so it consumes this only if it
+    /// is later shown, and the exit capture writes it back untouched until then.
     @ObservationIgnored public var pendingSplitForegroundCommand: [String]?
 
     /// Whether the session-wide overlay slot is OCCUPIED, by either of its two occupants: a caller's PROGRAM
@@ -371,10 +422,15 @@ public final class Session: Identifiable {
     /// START callback, cleared on close; weak, since the session strongly owns its panes. Ephemeral.
     @ObservationIgnored public weak var searchSurface: (any TerminalSurface)?
 
-    public init(id: UUID = UUID(), initialCwd: String, customName: String? = nil) {
+    public init(id: UUID = UUID(), initialCwd: String, customName: String? = nil,
+                paneIdentity: UUID = UUID(), splitPaneIdentity: UUID? = nil,
+                remoteHost: String? = nil) {
         self.id = id
+        self.paneIdentity = paneIdentity
+        self.splitPaneIdentity = splitPaneIdentity
         self.initialCwd = initialCwd
         self.customName = customName
+        self.remoteHost = remoteHost
     }
 
     /// The sidebar label: a non-blank `customName` (a manual rename) wins; else the basename of `focusedCwd`,
@@ -421,9 +477,19 @@ public final class Session: Identifiable {
     }
 
     /// The live `currentCwd` once a PWD report arrived, else `initialCwd`. Always the PRIMARY pane's, never
-    /// focus-aware (cf. `focusedCwd`): it seeds new split/overlay/quick terminals and backs
-    /// `AGTERM_SESSION_PWD`, which must stay stable regardless of focus.
+    /// focus-aware (cf. `focusedCwd`): it seeds new split, overlay, scratch and quick terminals. A custom
+    /// command's `AGT_SESSION_PWD` resolves through `cwd(for:)`, so the right pane's value can differ.
     public var effectiveCwd: String { currentCwd ?? initialCwd }
+
+    /// The working directory for a given pane role: the split pane's while targeting `.right`, else the primary's.
+    public func cwd(for pane: CommandContext.Pane) -> String {
+        switch pane {
+        case .right:
+            return splitCwd ?? initialSplitCwd ?? effectiveCwd
+        case .left, .scratch:
+            return effectiveCwd
+        }
+    }
 
     /// The focused pane's surface: the split (right) while it has focus and exists, else the primary. With the
     /// split hidden the detail pane maximizes this one and focus helpers target it, so typing always reaches
@@ -624,12 +690,20 @@ public final class Session: Identifiable {
         }
     }
 
-    /// Drops the unconsumed CAPTURE payloads only, leaving the `session.restore` pins — persisted and
-    /// pending — armed. What `restore.clear` needs: it clears captures, and the launch arms them here
-    /// rather than in the persisted fields, so clearing those alone would leave a replay running.
+    /// Drops the unconsumed CAPTURE payloads only, leaving the persisted and pending `session.restore` pins
+    /// armed. The pending half of `clearCapturedForegroundCommands()`; public because agterm-linux calls it.
     public func clearPendingForegroundCommands() {
         pendingForegroundCommand = nil
         pendingSplitForegroundCommand = nil
+    }
+
+    /// Drops the captured foreground commands whole: the persisted pair AND the unconsumed pending pair.
+    /// `restore.clear` and a non-last window close both need exactly this, over different session sets.
+    /// `.claude/rules/settings.md` covers why the persisted fields cannot be dropped on their own.
+    public func clearCapturedForegroundCommands() {
+        foregroundCommand = nil
+        splitForegroundCommand = nil
+        clearPendingForegroundCommands()
     }
 
     /// Drops every unconsumed bootstrap payload — both override pins and both captured commands — leaving
@@ -639,8 +713,7 @@ public final class Session: Identifiable {
     public func clearPendingRestoreOverrides() {
         pendingRestoreCommand = nil
         pendingSplitRestoreCommand = nil
-        pendingForegroundCommand = nil
-        pendingSplitForegroundCommand = nil
+        clearPendingForegroundCommands()
     }
 
     /// The surface on top and owning keyboard focus: an active PROGRAM overlay (full OR floating), else the
@@ -701,6 +774,51 @@ public final class Session: Identifiable {
         searchTotal = nil
         searchSelected = nil
         searchSurface = nil
+    }
+}
+
+/// The outcome of checking a `session.context` value, carrying the message the control response reports
+/// on rejection so the caller learns which rule it broke.
+enum SessionContextValidation: Sendable, Equatable {
+    case valid(String)
+    case invalid(String)
+}
+
+extension Session {
+    /// Largest accepted `context`, in UTF-8 BYTES. It bounds the snapshot and the JSON read-back, not the
+    /// rendered width — the title bar truncates for pixels on its own. A character count is not a byte
+    /// bound, so anything non-ASCII would slip past one.
+    nonisolated static let contextByteLimit = 256
+
+    /// Checks a `session.context` value, trimming outer spaces and returning the trimmed string. Rejects an
+    /// empty result, one over `contextByteLimit`, and any control character or line/paragraph separator.
+    /// A blank set is a rejection rather than a clear: `--clear` is the only clearing form, so there is no
+    /// second undocumented path to nil.
+    ///
+    /// The scan reads `raw`, NOT `trimmed`: trimming first would silently repair `"PR #517\n"` into a valid
+    /// value, which both accepts input the contract rejects and lets the snapshot decoder rewrite a
+    /// hand-edited value instead of dropping it.
+    ///
+    /// `nonisolated` so `SessionSnapshot`'s decoder can drop an invalid stored value; it only reads a String.
+    nonisolated static func validateContext(_ raw: String) -> SessionContextValidation {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .invalid("context must not be empty (use --clear to remove it)") }
+        if trimmed.utf8.count > contextByteLimit {
+            return .invalid("context must be at most \(contextByteLimit) UTF-8 bytes")
+        }
+        if raw.unicodeScalars.contains(where: breaksContextLine) {
+            return .invalid("context must not contain control characters or line breaks")
+        }
+        return .valid(trimmed)
+    }
+
+    /// Whether a scalar would break the single-line title-bar label. `lineSeparator` and
+    /// `paragraphSeparator` (U+2028/U+2029) are NOT control characters, so a `Cc`-only check misses both.
+    private nonisolated static func breaksContextLine(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .control, .lineSeparator, .paragraphSeparator: return true
+        default: return false
+        }
     }
 }
 

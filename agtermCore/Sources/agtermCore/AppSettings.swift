@@ -1,7 +1,8 @@
 import Foundation
 
-/// The window's custom titlebar row state: `normal` stacks the session name over the cwd subtitle,
+/// The window's custom titlebar row state: `normal` stacks the session name over a second line,
 /// `compact` is one short row, `hidden` drops the row and the traffic lights for a full-bleed terminal.
+/// `TitlebarComposition` owns what each mode puts on those lines.
 /// Raw-stored, resolved by `effectiveToolbarMode`. Top-level, unlike the nested sibling mode enums,
 /// because the app target uses a bare `ToolbarMode`.
 public enum ToolbarMode: String, Codable, Sendable, CaseIterable {
@@ -28,6 +29,7 @@ public enum InterfaceElement: String, Codable, Sendable, CaseIterable {
     case sidebarToggle
     case sessionName
     case windowName
+    case sessionContext
     case recentSessions
     case scratch
     case split
@@ -57,6 +59,7 @@ public enum InterfaceElement: String, Codable, Sendable, CaseIterable {
         case .sidebarToggle: return "Sidebar toggle"
         case .sessionName: return "Session name"
         case .windowName: return "Window name"
+        case .sessionContext: return "Session context"
         case .recentSessions: return "Recent sessions"
         case .scratch: return "Scratch terminal"
         case .split: return "Split view"
@@ -95,6 +98,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case home
         case currentSession
         case custom
+    }
+
+    /// The terminal cursor shape, carrying ghostty's own `cursor-style` values as raw names. There is no
+    /// case for nil, which is a state of its own: it emits nothing, leaving whatever `cursor-style` the
+    /// config chain resolves — agterm's bundled block, or the user's own `ghostty.conf` — in charge.
+    ///
+    /// ghostty's `block_hollow` is deliberately absent. An unfocused surface is already marked by drawing
+    /// its cursor hollow, so a hollow block chosen as the RESTING shape makes focused and unfocused panes
+    /// identical and costs that signal. It stays reachable from `ghostty.conf` for anyone who wants it.
+    public enum CursorStyle: String, CaseIterable, Sendable {
+        case block
+        case bar
+        case underline
     }
 
     /// The user-idle timeout after which the window's selection auto-follows to the oldest blocked
@@ -163,6 +179,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var darkTheme: String?
     /// Whether the terminal follows the macOS Light/Dark appearance; nil/false = off, emitting one `theme`.
     public var followSystemAppearance: Bool?
+    /// The cursor shape, a `CursorStyle` raw value resolved by `effectiveCursorStyle`; nil emits nothing
+    /// and leaves the config chain deciding. A picked shape wins over a `cursor-style` in the user's own
+    /// `ghostty.conf`, because the settings conf loads last — that IS the difference between nil and an
+    /// explicit `.block`, which otherwise render the same cursor.
+    public var cursorStyle: String?
+    /// Whether the cursor blinks, mirroring ghostty's own `?bool` for the key: nil emits nothing and is a
+    /// third state rather than "off" — the cursor blinks AND DEC mode 12 can still change it. Either
+    /// explicit value takes DEC mode 12 away (`DECSCUSR` still wins over both), so all three are named in
+    /// the picker instead of collapsing to a toggle that could not say "always blink".
+    public var cursorBlink: Bool?
     /// Window background opacity in 0...1, nil = opaque. Composited at the AppKit window level, NOT by the
     /// ghostty renderer, which `ghosttyConfigLines()` pins fully transparent below 1.
     public var backgroundOpacity: Double?
@@ -205,8 +231,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// How much darker or lighter the sidebar background is than the terminal background, 0...10 with 5
     /// neutral; nil means `defaultSidebarBackgroundShift`. A SwiftUI wash (`sidebarShiftAmount`).
     public var sidebarBackgroundShift: Int?
-    /// Whether, on restart, each pane re-runs what it ran at the last clean quit (nil = off) — a captured
-    /// `SessionSnapshot.foregroundCommand` plus a `session.new --command` session's `initialCommand`.
+    /// The global process-restore policy. nil is a pre-migration settings object and resolves through
+    /// `restoreRunningCommand` until `migrateRestoreMode()` normalizes it.
+    public var restoreMode: RestoreMode?
+    /// Legacy decode shim. Migration clears it before any save so new files write only `restoreMode`.
     public var restoreRunningCommand: Bool?
     /// Whether agterm also loads the user's GLOBAL `~/.config/ghostty/config` over its bundled defaults.
     /// nil = off, so a config written for the standalone Ghostty.app does NOT silently change agterm; opt
@@ -257,6 +285,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The palette, picker and session-switcher text point size, nil for `defaultInterfaceFontSize`.
     /// Panel widths scale with it (`InterfaceMetrics`). Independent of `sidebarFontSize`.
     public var interfaceFontSize: Double?
+    /// The share of the focused screen the quick-terminal panel takes, as a percentage; nil keeps the
+    /// built-in size. `QuickTerminalMetrics.panelSize` resolves and clamps it.
+    public var quickTerminalSizePercent: Int?
     /// Raw names of the chrome elements the user has HIDDEN (see `InterfaceElement`); nil/empty shows
     /// everything. Unknown names are dropped by `resolvedHiddenInterfaceElements`.
     public var hiddenInterfaceElements: [String]?
@@ -275,6 +306,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public init(fontFamily: String? = nil, fontSize: Double? = nil, theme: String? = nil,
                 darkTheme: String? = nil, followSystemAppearance: Bool? = nil,
+                cursorStyle: String? = nil, cursorBlink: Bool? = nil,
                 backgroundOpacity: Double? = nil, backgroundBlur: Int? = nil, notificationsEnabled: Bool? = nil,
                 toolbarMode: String? = nil, compactToolbar: Bool? = nil, notificationBadgeEnabled: Bool? = nil,
                 activeStatusColorHex: String? = nil, blockedStatusColorHex: String? = nil,
@@ -282,7 +314,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 blockedStatusShape: String? = nil, completedStatusShape: String? = nil,
                 configDirectory: String? = nil,
                 mouseScrollMultiplier: Double? = nil, inactivePaneMuteStrength: Int? = nil,
-                sidebarBackgroundShift: Int? = nil, restoreRunningCommand: Bool? = nil,
+                sidebarBackgroundShift: Int? = nil, restoreMode: RestoreMode? = nil,
+                restoreRunningCommand: Bool? = nil,
                 inheritGlobalGhosttyConfig: Bool? = nil, attentionButtonEnabled: Bool? = nil,
                 dockBounce: String? = nil, notificationSoundName: String? = nil,
                 blockedStatusSoundName: String? = nil, rightClickPaste: Bool? = nil,
@@ -291,7 +324,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 confirmCloseSession: Bool? = nil, closeGraceUndoEnabled: Bool? = nil,
                 autoFollowAttention: String? = nil,
                 autoFollowStayOnActive: Bool? = nil, sidebarFontSize: Double? = nil,
-                interfaceFontSize: Double? = nil,
+                interfaceFontSize: Double? = nil, quickTerminalSizePercent: Int? = nil,
                 hiddenInterfaceElements: [String]? = nil,
                 autoHideSidebarInactiveWindows: Bool? = nil,
                 sessionNameFromTerminalTitle: Bool? = nil, welcomeShown: Bool? = nil) {
@@ -300,6 +333,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.theme = theme
         self.darkTheme = darkTheme
         self.followSystemAppearance = followSystemAppearance
+        self.cursorStyle = cursorStyle
+        self.cursorBlink = cursorBlink
         self.backgroundOpacity = backgroundOpacity
         self.backgroundBlur = backgroundBlur
         self.notificationsEnabled = notificationsEnabled
@@ -316,6 +351,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.mouseScrollMultiplier = mouseScrollMultiplier
         self.inactivePaneMuteStrength = inactivePaneMuteStrength
         self.sidebarBackgroundShift = sidebarBackgroundShift
+        self.restoreMode = restoreMode
         self.restoreRunningCommand = restoreRunningCommand
         self.inheritGlobalGhosttyConfig = inheritGlobalGhosttyConfig
         self.attentionButtonEnabled = attentionButtonEnabled
@@ -332,10 +368,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoFollowStayOnActive = autoFollowStayOnActive
         self.sidebarFontSize = sidebarFontSize
         self.interfaceFontSize = interfaceFontSize
+        self.quickTerminalSizePercent = quickTerminalSizePercent
         self.hiddenInterfaceElements = hiddenInterfaceElements
         self.autoHideSidebarInactiveWindows = autoHideSidebarInactiveWindows
         self.sessionNameFromTerminalTitle = sessionNameFromTerminalTitle
         self.welcomeShown = welcomeShown
+    }
+
+    /// The configured mode, including an object decoded from the legacy boolean schema.
+    public var effectiveRestoreMode: RestoreMode {
+        restoreMode ?? (restoreRunningCommand == true ? .rerun : .none)
+    }
+
+    /// Converts the legacy boolean in memory. Saving after this writes only the new enum key.
+    public mutating func migrateRestoreMode() {
+        restoreMode = effectiveRestoreMode
+        restoreRunningCommand = nil
     }
 
     /// The hidden chrome elements, unknown (future-written) raw names dropped. The single read point.
@@ -358,6 +406,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// single read point.
     public var effectiveDockBounce: DockBounce {
         dockBounce.flatMap(DockBounce.init(rawValue:)) ?? .off
+    }
+
+    /// The resolved cursor shape, or nil when unset OR when the stored raw name is one this version does
+    /// not offer — a future shape, or a `block_hollow` written by hand. The single read point, so an
+    /// unoffered value falls back to the config chain rather than being emitted from here.
+    public var effectiveCursorStyle: CursorStyle? {
+        cursorStyle.flatMap(CursorStyle.init(rawValue:))
     }
 
     /// The resolved glyph silhouette for one agent status: the configured raw name when a KNOWN
@@ -416,6 +471,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
         min(interfaceFontSizeRange.upperBound, max(interfaceFontSizeRange.lowerBound, size))
     }
 
+    /// The resolved quick-terminal share, or nil for the built-in size. The single read point, and the one
+    /// the Settings picker binds: a stored value outside `QuickTerminalMetrics.sizePercentChoices` — hand
+    /// edited, or written by a later version offering more of them — resolves to nil rather than being
+    /// applied, so the picker can never show blank while the panel uses a size it has no row for.
+    /// `panelSize` clamps its own argument as well; that guards a direct caller, this owns the setting.
+    public var effectiveQuickTerminalSizePercent: Int? {
+        guard let quickTerminalSizePercent,
+              QuickTerminalMetrics.sizePercentChoices.contains(quickTerminalSizePercent) else { return nil }
+        return quickTerminalSizePercent
+    }
+
     /// The resolved sidebar row-text size, clamped. The single read point.
     public var effectiveSidebarFontSize: Double {
         Self.clampSidebarFontSize(sidebarFontSize ?? Self.defaultSidebarFontSize)
@@ -458,6 +524,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         } else if let single = light ?? dark {
             lines.append("theme = \(single)")
         }
+        // emitted only when picked, so everyone who never opens the picker keeps the bundled block — and
+        // their own ghostty.conf `cursor-style` — exactly as before.
+        if let cursorStyle = effectiveCursorStyle { lines.append("cursor-style = \(cursorStyle.rawValue)") }
+        // both explicit values are emitted; nil is the third state, which emits nothing and leaves DEC
+        // mode 12 able to drive the blink.
+        if let cursorBlink { lines.append("cursor-style-blink = \(cursorBlink)") }
         // a translucent window composites its tint at the AppKit level, so the renderer must draw fully
         // transparent or the surface and the window stack two tints. at full opacity (or unset) these are
         // omitted and ghostty paints its own background.

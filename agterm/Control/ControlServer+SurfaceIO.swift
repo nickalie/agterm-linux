@@ -13,6 +13,7 @@ extension ControlServer {
             guard let surface = store.session(withID: id)?.addressableSurface as? GhosttySurfaceView else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
+            surface.expediteSpawn()
             // the cast alone only proves the SLOT is filled; a false return is the view without a surface.
             guard surface.performBindingAction(action) else {
                 return ControlResponse(ok: false, error: "session not realized")
@@ -28,8 +29,7 @@ extension ControlServer {
     /// is settable while hidden, its surface kept alive. An unknown value is rejected here as well as in the
     /// CLI `validate()`, so a raw socket client can't bypass it, and a resolved-but-unrealized pane returns
     /// `session not realized` rather than silently no-opping in the layout beat after the pane is shown.
-    /// Only the main pane's size persists — the split/scratch `onFontSizeChange` is deliberately unwired,
-    /// matching a GUI font change on them.
+    /// Only the surface currently in the main role persists its size; split-role and scratch changes stay live-only.
     func font(_ target: String?, window: String?, pane: String?, action: String) -> ControlResponse {
         return resolver.resolveSession(target, window: window) { store, id in
             // resolveSession already resolved `id` from this store, so `session(withID:)` is non-nil.
@@ -56,6 +56,7 @@ extension ControlServer {
             guard let surface = chosen as? GhosttySurfaceView else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
+            surface.expediteSpawn()
             // a false return = surface not realized yet; report it, not a false ok (session.type's contract).
             guard surface.performBindingAction(action) else {
                 return ControlResponse(ok: false, error: "session not realized")
@@ -213,13 +214,13 @@ extension ControlServer {
     }
 
     /// Returns a pane's terminal buffer as plain text: the visible screen by default, screen + scrollback
-    /// with `all`, or the last `lines` lines (reads the screen, then trims). `pane` picks left/right/scratch
-    /// (the scratch readable while hidden, its surface kept alive), or the on-screen pane when omitted. `all`
-    /// and `lines` are mutually exclusive and `lines` must be > 0, rejected here as well as in the CLI so a
-    /// raw socket client can't bypass it (an unchecked `lines <= 0` would fall through to the full buffer).
+    /// with `all`, or the last `lines` lines (reads the screen, then trims). `paneID` resolves the surface's
+    /// live slot before `pane`, which picks left/right/scratch (the scratch readable while hidden, its surface
+    /// kept alive), or the on-screen pane when omitted. `all` and `lines` are mutually exclusive and `lines`
+    /// must be > 0, rejected here as well as in the CLI so a raw socket client can't bypass it.
     /// A genuinely blank screen reads ok with an empty string; a failed read is an error, not a silent empty.
     func readSessionText(_ target: String?, window: String?, options: ControlSessionTextOptions) -> ControlResponse {
-        let pane = options.pane, all = options.all, lines = options.lines
+        let all = options.all, lines = options.lines
         if all, lines != nil {
             return ControlResponse(ok: false, error: "use either --all or --lines, not both")
         }
@@ -230,6 +231,7 @@ extension ControlServer {
             guard let session = store.session(withID: id) else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
+            let pane = Self.resolvedSessionTextPane(in: session, pane: options.pane, paneID: options.paneID)
             let chosen: (any TerminalSurface)?
             switch pane {
             case nil:
@@ -266,6 +268,12 @@ extension ControlServer {
             }
             return ControlResponse(ok: true, result: ControlResult(text: text))
         }
+    }
+
+    /// A stable surface token wins over its baked role by resolving against the session's current slots.
+    /// Empty or unknown tokens preserve the explicit pane fallback.
+    static func resolvedSessionTextPane(in session: Session, pane: String?, paneID: String?) -> String? {
+        paneID.flatMap { session.paneRole(forToken: $0)?.rawValue } ?? pane
     }
 
     /// Returns the addressed surface's zero-based cursor column. Takes `surface.zoom`'s target vocabulary —
@@ -400,6 +408,7 @@ extension ControlServer {
             return ControlResponse(ok: false, error: "session not realized")
         }
 
+        openSurface.expediteSpawn()
         // `searchActive` here means a prior open settled (set by the async START callback); two rapid
         // scripted opens could mis-toggle, but the GUI's single-⌘F path is the common case.
         if !session.searchActive { openSurface.startSearch() }
@@ -482,7 +491,13 @@ extension ControlServer {
             }
             // inject returns false when the view exists but its libghostty surface isn't realized yet (there
             // is no realize/select path for the split pane) — report that instead of a false ok.
-            guard let surface = split as? GhosttySurfaceView, surface.inject(text: text) else {
+            guard let surface = split as? GhosttySurfaceView else {
+                return ControlResponse(ok: false, error: "session not realized")
+            }
+            // a queued split is granted here, so the inject lands; an unmounted one still fails fast, there
+            // being no poll for the split pane.
+            surface.expediteSpawn()
+            guard surface.injectAsUserInput(text: text) else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
@@ -492,7 +507,7 @@ extension ControlServer {
             guard let scratch = store.session(withID: id)?.scratchSurface else {
                 return ControlResponse(ok: false, error: "session has no scratch terminal")
             }
-            guard let surface = scratch as? GhosttySurfaceView, surface.inject(text: text) else {
+            guard let surface = scratch as? GhosttySurfaceView, surface.injectAsUserInput(text: text) else {
                 return ControlResponse(ok: false, error: "session not realized")
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
@@ -503,15 +518,17 @@ extension ControlServer {
         // main pane: inject if realized; a false return (view exists, libghostty surface not up yet) falls
         // through to the poll rather than returning a silent-drop false ok. This probe precedes the select
         // below, so `--select` on a realized session leaves the user's selection alone.
-        if let surface = store.session(withID: id)?.surface as? GhosttySurfaceView, surface.inject(text: text) {
+        if let surface = store.session(withID: id)?.surface as? GhosttySurfaceView, surface.injectAsUserInput(text: text) {
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
         if select { store.selectSession(id) }
+        // a queued pane is granted now, so the poll waits only for libghostty, never for the pane's turn.
+        (store.session(withID: id)?.surface as? GhosttySurfaceView)?.expediteSpawn()
         for _ in 0..<12 {
             try? await Task.sleep(nanoseconds: 30_000_000)
             // poll for the surface AND its realization (a false inject keeps polling), so a just-created or
             // just-selected session isn't reported ok before its libghostty surface is up.
-            if let surface = store.session(withID: id)?.surface as? GhosttySurfaceView, surface.inject(text: text) {
+            if let surface = store.session(withID: id)?.surface as? GhosttySurfaceView, surface.injectAsUserInput(text: text) {
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
         }

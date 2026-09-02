@@ -455,7 +455,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
             RowContent(label: rowLabel(for: session, workspaceName: workspaceName), hasSplit: session.hasSplit,
                        splitAxis: session.splitAxis,
                        unseen: effectiveUnseen(session.unseenCount),
-                       indicator: effectiveIndicator(forSession: session.id), flagged: session.flagged,
+                       indicator: session.agentIndicator, flagged: session.flagged,
                        focusMember: false)
         }
 
@@ -749,6 +749,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
         lazy var flaggedSessionIcon = Self.rowIcon("terminal.fill")
         lazy var flaggedSplitSessionIcon = Self.rowIcon("rectangle.split.2x1.fill")
         lazy var flaggedHorizontalSplitSessionIcon = Self.rowIcon("rectangle.split.1x2.fill")
+        lazy var remoteSessionIcon = Self.rowIcon("arrow.up.forward.bottomleading.rectangle")
+        lazy var remoteSplitSessionIcon = Self.rowIcon("arrow.up.forward.bottomleading.rectangle",
+                                                       weight: .bold)
 
         private static func rowIcon(_ symbolName: String, weight: NSFont.Weight = .regular) -> NSImage? {
             let config = NSImage.SymbolConfiguration(pointSize: 13, weight: weight)

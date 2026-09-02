@@ -200,6 +200,19 @@ struct SocketClient {
         if let keymap = response.result?.keymap {
             return formatKeymap(keymap)
         }
+        if let remote = response.result?.remote {
+            return formatRemoteTree(remote)
+        }
+        if let zmx = response.result?.zmx {
+            return formatZmx(zmx)
+        }
+        if let restore = response.result?.restore {
+            return formatRestoreStatus(restore)
+        }
+        if let app = response.result?.app {
+            guard let commit = app.commit, !commit.isEmpty else { return app.version }
+            return "\(app.version) (\(commit))"
+        }
         if let text = response.result?.text {
             return text
         }
@@ -222,11 +235,84 @@ struct SocketClient {
             // session.resize echoes the applied (clamped) primary-pane fraction, scriptable as a bare number.
             return String(format: "%.3f", ratio)
         }
+        if let sidebarWidth = response.result?.sidebarWidth {
+            // sidebar.width echoes the STORED (clamped) points, preserved without fixed-decimal rounding:
+            // a caller comparing its request against the echo reads a difference as a clamp, and rounding an
+            // honored 271.34 to 271.3 would report one that never happened. This is the Double's own
+            // description, so 300 comes back "300.0" - equivalent spellings differ and the comparison the
+            // docs ask for is NUMERIC, never string equality.
+            return String(sidebarWidth)
+        }
         if echoID, let id = response.result?.id {
             return id
         }
         return "ok"
     }
+
+    /// The restore policy as separate lines: "what the next launch will do" and "what this one did" are
+    /// different questions, and collapsing them is what leaves a caller wondering why nothing happened.
+    static func formatRestoreStatus(_ status: ControlRestoreStatus) -> String {
+        var lines = ["configured: \(status.configured) (next launch)",
+                     "this launch: requested \(status.requestedAtLaunch), active \(status.active)"]
+        if status.restartRequired { lines.append("restart agterm to apply the configured mode") }
+        if let reason = status.unavailableReason { lines.append("live unavailable: \(reason)") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// A remote host's attachable sessions, one per line, carrying the session id `zmx attach` takes. An
+    /// empty answer says so rather than printing nothing, which a caller cannot tell from a failed read.
+    static func formatRemoteTree(_ tree: ControlRemoteTree) -> String {
+        let place = tree.host.map { " on \($0)" } ?? ""
+        guard !tree.sessions.isEmpty else { return "no attachable sessions\(place)" }
+        return tree.sessions.map { session in
+            let split = session.panes.count > 1 ? " (split\(session.splitAxis.map { " \($0)" } ?? ""))" : ""
+            // what the row is for, then where it is: the running command answers "attach to which one"
+            // more often than the path does, and the context line is the far side's own answer to it
+            let running = session.panes.compactMap { $0.foreground?.first.map { CommandRestore.basename($0) } }
+            let detail = [session.context, running.isEmpty ? nil : running.joined(separator: " | ")]
+                .compactMap { $0 }.joined(separator: "  ")
+            let tail = detail.isEmpty ? "" : "  \(detail)"
+            let at = "\(session.windowName)/\(session.workspaceName)/\(session.name)"
+            return "  \(at)\(split)  [\(session.id)]  \(session.cwd)\(tail)"
+        }.joined(separator: "\n")
+    }
+
+    /// The daemon inventory under the restore header. Owner window state is its own column rather than
+    /// left to the client count: a closed window's panes sit at zero clients normally, and a reader given
+    /// only the count would read that as a leak.
+    static func formatZmx(_ inventory: ControlZmxInventory) -> String {
+        var lines = [formatRestoreStatus(inventory.restore)]
+        if !inventory.inventoryComplete {
+            lines.append("inventory incomplete: some pane is unaccounted for, so nothing can be pruned")
+        }
+        guard !inventory.entries.isEmpty else { return (lines + ["no daemons"]).joined(separator: "\n") }
+        return (lines + [""] + inventory.entries.map(zmxRow)).joined(separator: "\n")
+    }
+
+    /// Carries the ids `zmx kill` needs, not just names: a closed or unindexed row may not appear in `tree`
+    /// at all, and kill resolves a session by id or prefix, never by name — so a table of names alone
+    /// cannot get the user to the next command. Observation stays its OWN column beside the client count,
+    /// which only exists for a running daemon.
+    private static func zmxRow(_ entry: ControlZmxEntry) -> String {
+        let clients = entry.clients.map { "\($0) client\($0 == 1 ? "" : "s")" } ?? "-"
+        var owner = "-"
+        if let sessionID = entry.sessionID {
+            // the full window/workspace/session/pane path: one session name can appear in two workspaces,
+            // and the daemon name alone says nothing about which
+            let window = entry.windowName ?? entry.windowState ?? "?"
+            let path = [window, entry.workspaceName ?? "?", entry.sessionName ?? "?"].joined(separator: " / ")
+            let pane = entry.pane.map { " (\($0))" } ?? ""
+            let windowID = entry.windowID.map { " win \(shortID($0))" } ?? ""
+            owner = "\(shortID(sessionID)) \(path)\(pane)\(windowID)"
+        }
+        let state = entry.windowState.map { "\(entry.state) [\($0) window]" } ?? entry.state
+        return "\(entry.daemon)  \(state)  \(entry.observation)  \(clients)  \(owner)"
+    }
+
+    /// The prefix a caller pastes into `--target`/`--window`. Eight hex digits is not GUARANTEED unique,
+    /// so an ambiguous one is refused by the resolver rather than resolved wrongly; `--json` carries the
+    /// full ids for that case.
+    private static func shortID(_ id: String) -> String { String(id.prefix(8)) }
 
     /// Render the `theme.list` payload as one theme name per line (no trailing newline), the active
     /// theme(s) marked `* `, with a leading "default ghostty" entry for the no-theme (ghostty built-in)

@@ -22,6 +22,7 @@ jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       swift: ${{ steps.filter.outputs.swift }}
       cookbook: ${{ steps.filter.outputs.cookbook }}
@@ -58,6 +59,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.swift == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     # Keep the shared, host-free controller package green on Linux because it backs the GTK frontend.
     container: swift:6.3.2-noble
     steps:
@@ -88,6 +90,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.swift == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     container: swift:6.3.2-noble
     steps:
       - uses: actions/checkout@v7
@@ -125,6 +128,7 @@ jobs:
     needs: [changes, test-linux, lint-linux]
     if: needs.changes.outputs.swift == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     # Compile-check the GTK port. The official Swift image carries the toolchain; apt adds GTK4,
     # libadwaita, GL deps, and zig builds libghostty.
     container: swift:6.3.2-noble
@@ -201,6 +205,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cookbook == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: recipe layout, index and headings
@@ -244,7 +249,7 @@ jobs:
             if ! head -c 2 "$f" | grep -q '#!'; then
               echo "::error::$f has no shebang"; fail=1
             fi
-          done < <(find cookbook -type f \( -name '*.sh' -o -name '*.zsh' -o -name '*.py' \) -print0)
+          done < <(find cookbook -type f \( -name '*.sh' -o -name '*.zsh' -o -name '*.fish' -o -name '*.py' \) -print0)
 
           exit $fail
       - name: shellcheck
@@ -252,15 +257,21 @@ jobs:
         # without it a failed find would leave the step green having checked nothing
         shell: bash
         run: find cookbook -type f -name '*.sh' -print0 | xargs -0 -r shellcheck
-      - name: Install zsh
-        # not on the ubuntu-latest image, unlike shellcheck
-        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Install recipe shells
+        # neither is on the ubuntu-latest image; fish runs a recipe regression test
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
       - name: zsh syntax check
         # shellcheck cannot parse zsh, so a parse is the only gate .zsh recipes get.
         # -n1 because zsh -n reads one script and treats the rest as its arguments;
         # bash explicitly, for pipefail, same reason as the shellcheck step above
         shell: bash
         run: find cookbook -type f -name '*.zsh' -print0 | xargs -0 -r -n1 zsh -n
+      - name: fish syntax check
+        # nothing lints .fish either, so a parse is the only gate these recipes get.
+        # -n1 because fish --no-execute parses its first argument and ignores the rest,
+        # so a batched call would leave the step green having checked one file
+        shell: bash
+        run: find cookbook -type f -name '*.fish' -print0 | xargs -0 -r -n1 fish --no-execute
       - name: Install ruff
         # not on the ubuntu-latest image, unlike shellcheck. pipx, because the runner's
         # python is externally managed and a bare pip install into it fails
@@ -273,3 +284,8 @@ jobs:
         # out. bash explicitly, for pipefail, same reason as the shellcheck step above
         shell: bash
         run: find cookbook -type f -name '*.py' -print0 | xargs -0 -r ruff check --ignore EXE001
+      - name: Python recipe tests
+        # one process per file keeps recipes independent and gives each test script its own argv.
+        # bash explicitly, for pipefail, same reason as the ruff step above.
+        shell: bash
+        run: find cookbook -type f -name 'test_*.py' -print0 | xargs -0 -r -n1 python3

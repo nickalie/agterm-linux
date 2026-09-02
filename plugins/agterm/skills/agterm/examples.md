@@ -1,9 +1,10 @@
-# agterm control recipes
+# agterm control examples
 
 Worked `agtermctl` examples. See `reference.md` for exact flags and return shapes. All assume
 `agtermctl` is on PATH and you are inside an agterm session (`AGTERM_ENABLED=1`).
 
-Installable, human-facing versions of these workflows: https://github.com/umputun/agterm/tree/master/cookbook
+Installable, human-facing workflows live in the repository's cookbook — see `cookbook.md` for how to
+list, fetch and install one, or to read one as reference for a tricky case.
 
 ## Inspect the current state
 
@@ -12,16 +13,89 @@ agtermctl tree --json        # workspaces -> sessions, active/split/overlay/scra
 agtermctl window list --json # windows, with open/active flags
 
 # what is each pane RUNNING right now (foreground argv; absent at the shell prompt or for a setuid program like top/sudo)
-agtermctl tree --json | jq -r '.result.tree.workspaces[].sessions[] | "\(.name): \(.foreground // "shell")"'
+# foregroundShell names the shell holding the foreground, so an existing pane with neither could not be read.
+# it does NOT mean the pane is at a prompt: a builtin like `read` runs inside the shell and looks the same
+agtermctl tree --json | jq -r '.result.tree.workspaces[].sessions[]
+  | "\(.name): \(.foreground // .foregroundShell // "unknown")"'
 ```
 
-## Reset the restore-on-restart commands
+## Capture or reset the restore-on-restart commands
 
-The opt-in "Restore running commands on restart" setting saves each pane's foreground command at quit.
-Clear those saved commands so the next launch restores plain shells:
+The `rerun` restore mode saves each pane's foreground command at quit. Clear those saved commands in any
+mode so a future rerun launch restores plain shells:
 
 ```bash
 agtermctl restore clear
+```
+
+Or capture them now, so an exit that never reaches a clean quit (a force quit, a crash, a hard reset)
+restores like one. It requires this launch to be in `rerun` mode and answers with the number of panes it captured:
+
+```bash
+agtermctl restore capture
+```
+
+Use a keybind or a scheduled job rather than typing it at a prompt: run by hand it records ITSELF, being
+that pane's foreground process while it runs, and `restore clear` is app-global so it is no per-pane undo.
+
+## See and clean up the daemons behind live sessions
+
+In `live` mode each primary and split pane runs inside a zmx daemon that outlives the app. List them with
+the pane that claims each one:
+
+```bash
+agtermctl zmx list
+```
+
+A `claimed` row with zero clients is a CLOSED window's pane, which is its resting state, not a leak. Only
+`orphan` rows are eligible for cleanup, and prune refuses entirely if the pane inventory is incomplete:
+
+```bash
+agtermctl zmx prune
+```
+
+To destroy one pane's daemon and the process in it, name the session and the pane and confirm. All three
+are required because this kills a backend process, reaching a pane no window is showing and every client
+attached to it:
+
+```bash
+agtermctl zmx kill --target 3f2a --pane left --force
+```
+
+## Attach a session running on another Mac
+
+List what the other machine offers across every open window, then open one here by its ID. The far side
+has to be in `live` mode, reachable over ssh with key-based auth, and carry `agtermctl` from the cask or
+the Help action — running agterm alone leaves no CLI an ssh command can find. Run it with no host to ask
+the same of this app, which is the form the remote call runs over there:
+
+```bash
+agtermctl zmx tree studio.local
+agtermctl zmx attach studio.local 7c1e4a02-...
+```
+
+To let the user choose, pipe the listing through the picker:
+
+```bash
+s=$(agtermctl zmx tree studio.local --json |
+  jq '[.result.remote.sessions[] | {id, label: .name,
+        subtitle: (.windowName + "/" + .workspaceName + "  " + .cwd)}]' |
+  agtermctl pick --prompt "Attach which session?" | jq -r '.id // empty')
+[ -n "$s" ] && agtermctl zmx attach studio.local "$s"
+```
+
+The row is marked remote and carries `remoteHost` in the tree. Closing it ends only this side's connection,
+and it does not come back after a relaunch.
+
+## Read or change the local restore policy
+
+This is about THIS instance, not a remote one: `zmx attach` requires nothing of the local restore mode.
+A mode you set applies to the NEXT launch, because a pane is wrapped in a daemon or not at the moment it
+is created:
+
+```bash
+agtermctl restore mode          # what settings hold, what this launch asked for, what it got
+agtermctl restore mode live     # for the next launch
 ```
 
 ## Pin what a pane restores (per-session override)
@@ -30,6 +104,9 @@ agtermctl restore clear
 foreground. It is written now and consumed at the next launch (it never touches the running session), and
 it is sticky — it fires again on every restart until cleared. Read it back on `tree` as the node's
 `restoreCommand` / `splitRestoreCommand`.
+
+In fresh-shell or live mode, a command or `--none` is saved for a future rerun launch and the response
+names the active mode. `--clear` works in every mode. A pin never opts one session out of live mode.
 
 ```bash
 agtermctl session restore "claude --resume abc123" --target "$AGTERM_SESSION_ID"  # pin a shell line
@@ -212,7 +289,7 @@ program renders normally in the overlay; read its OUTPUT from the program's own 
 Pass `--target "$AGTERM_SESSION_ID"` so the overlay attaches to YOUR (the calling) session. Without
 `--target` it opens on whatever session is currently active — so if the user has moved to another
 session or workspace, an agent (e.g. running revdiff) pops a blocking full-pane overlay on the WRONG
-session. Always target your own session for these recipes.
+session. Always target your own session for these examples.
 
 ```bash
 agtermctl session overlay open "revdiff HEAD~3 --output /tmp/notes.md" --target "$AGTERM_SESSION_ID" --block   # this session
@@ -272,19 +349,20 @@ script that needs the selection some time after the fact.
 
 ## Cover only your own pane, leaving the user's other pane usable
 
-`--pane left|right` scopes the overlay to ONE split pane instead of the whole session. Your shell
-already knows which pane it runs in, so pass `$AGTERM_PANE` and the overlay lands over YOUR pane while
-the user keeps working in the sibling one:
+`--pane left|right` scopes the overlay to ONE split pane instead of the whole session. A newly spawned
+shell can pass `$AGTERM_PANE` so the overlay appears over its pane while the user keeps working in the
+sibling one:
 
 ```bash
 agtermctl session overlay open "revdiff HEAD~3" --target "$AGTERM_SESSION_ID" --pane "$AGTERM_PANE"
 ```
 
-This works unchanged on a NON-split session, which reports `AGTERM_PANE=left`, so there is no need to
-check the split state first. Two cases still need care: `$AGTERM_PANE` is `scratch` in the scratch
-terminal, which `--pane` rejects as a usage error, and a shell in the LEFT pane of a session whose split
-is hidden with the RIGHT pane focused reports `left` while only the right pane is on screen, so the open
-is refused with `pane not visible`. Handle both by falling back to a session-wide overlay on error.
+This works on a fresh non-split session, which reports `AGTERM_PANE=left`, so there is no need to check the
+split state first. Three cases still need care: `AGTERM_PANE` is a spawn role and may be stale after a pane
+promotion or `session swap`; it is `scratch` in the scratch terminal, which `--pane` rejects as a usage
+error; and a shell in the left pane of a session whose split is hidden with the right pane focused reports
+`left` while only the right pane is on screen, so the open is refused with `pane not visible`. Fall back to
+a session-wide overlay when the current role is uncertain or the pane-specific open fails.
 Left and right are independent — both may be open at once, each with its
 own `--background-color` — and a pane overlay is always full-pane, so `--size-percent` is rejected with
 it. `--wait`, `--block`, `--cwd` and `--follow` behave exactly as they do for a session-wide overlay;
@@ -495,7 +573,7 @@ agtermctl sidebar collapse --window "$AGTERM_WINDOW_ID"  # collapse a specific w
 
 Collapse or expand ONE workspace by id (the per-workspace pair, unlike `sidebar expand`/`collapse` which
 act on all of them). Create a workspace already collapsed with `workspace new --collapsed`, then add
-sessions with `session new --no-select` so it never opens or steals the current selection — the recipe
+sessions with `session new --no-select` so it never opens or steals the current selection — the example
 for staging a batch of sessions out of the way. Read the open/closed state back from the tree workspace
 node's `collapsed` flag (`true` when collapsed, omitted when expanded).
 
@@ -545,6 +623,7 @@ default, the whole scrollback with `--all`, or the last N lines with `--lines N`
 agtermctl session text                         # the visible screen of the focused pane
 agtermctl session text --lines 50              # the last 50 lines of the buffer
 agtermctl session text --pane right            # the split pane (errors if there is no split)
+agtermctl session text --pane-id "$AGTERM_PANE_ID" # this shell's terminal, even after a swap
 agtermctl session text --pane scratch --all    # the scratch terminal's full buffer, even while it's hidden
 # extract every URL from the full scrollback:
 agtermctl session text --all --json | jq -r '.result.text' | grep -oE 'https?://[^ ]+'
@@ -656,6 +735,11 @@ focus the tagged pane. An `active` tag is informational and preserves the curren
 `session go --to next-attention` only steps the selection; it does not move focus into the pane.
 Without `--pane` the status is treated as coming from the main (`left`) pane, so a block set from the split
 can be wiped by typing in the main pane and the reveal lands on the wrong surface.
+
+The tag also protects a block from the OTHER pane's agent: while the session is `blocked`, a status from a
+different pane that is not itself `blocked` is refused with `blocked status owned by pane <pane>`,
+so an agent reporting `active` after every tool call cannot erase its neighbour's request for input. With
+an agent in each pane, tag both or the second one's ordinary work looks like it comes from the first.
 
 ```bash
 # an agent working in the split pane; $AGT_PANE is set in a custom keymap command, else name it
@@ -863,7 +947,7 @@ choice=$(printf '%s\n' "$branches" | agtermctl pick --prompt "Check out which br
 agtermctl session hud close --target "$me"
 ```
 
-`hud update` repaints in place, no re-spawn and no blink, and it replaces the whole spec: `--detail`,
+`session hud update` repaints in place, no re-spawn and no blink, and it replaces the whole spec: `--detail`,
 the spinner and `--text-color` are dropped unless repeated. `--spinner-style bar|braille|circle|blocks|dot` picks the look and
 turns the spinner on by itself (`dot` blinks instead of animating, for a panel up for minutes), and an
 update may switch style mid-flight; `--spinner-style none` stops it, which is also what a read-back's
@@ -884,8 +968,9 @@ agtermctl tree --json | jq -r --arg s "$me" '
 ```
 
 Nothing announces a HUD as an event, so poll `tree` when another process owns the lifecycle. The slot is
-shared with `session overlay open`, which means a second `hud` replaces the first, an `overlay open`
-replaces a HUD, and `overlay result` over one errors `no overlay result: the slot holds a hud`. A HUD over
+shared with `session overlay open`, which means a second `session hud` replaces the first, a
+`session overlay open` replaces a HUD, and `session overlay result` over one errors
+`no overlay result: the slot holds a hud`. A HUD over
 a RUNNING program is refused instead: a message is replaceable, a program is not.
 
 ## Navigate and manage windows
@@ -965,8 +1050,8 @@ agtermctl config reload                 # apply it; prints the diagnostic count 
 ```
 
 `ghostty.conf` is scoped to agterm and overrides the bundled defaults and your global
-`~/.config/ghostty/config`; agterm's own Settings (font, theme, opacity, scroll) still win. Full key
-reference: https://ghostty.org/docs/config
+`~/.config/ghostty/config`; the values agterm emits from Settings load last and win over matching values
+there. Current list: https://agterm.com/docs#ghostty. Full key reference: https://ghostty.org/docs/config
 
 ## Set the terminal theme
 

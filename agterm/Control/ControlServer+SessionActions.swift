@@ -296,6 +296,15 @@ extension ControlServer: ControlActions {
         }
     }
 
+    /// Resolve the control target, then delegate every swap side effect to the AppActions operation the GUI
+    /// twin also uses.
+    func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse {
+        switch resolver.resolveSessionTarget(target, window: window) {
+        case .failure(let response): return response
+        case .success(let (store, id)): return await actions.swapSessionPanes(id, in: store)
+        }
+    }
+
     /// Show/hide the target's scratch terminal, a third full-overlay shell. `on|off|toggle` is computed
     /// against `scratchActive`, so both are idempotent; hiding keeps the shell alive, the `closeScratch`
     /// teardown being reserved for the shell's own `exit`. `command` (only when showing) runs that program
@@ -385,6 +394,9 @@ extension ControlServer: ControlActions {
     /// ride the EPHEMERAL indicator, lasting only until the next `session.status` without them.
     /// `update.pane` (`StatusPane`, dispatcher-validated, nil = `left`/main) records the pane that set the
     /// status, driving the pane-scoped keystroke-clear and pane-aware reveal. Renders on every non-idle one.
+    /// While a session is blocked, a write from ANOTHER pane that is neither `blocked` nor `idle` is refused
+    /// whole (`AppStore.applyControlStatus`) with a `blocked status owned by pane` error and no sound — one
+    /// pane's `active`/`completed` must not erase the other's block.
     func setSessionStatus(_ target: String?, window: String?, update: ControlSessionStatusUpdate) -> ControlResponse {
         // validated before any mutation; an empty value counts as none, matching `AgentStatus.effectiveSound`.
         if let sound = update.sound, !sound.isEmpty, StatusSoundPlayer.shared.action(for: sound) == nil {
@@ -398,10 +410,14 @@ extension ControlServer: ControlActions {
             // `--pane-id` resolves against the LIVE surfaces and overrides the stale role `--pane`, so a
             // promoted-then-re-split pane lands on its CURRENT slot (#199); absent/unknown falls back to it.
             let resolvedPane = update.paneID.flatMap { session?.paneRole(forToken: $0) } ?? update.pane
-            store.setAgentIndicator(AgentIndicator(status: update.status, blink: update.blink ?? false,
-                                                   autoReset: update.autoReset ?? false,
-                                                   color: update.color, shape: update.shape,
-                                                   statusPane: resolvedPane), forSession: id)
+            let indicator = AgentIndicator(status: update.status, blink: update.blink ?? false,
+                                           autoReset: update.autoReset ?? false,
+                                           color: update.color, shape: update.shape, statusPane: resolvedPane)
+            // a refusal returns BEFORE the sound: the write did not happen, so it must make no noise either.
+            if case .refused(let owner) = store.applyControlStatus(indicator, forSession: id) {
+                return ControlResponse(ok: false, error: "blocked status owned by pane \(owner.rawValue) " +
+                    "(write from that pane to change it)")
+            }
             // per-call sound wins on any status; the Settings default plays only on a NEW entry into `blocked`.
             let blockedDefault = wasBlocked ? nil : self.settingsModel.settings.blockedStatusSoundName
             if let name = update.status.effectiveSound(perCall: update.sound, blockedDefault: blockedDefault) {
@@ -423,8 +439,8 @@ extension ControlServer: ControlActions {
     /// baked role `update.pane`, defaulting to main) with ONE divergence: an unresolvable `--pane-id`
     /// WITHOUT an explicit `--pane` is an ERROR here, since a bad fallback would overwrite the MAIN pane's
     /// persisted command when a hook meant the split (a status only puts a glyph on the wrong row).
-    /// `.scratch` and a `.right` without a split are rejected too. A `set` while restore-running-command is
-    /// off still succeeds with a note in `result.text`; `none`/`clear` get none — their outcome lands anyway.
+    /// `.scratch` and a `.right` without a split are rejected too. `set` and `none` outside rerun mode still
+    /// save policy and return a note naming the active mode; either clear form remains mode-independent.
     func setSessionRestore(_ target: String?, window: String?,
                            update: ControlSessionRestoreUpdate) -> ControlResponse {
         return resolver.resolveSession(target, window: window) { store, id in
@@ -458,9 +474,9 @@ extension ControlServer: ControlActions {
                 return ControlResponse(ok: false,
                                        error: "failed to save the restore override, the previous value is still in effect")
             }
-            var result = ControlResult(id: id.uuidString)
-            if case .pin = update.pin, self.settingsModel.settings.restoreRunningCommand != true {
-                result.text = "saved, but \"Restore running commands on restart\" is off, so the override will not run"
+            var result = ControlResult(id: id.uuidString, pane: pane.rawValue)
+            if update.pin != .unpin, self.launchRestoreMode != .rerun {
+                result.text = "saved for rerun mode; active restore mode is \(self.launchRestoreMode.rawValue)"
             }
             return ControlResponse(ok: true, result: result)
         }
@@ -489,6 +505,18 @@ extension ControlServer: ControlActions {
             default: return ControlResponse(ok: false, error: "invalid flag mode: \(mode)")
             }
             store.setFlag(want, forSession: id) // no-op + no save when unchanged (idempotent)
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Set or clear a session's title-bar context. The value is already trimmed and validated by the
+    /// dispatcher, so nil here means clear rather than "nothing supplied".
+    func setSessionContext(_ target: String?, window: String?, context: String?) -> ControlResponse {
+        resolver.resolveSession(target, window: window) { store, id in
+            guard store.session(withID: id) != nil else {
+                return ControlResponse(ok: false, error: "no such session: \(target ?? "active")")
+            }
+            store.setContext(context, forSession: id) // no-op, no save and no event when unchanged
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }

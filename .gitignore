@@ -4,6 +4,8 @@ GhosttyKit.xcframework
 agterm/Resources/ghostty
 agterm/Resources/terminfo
 .ghostty-build-stamp
+agterm/Resources/zmx
+.zmx-build-stamp
 *.tar.gz
 
 # build artifacts
@@ -25,8 +27,11 @@ windows/
 __pycache__/
 .ruff_cache/
 
-# revmux review scaffolding: caller-written task context plus its run archive, local to a review
-.revmux/
+# revmux review scaffolding: caller-written task context plus its run archive, local to a review.
+# profile.md is the exception — it calibrates every review of this repo, so it is tracked. Excluding
+# the directory itself would make that re-include unreachable, hence the glob.
+.revmux/*
+!.revmux/profile.md
 
 # track the path-scoped Claude rules (the global ~/.gitignore_global ignores .claude/)
 !.claude/

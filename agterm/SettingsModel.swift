@@ -4,9 +4,9 @@ import os
 
 private let logger = Logger(subsystem: "com.umputun.agterm", category: "SettingsModel")
 
-/// Observable settings state for the Settings window, loaded from `SettingsStore` at init. Each mutation
-/// persists AND applies live: rewrites the ghostty settings file, rebroadcasts the config to every live
-/// surface, and clears per-session font-size overrides (the shared `update_config` resets all surfaces).
+/// Observable settings state for the Settings window, loaded from `SettingsStore` at init. Most mutations
+/// persist and apply live through the shared config path. Restore mode is the exception: it persists for the
+/// next launch because the current process uses one immutable mode.
 @Observable
 @MainActor
 final class SettingsModel {
@@ -63,10 +63,10 @@ final class SettingsModel {
         applySidebarBackgroundShift()
         applySidebarFontSize()
         applyInterfaceFontSize()
+        applyQuickTerminalSizePercent()
         applyBaseFontSize()
         applyAgentStatusColors()
         applyAgentStatusShapes()
-        applyRestoreRunningCommand()
         applySessionNaming()
         applyWorkspaceRowClickExpands()
         applyAttentionButtonEnabled()
@@ -204,17 +204,44 @@ final class SettingsModel {
     func setMouseScrollMultiplier(_ value: Double?) { settings.mouseScrollMultiplier = value; persistAndApply() }
     // ghostty key (right-click-action): persistAndApply() rewrites the conf and reloads surfaces live.
     func setRightClickPaste(_ value: Bool?) { settings.rightClickPaste = value; persistAndApply() }
+    // ghostty keys (cursor-style / cursor-style-blink). A reload re-applies both to the panes already
+    // open, though only while a pane's cursor still follows the configured default: a program that set its
+    // own shape with DECSCUSR keeps that until it resets.
+    func setCursorStyle(_ value: AppSettings.CursorStyle?) { settings.cursorStyle = value?.rawValue; persistAndApply() }
+    func setCursorBlink(_ value: Bool?) { settings.cursorBlink = value; persistAndApply() }
     // sidebar behavior, not a ghostty key; the Coordinator reads the mirror on the next click.
     func setWorkspaceRowClickExpands(_ value: Bool?) { settings.workspaceRowClickExpands = value; persistAndApply() }
     func setInactivePaneMuteStrength(_ value: Int?) { settings.inactivePaneMuteStrength = value; persistAndApply() }
     func setSidebarBackgroundShift(_ value: Int?) { settings.sidebarBackgroundShift = value; persistAndApply() }
     func setSidebarFontSize(_ value: Double?) { settings.sidebarFontSize = value; persistAndApply() }
     func setInterfaceFontSize(_ value: Double?) { settings.interfaceFontSize = value; persistAndApply() }
-    // not a ghostty key, so persistAndApply()'s writeGhosttyConfig() no-ops and no surface reload fires.
-    func setRestoreRunningCommand(_ value: Bool?) { settings.restoreRunningCommand = value; persistAndApply() }
     // naming policy, not a ghostty key: the sidebar rows and title bar pick it up from
     // persistAndApply()'s .agtermAppearanceChanged, since the mirror itself is not observable.
     func setSessionNameFromTerminalTitle(_ value: Bool?) { settings.sessionNameFromTerminalTitle = value; persistAndApply() }
+    func setQuickTerminalSizePercent(_ value: Int?) {
+        settings.quickTerminalSizePercent = value
+        persistAndApply()
+    }
+    /// Persist the policy for the next launch. The current process keeps `GhosttyApp.launchRestoreMode`.
+    ///
+    /// Rolls memory back on a failed write, like `AppStore.setRestoreCommand`: a Settings picker or a
+    /// `restore.mode` read that reported the new mode while disk kept the old one would promise a next
+    /// launch nothing is going to deliver. Returns whether it reached disk.
+    @discardableResult
+    func setRestoreMode(_ value: RestoreMode) -> Bool {
+        let previousMode = settings.restoreMode
+        let previousLegacy = settings.restoreRunningCommand
+        settings.restoreMode = value
+        settings.restoreRunningCommand = nil
+        do {
+            try settingsStore.save(settings)
+            return true
+        } catch {
+            settings.restoreMode = previousMode
+            settings.restoreRunningCommand = previousLegacy
+            return false
+        }
+    }
     // chrome flag, not a ghostty key: persistAndApply() no-ops the config but rides .agtermAppearanceChanged.
     func setAttentionButtonEnabled(_ value: Bool?) { settings.attentionButtonEnabled = value; persistAndApply() }
 
@@ -451,8 +478,8 @@ final class SettingsModel {
     /// The commented starter `restore-denylist.conf` text.
     private func starterRestoreDenylistText() -> String {
         """
-        # restore-denylist.conf — programs NOT to re-run when "Restore running commands on restart"
-        # is on. One command name per line, matched on the command's basename. Blank lines and lines
+        # restore-denylist.conf: programs NOT to re-run in rerun restore mode. One command name per line,
+        # matched on the command's basename. Blank lines and lines
         # starting with # are ignored. Read at launch; edits take effect on the next launch.
         #
         # Terminal multiplexers just start a fresh, empty session when re-run (your old session is gone),
@@ -564,8 +591,12 @@ final class SettingsModel {
         # Example — make the macOS Option key send Alt (uncomment to enable):
         # macos-option-as-alt = true
         #
-        # NOTE: agterm's UI-managed keys (font, theme, background opacity/blur, scroll speed) are set
-        # in Settings and always win over this file — set those in Settings, everything else here.
+        # NOTE: Values agterm emits from Settings load after this file and win. See the current list at
+        # https://agterm.com/docs#ghostty; put other keys here.
+        #
+        # NOT SUPPORTED: the `ssh-env` and `ssh-terminfo` shell-integration features. They work by
+        # wrapping `ssh` as a call to the `ghostty` CLI absent from agterm's bundle,
+        # so agterm forces them back off. Your other shell-integration-features flags are kept.
 
         """
     }
@@ -604,10 +635,10 @@ final class SettingsModel {
         applySidebarBackgroundShift()
         applySidebarFontSize()
         applyInterfaceFontSize()
+        applyQuickTerminalSizePercent()
         applyBaseFontSize()
         applyAgentStatusColors()
         applyAgentStatusShapes()
-        applyRestoreRunningCommand()
         applySessionNaming()
         applyWorkspaceRowClickExpands()
         applyAttentionButtonEnabled()
@@ -641,10 +672,6 @@ final class SettingsModel {
 
     private func applyNotificationBadgeEnabled() {
         GhosttyApp.shared.setNotificationBadgeEnabled(settings.notificationBadgeEnabled ?? true)
-    }
-
-    private func applyRestoreRunningCommand() {
-        GhosttyApp.shared.setRestoreRunningCommand(settings.restoreRunningCommand ?? false)
     }
 
     private func applySessionNaming() {
@@ -698,6 +725,10 @@ final class SettingsModel {
 
     private func applyInterfaceFontSize() {
         GhosttyApp.shared.setInterfaceFontSize(settings.effectiveInterfaceFontSize)
+    }
+
+    private func applyQuickTerminalSizePercent() {
+        GhosttyApp.shared.setQuickTerminalSizePercent(settings.effectiveQuickTerminalSizePercent)
     }
 
     private func applyBaseFontSize() {

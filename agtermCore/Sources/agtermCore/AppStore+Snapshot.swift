@@ -11,38 +11,55 @@ extension AppStore {
     /// Builds a `Snapshot` of the current tree; each session captures its live `currentCwd` (or `initialCwd`
     /// if no PWD report arrived). Runs on `@MainActor`; the result is `Sendable`, safe to hand to a writer.
     public func snapshot() -> Snapshot {
-        let workspaceSnapshots = workspaces.map { workspace in
-            let sessions = workspace.sessions.map(sessionSnapshot)
-            // only a collapsed workspace writes the flag, so an all-expanded tree matches a legacy snapshot.
-            return WorkspaceSnapshot(id: workspace.id, name: workspace.name, sessions: sessions,
-                                     collapsed: workspace.isExpanded ? nil : true)
-        }
+        let workspaceSnapshots = workspaces.map(workspaceSnapshot)
         // TREE order keeps the on-disk list deterministic (not the Set's hash order); an unmarked store omits
         // both focus keys, matching a file written before the set existed. `focusedWorkspaceID` stays unused.
         let focusIDs = workspaces.map(\.id).filter(focusedWorkspaceIDs.contains)
-        return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots,
+        let persistable = Set(workspaceSnapshots.flatMap(\.sessions).map(\.id))
+        let recency = sessionRecency.items.filter(persistable.contains)
+        return Snapshot(selectedSessionID: persistedSelection(among: persistable, recency: recency),
+                        workspaces: workspaceSnapshots,
                         sidebarWidth: sidebarWidth, sidebarVisible: sidebarVisible, sidebarMode: sidebarMode,
                         focusedWorkspaceIDs: focusIDs.isEmpty ? nil : focusIDs,
                         focusEnabled: focusEnabled ? true : nil,
-                        sessionRecency: sessionRecency.items)
+                        sessionRecency: recency)
+    }
+
+    /// The selection to write. A remote session is not in the snapshot, so naming it would restore an empty
+    /// window while local rows sit there; fall back to the most recent surviving session, then the first,
+    /// matching the MRU repair `reselectIfSelectionHidden` already does for a narrowed tree.
+    private func persistedSelection(among persistable: Set<UUID>, recency: [UUID]) -> UUID? {
+        if let selectedSessionID, persistable.contains(selectedSessionID) { return selectedSessionID }
+        guard selectedSessionID != nil else { return nil }
+        return recency.first ?? workspaces.flatMap(\.sessions).first { persistable.contains($0.id) }?.id
     }
 
     func sessionSnapshot(_ session: Session) -> SessionSnapshot {
-        SessionSnapshot(id: session.id, customName: session.customName, cwd: session.currentCwd ?? session.initialCwd,
-                        isSplit: session.isSplit, splitAxis: session.isSplit ? session.splitAxis : nil,
+        SessionSnapshot(id: session.id, paneIdentity: session.paneIdentity,
+                        splitPaneIdentity: session.hasSplit ? session.splitPaneIdentity : nil,
+                        customName: session.customName, cwd: session.currentCwd ?? session.initialCwd,
+                        isSplit: session.isSplit, hasSplit: session.hasSplit ? true : nil,
+                        splitAxis: session.hasSplit ? session.splitAxis : nil,
                         fontSize: session.fontSize,
                         splitCwd: session.splitCwd ?? session.initialSplitCwd, splitRatio: session.splitRatio,
                         flagged: session.flagged,
                         foregroundCommand: session.foregroundCommand,
                         splitForegroundCommand: session.splitForegroundCommand,
                         initialCommand: session.initialCommand, commandWait: session.commandWait ? true : nil,
+                        splitInitialCommand: session.splitInitialCommand,
+                        splitCommandWait: session.splitCommandWait ? true : nil,
                         backgroundWatermark: session.backgroundWatermark,
                         restoreCommand: session.restoreCommand,
-                        splitRestoreCommand: session.splitRestoreCommand)
+                        splitRestoreCommand: session.splitRestoreCommand,
+                        context: session.context)
     }
 
+    /// The single workspace-to-disk producer, used by the launch snapshot and by a closed workspace's
+    /// Recent Closed record. Only a collapsed workspace writes the flag, so an all-expanded tree matches a
+    /// legacy snapshot.
     func workspaceSnapshot(_ workspace: Workspace) -> WorkspaceSnapshot {
-        WorkspaceSnapshot(id: workspace.id, name: workspace.name, sessions: workspace.sessions.map(sessionSnapshot),
+        WorkspaceSnapshot(id: workspace.id, name: workspace.name,
+                          sessions: workspace.sessions.filter(\.isPersistable).map(sessionSnapshot),
                           collapsed: workspace.isExpanded ? nil : true)
     }
 
@@ -56,32 +73,36 @@ extension AppStore {
     /// field: `snapshot()` serializes those, so arming one would let any save before the surface spawns
     /// rewrite what `loadStore`'s launch strip just removed from disk.
     ///
-    /// A split hidden at the last quit is NOT rebuilt (`hasSplit` follows `isSplit`), so its pinned override
-    /// describes a pane that no longer exists and is DROPPED here, the rule `closeSplit` applies when a pane
-    /// goes away. Keeping it would leave a value `tree` reports but no write can clear (`session.restore
-    /// --pane right` is rejected without a split), and a fresh ⌘D split at the next quit would inherit it.
+    /// A hidden split keeps its identity and restore state so showing it reattaches the surviving daemon;
+    /// focus is intentionally not persisted and therefore returns to the primary pane.
     func session(from snapshot: SessionSnapshot, launchRestore: Bool = false) -> Session {
-        let session = Session(id: snapshot.id, initialCwd: snapshot.cwd, customName: snapshot.customName)
+        let hasSplit = (snapshot.isSplit ?? false) || (snapshot.hasSplit ?? false)
+        let session = Session(id: snapshot.id, initialCwd: snapshot.cwd, customName: snapshot.customName,
+                              paneIdentity: snapshot.paneIdentity ?? UUID(),
+                              splitPaneIdentity: hasSplit ? (snapshot.splitPaneIdentity ?? UUID()) : nil)
         session.isSplit = snapshot.isSplit ?? false
-        session.hasSplit = session.isSplit
-        session.splitAxis = session.isSplit ? (snapshot.splitAxis ?? .leftRight) : .leftRight
+        session.hasSplit = hasSplit
+        session.splitAxis = hasSplit ? (snapshot.splitAxis ?? .leftRight) : .leftRight
         session.fontSize = snapshot.fontSize
         session.initialSplitCwd = snapshot.splitCwd
         session.splitRatio = snapshot.splitRatio.map { min(AppStore.splitRatioMax, max(AppStore.splitRatioMin, $0)) }
         session.flagged = snapshot.flagged ?? false
+        session.context = snapshot.context
         session.initialCommand = snapshot.initialCommand
         session.commandWait = snapshot.commandWait ?? false
+        session.splitInitialCommand = hasSplit ? snapshot.splitInitialCommand : nil
+        session.splitCommandWait = hasSplit ? (snapshot.splitCommandWait ?? false) : false
         session.wasRestored = true
         session.backgroundWatermark = snapshot.backgroundWatermark
         session.restoreCommand = snapshot.restoreCommand
-        session.splitRestoreCommand = session.isSplit ? snapshot.splitRestoreCommand : nil
+        session.splitRestoreCommand = hasSplit ? snapshot.splitRestoreCommand : nil
         if launchRestore {
             // into the TRANSIENT slots, leaving the persisted fields nil: `snapshot()` serializes those, so
             // arming them would let any save before the surface spawns rewrite the argv the launch strip
             // just removed from disk.
             session.pendingForegroundCommand = snapshot.foregroundCommand
             session.pendingRestoreCommand = snapshot.restoreCommand
-            if session.isSplit {
+            if hasSplit {
                 session.pendingSplitForegroundCommand = snapshot.splitForegroundCommand
                 session.pendingSplitRestoreCommand = session.splitRestoreCommand
             }

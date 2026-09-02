@@ -126,41 +126,18 @@ enum AgentHooksInstaller {
         try fm.copyItem(at: source, to: destination)
     }
 
-    // sentinel for the installer-baked AGTERMCTL default; a re-run replaces it instead of duplicating it.
-    private static let agtermctlMarker = "# >>> agterm agtermctl path (installer-baked) >>>"
-
     // bake the bundled agtermctl's absolute path into the installed wrappers so the hooks fire even when the
-    // CLI was never symlinked into PATH. `[ -n "${AGTERMCTL:-}" ] ||` assigns only when unset, so an explicit
-    // env override still wins (order 1 > 2 > PATH); shellQuote keeps spaces / metacharacters inert.
+    // CLI was never symlinked into PATH. The transform itself is host-free in `AgentHooksInstall`.
+    // `claudeWrapperName` is deliberately absent: the Claude adapter never calls agtermctl, it `exec`s the
+    // generic wrapper — which carries the baked path — so there is nothing to bake into it.
     private static func bakeAgtermctlPath() throws {
         guard let tool = bundledTool else { return } // no bundled CLI: leave the PATH fallback in place
         for name in AgentHooksInstall.bakedWrapperNames {
             let wrapper = destinationFolder.appendingPathComponent(name)
             let original = try String(contentsOf: wrapper, encoding: .utf8)
-            let stripped = stripBakedBlock(from: original)
-            let block = agtermctlMarker + "\n[ -n \"${AGTERMCTL:-}\" ] || AGTERMCTL=\(AgentHooksInstall.shellQuote(tool.path))\n"
-            let baked = insertAfterShebang(stripped, block: block)
+            let baked = AgentHooksInstall.bakeAgtermctlPath(into: original, toolPath: tool.path)
             try writePreservingSymlink(baked, to: wrapper)
         }
-    }
-
-    private static func stripBakedBlock(from text: String) -> String {
-        let lines = text.components(separatedBy: "\n")
-        var result: [String] = []
-        var skip = 0
-        for line in lines {
-            if skip > 0 { skip -= 1; continue }
-            if line == agtermctlMarker { skip = 1; continue } // drop the marker and the assignment below it
-            result.append(line)
-        }
-        return result.joined(separator: "\n")
-    }
-
-    private static func insertAfterShebang(_ text: String, block: String) -> String {
-        var lines = text.components(separatedBy: "\n")
-        let insertAt = lines.first?.hasPrefix("#!") == true ? 1 : 0
-        lines.insert(contentsOf: block.components(separatedBy: "\n").dropLast(), at: insertAt)
-        return lines.joined(separator: "\n")
     }
 
     // write text PRESERVING an existing symlink: a dotfiles-managed link (`~/.claude/settings.json`,
@@ -363,8 +340,9 @@ enum AgentHooksInstaller {
     // the success-alert text, calling out anything an integration could not safely update and left alone.
     private static func successText(_ outcome: InstallOutcome) -> String {
         let claudeLine = outcome.settingsSkipped
-            ? "Your ~/.claude/settings.json isn't valid JSON (or couldn't be read), so the Claude Code hooks were NOT added "
-              + "(the file was left untouched). Fix it and run this again, or add the hooks manually."
+            ? "Your ~/.claude/settings.json couldn't be safely read or merged, so the Claude Code hooks were NOT added "
+              + "(the file was left untouched). It is unreadable, not valid JSON, or has a hooks entry in a shape we "
+              + "don't recognize. Fix it and run this again, or add the hooks manually."
             : "Claude Code hooks merged into ~/.claude/settings.json."
         return """
         Scripts installed to \(destinationFolder.path).

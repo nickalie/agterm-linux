@@ -86,6 +86,13 @@ paths:
 - In tree mode, flagged rows swap to `terminal.fill` or `rectangle.split.2x1.fill`; flagged mode retains
   unfilled base icons because every row is flagged. This same-size symbol swap avoids layout shift.
   `RowContent.flagged` limits reload to the changed row.
+- A remote row (`Session.remoteHost != nil`) takes `arrow.up.forward.bottomleading.rectangle` instead, and
+  there a heavier WEIGHT means split rather than flagged: a hidden split is state nothing else reveals,
+  while the fill is tree-mode decoration the flat flagged view already passes `flagged: false` for.
+  Weight rather than `.fill` because `.fill` on a `*.rectangle` symbol fills the frame and erases the
+  arrow inside, leaving a blank box; the focused-workspace icon distinguishes itself the same way.
+  The split axis is not distinguished — no remote-looking symbol family carries both arrangements.
+  See [[control-api]].
 
 ## Workspace focus
 

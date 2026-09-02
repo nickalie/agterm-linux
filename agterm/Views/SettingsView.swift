@@ -6,7 +6,7 @@ import SwiftUI
 private let logger = Logger(subsystem: "com.umputun.agterm", category: "SettingsView")
 
 /// The Settings window (Cmd+,): six tabs — General (mouse, sessions, ghostty config), Appearance
-/// (font/theme + window translucency + mute), Interface (per-element title-bar and sidebar chrome
+/// (font/theme/cursor + window translucency + mute), Interface (per-element title-bar and sidebar chrome
 /// visibility), Notifications (banner / badge / attention toggles), Agent Status (sidebar glyph colors and
 /// shapes + blocked sound + auto-follow), and Key Mapping (config directory + keymap diagnostics + Reload).
 /// Throughout, a control's binding maps its DEFAULT value back to nil so `settings.json` stays minimal.
@@ -73,7 +73,7 @@ private struct SettingHint: View {
 }
 
 /// General tab: Mouse (scroll speed, right-click-pastes, workspace-row click), Sessions (new-session
-/// directory, restore running commands) and the inherit-global-ghostty-config toggle; visual and
+/// directory, restore mode) and the inherit-global-ghostty-config toggle; visual and
 /// notification settings have their own tabs.
 private struct GeneralSettingsView: View {
     let model: SettingsModel
@@ -119,8 +119,18 @@ private struct GeneralSettingsView: View {
                 Toggle("Name sessions after the terminal title", isOn: sessionNameFromTerminalTitle)
                     .accessibilityIdentifier("settings-session-name-from-title")
                 SettingHint("Otherwise an unnamed session is named after its directory.")
-                Toggle("Restore running commands on restart", isOn: restoreRunningCommand)
-                    .accessibilityIdentifier("settings-restore-running-command")
+                Picker("Restore sessions", selection: restoreMode) {
+                    ForEach(RestoreMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("settings-restore-mode")
+                SettingHint("Changes apply after restarting agterm.")
+                    .accessibilityIdentifier("settings-restore-restart-hint")
+                if model.settings.effectiveRestoreMode == .live,
+                   let reason = GhosttyApp.shared.liveRestoreUnavailableReason {
+                    SettingHint(reason)
+                }
                 Toggle("Confirm before closing a session", isOn: confirmCloseSession)
                     .accessibilityIdentifier("settings-confirm-close-session")
                 Toggle("Allow undo after closing sessions and workspaces", isOn: closeGraceUndoEnabled)
@@ -142,9 +152,8 @@ private struct GeneralSettingsView: View {
                 set: { model.setSessionNameFromTerminalTitle($0 ? true : nil) })
     }
 
-    private var restoreRunningCommand: Binding<Bool> {
-        Binding(get: { model.settings.restoreRunningCommand ?? false },
-                set: { model.setRestoreRunningCommand($0 ? true : nil) })
+    private var restoreMode: Binding<RestoreMode> {
+        Binding(get: { model.settings.effectiveRestoreMode }, set: { model.setRestoreMode($0) })
     }
 
     private var confirmCloseSession: Binding<Bool> {
@@ -208,7 +217,7 @@ private struct GeneralSettingsView: View {
     }
 }
 
-/// Appearance tab: Terminal (font family, size, theme) and Window (toolbar mode, background opacity + blur,
+/// Appearance tab: Terminal (font family, size, cursor, theme) and Window (toolbar mode, background opacity + blur,
 /// sidebar tint + font size, pane/backdrop mute), each persisting and live-applying via `SettingsModel`.
 private struct AppearanceSettingsView: View {
     let model: SettingsModel
@@ -219,16 +228,47 @@ private struct AppearanceSettingsView: View {
     var body: some View {
         Form {
             Section("Terminal") {
-                Picker("Font", selection: fontFamily) {
-                    Text("Default").tag(String?.none)
-                    ForEach(fonts, id: \.self) { Text($0).tag(String?.some($0)) }
-                }
-                .accessibilityIdentifier("settings-font-family")
+                HStack(spacing: 16) {
+                    Picker("Font name", selection: fontFamily) {
+                        Text("Default").tag(String?.none)
+                        ForEach(fonts, id: \.self) { Text($0).tag(String?.some($0)) }
+                    }
+                    .accessibilityIdentifier("settings-font-family")
+                    .frame(maxWidth: .infinity)
 
-                Stepper(value: fontSize, in: 8 ... 32, step: 1) {
-                    Text("Default font size: \(Int(model.settings.fontSize ?? 13))")
+                    Divider()
+
+                    Stepper(value: fontSize, in: 8 ... 32, step: 1) {
+                        Text("Font size: \(Int(model.settings.fontSize ?? 13))")
+                    }
+                    .accessibilityIdentifier("settings-font-size")
+                    .frame(maxWidth: .infinity)
                 }
-                .accessibilityIdentifier("settings-font-size")
+
+                HStack(spacing: 16) {
+                    // "Default" is a state, not a synonym for Block: it emits no `cursor-style`, so the
+                    // config chain still picks the shape, where Block writes an override that beats it.
+                    Picker("Cursor shape", selection: cursorStyle) {
+                        Text("Default").tag(AppSettings.CursorStyle?.none)
+                        Text("Block").tag(AppSettings.CursorStyle?.some(.block))
+                        Text("Bar").tag(AppSettings.CursorStyle?.some(.bar))
+                        Text("Underline").tag(AppSettings.CursorStyle?.some(.underline))
+                    }
+                    .accessibilityIdentifier("settings-cursor-style")
+                    .frame(maxWidth: .infinity)
+
+                    Divider()
+
+                    // three rows, not a toggle: Default emits nothing, which is the only state that leaves
+                    // DEC mode 12 able to drive the blink.
+                    Picker("Cursor blink", selection: cursorBlink) {
+                        Text("Default").tag(Bool?.none)
+                        Text("Blink").tag(Bool?.some(true))
+                        Text("Steady").tag(Bool?.some(false))
+                    }
+                    .accessibilityIdentifier("settings-cursor-blink")
+                    .frame(maxWidth: .infinity)
+                }
 
                 // the CURRENT appearance's theme; while following, the on-screen side. The "default ghostty"
                 // row shows only when NOT following — a dual conditional needs two named themes.
@@ -327,6 +367,17 @@ private struct AppearanceSettingsView: View {
         Binding(get: { model.settings.fontSize ?? 13 }, set: { model.setFontSize($0) })
     }
 
+    /// nil is the From config row; a shape this version does not offer (a future one, or a hand-written
+    /// `block_hollow`) resolves to nil too, so the picker shows From config rather than a blank selection.
+    private var cursorStyle: Binding<AppSettings.CursorStyle?> {
+        Binding(get: { model.settings.effectiveCursorStyle }, set: { model.setCursorStyle($0) })
+    }
+
+    /// Passed through as ghostty's own three states; nil is Program controlled (see `AppSettings.cursorBlink`).
+    private var cursorBlink: Binding<Bool?> {
+        Binding(get: { model.settings.cursorBlink }, set: { model.setCursorBlink($0) })
+    }
+
     /// The sidebar row-text size.
     private var sidebarFontSize: Binding<Double> {
         Binding(get: { model.settings.effectiveSidebarFontSize },
@@ -403,7 +454,8 @@ private struct AppearanceSettingsView: View {
 }
 
 /// Interface tab: per-element title-bar and sidebar chrome visibility, grouped by surface, two toggles per
-/// row so the tab keeps fitting the fixed 540×640 window as the element set grows. Everything shows by
+/// row so the tab keeps fitting the fixed 540×640 window as the element set grows, plus the quick terminal's
+/// panel size — that panel belongs to no window, so it is not a Window setting. Everything shows by
 /// default; a toggle off adds it to `AppSettings.hiddenInterfaceElements` and live-applies — title-bar and
 /// footer elements re-gate in open windows on `.agtermAppearanceChanged`, the add-session "+" on hover.
 private struct InterfaceSettingsView: View {
@@ -417,6 +469,15 @@ private struct InterfaceSettingsView: View {
                 Toggle("Show sidebar only in the active window", isOn: autoHideSidebarInactiveWindows)
                     .accessibilityIdentifier("settings-auto-hide-inactive-sidebars")
             }
+            Section("Quick Terminal") {
+                Picker("Size", selection: quickTerminalSizePercent) {
+                    Text("Default").tag(Int?.none)
+                    ForEach(QuickTerminalMetrics.sizePercentChoices, id: \.self) { percent in
+                        Text("\(percent)% of screen").tag(Int?.some(percent))
+                    }
+                }
+                .accessibilityIdentifier("settings-quick-terminal-size")
+            }
         }
         .formStyle(.grouped)
         .padding()
@@ -426,6 +487,12 @@ private struct InterfaceSettingsView: View {
     private var autoHideSidebarInactiveWindows: Binding<Bool> {
         Binding(get: { model.settings.autoHideSidebarInactiveWindows ?? false },
                 set: { model.setAutoHideSidebarInactiveWindows($0 ? true : nil) })
+    }
+
+    /// The quick-terminal panel's share of the screen; nil is the built-in size, not a percentage.
+    private var quickTerminalSizePercent: Binding<Int?> {
+        Binding(get: { model.settings.effectiveQuickTerminalSizePercent },
+                set: { model.setQuickTerminalSizePercent($0) })
     }
 
     /// A section whose toggles lay out TWO per row, each filling half the row around a centered `Divider` so

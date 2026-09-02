@@ -13,17 +13,24 @@ public enum AgentHooksInstall {
     /// terminal-output knowledge stays in this hook resource, outside agterm's runtime.
     public static let codexWrapperName = "agterm-codex-status.sh"
 
+    /// Claude-specific adapter the four Claude status hooks invoke instead of the generic wrapper: a worker
+    /// agent spawned from inside a session inherits the spawner's `AGTERM_*` environment, so its hooks would
+    /// repaint the SPAWNER's row. The adapter answers that ownership question from process topology and
+    /// delegates, keeping the Claude-specific knowledge in the hook resource the way the Codex adapter does.
+    static let claudeWrapperName = "agterm-claude-status.sh"
+
     /// Claude Code session-restore adapter: it pins the live claude session id as the pane's
     /// `session restore` override, so a restart reattaches instead of starting an empty session.
     public static let claudeRestoreWrapperName = "agterm-claude-restore.sh"
 
     /// The installed scripts whose `AGTERMCTL` default the installer rewrites to the bundled binary. Only a
-    /// script that CALLS the CLI belongs here; the shell/Pi/OpenCode assets resolve it their own way.
+    /// script that CALLS the CLI belongs here; the shell/Pi/OpenCode assets resolve it their own way, and the
+    /// Claude status adapter delegates to the generic wrapper rather than calling the CLI.
     public static let bakedWrapperNames = [wrapperName, codexWrapperName, claudeRestoreWrapperName]
 
     /// The bundled Pi extension's path relative to the agent-status package, and its destination filename.
     public static let piExtensionRelativePath = "pi/agterm-status.ts"
-    public static let piExtensionName = "agterm-status.ts"
+    static let piExtensionName = "agterm-status.ts"
 
     /// Ownership sentinel in the bundled Pi extension: a reinstall refuses to overwrite an unmarked same-named
     /// extension, preserving a user-authored integration.
@@ -31,7 +38,7 @@ public enum AgentHooksInstall {
 
     /// The bundled OpenCode plugin's path relative to the agent-status package, and its destination filename.
     public static let opencodePluginRelativePath = "opencode/agterm-status.js"
-    public static let opencodePluginName = "agterm-status.js"
+    static let opencodePluginName = "agterm-status.js"
 
     /// Ownership sentinel in the bundled OpenCode plugin, same policy as `piExtensionMarker`. Named `*Plugin*`
     /// (not `*Extension*`) because OpenCode's host term is plugin — a deliberate divergence from `piExtension*`.
@@ -42,10 +49,13 @@ public enum AgentHooksInstall {
     public static let integrationRelativePath = "shell/integration.sh"
     public static let fishIntegrationRelativePath = "shell/integration.fish"
 
+    /// Sentinel opening the installer-baked AGTERMCTL block; a re-bake replaces it instead of duplicating it.
+    static let agtermctlMarker = "# >>> agterm agtermctl path (installer-baked) >>>"
+
     /// Marker lines bracketing the agterm-managed block in a shell rc file; the opening marker is also the
     /// idempotency probe (present → already installed).
-    public static let rcMarkerBegin = "# >>> agterm agent-status >>>"
-    public static let rcMarkerEnd = "# <<< agterm agent-status <<<"
+    static let rcMarkerBegin = "# >>> agterm agent-status >>>"
+    static let rcMarkerEnd = "# <<< agterm agent-status <<<"
 
     /// One installed Claude Code hook: which event fires it, which installed script it runs, and the
     /// arguments that script takes. `script` is also the idempotency probe, so two hooks may share an event.
@@ -69,10 +79,10 @@ public enum AgentHooksInstall {
     /// unpins it — but only for the reasons the adapter treats as a deliberate exit, which is its own
     /// judgement, not this table's.
     static let claudeHooks: [ClaudeHook] = [
-        ClaudeHook(event: "UserPromptSubmit", matcher: nil, script: wrapperName, arguments: "active --blink"),
-        ClaudeHook(event: "PostToolUse", matcher: nil, script: wrapperName, arguments: "active --blink"),
-        ClaudeHook(event: "Stop", matcher: nil, script: wrapperName, arguments: "completed --auto-reset"),
-        ClaudeHook(event: "Notification", matcher: "permission_prompt", script: wrapperName, arguments: "blocked"),
+        ClaudeHook(event: "UserPromptSubmit", matcher: nil, script: claudeWrapperName, arguments: "active --blink"),
+        ClaudeHook(event: "PostToolUse", matcher: nil, script: claudeWrapperName, arguments: "active --blink"),
+        ClaudeHook(event: "Stop", matcher: nil, script: claudeWrapperName, arguments: "completed --auto-reset"),
+        ClaudeHook(event: "Notification", matcher: "permission_prompt", script: claudeWrapperName, arguments: "blocked"),
         ClaudeHook(event: "SessionStart", matcher: nil, script: claudeRestoreWrapperName, arguments: "session-start"),
         ClaudeHook(event: "SessionEnd", matcher: nil, script: claudeRestoreWrapperName, arguments: "session-end"),
     ]
@@ -89,7 +99,7 @@ public enum AgentHooksInstall {
     ]
 
     /// The destination directory for Pi's auto-discovered global extensions.
-    public static func piExtensionDirectory(home: String) -> String {
+    static func piExtensionDirectory(home: String) -> String {
         home + "/.pi/agent/extensions"
     }
 
@@ -106,7 +116,7 @@ public enum AgentHooksInstall {
     }
 
     /// The destination directory for OpenCode's auto-discovered global plugins.
-    public static func opencodePluginDirectory(home: String) -> String {
+    static func opencodePluginDirectory(home: String) -> String {
         home + "/.config/opencode/plugins"
     }
 
@@ -129,16 +139,19 @@ public enum AgentHooksInstall {
     ///
     /// `existing` is the current contents (nil/empty = start from a fresh object). Returns the new JSON and
     /// whether it differs; idempotent — hooks already present (detected per event by the script each runs)
-    /// return the input with `changed == false`. Unrelated hooks and keys are preserved; invalid JSON throws.
+    /// return the input with `changed == false`. Unrelated hooks and keys are preserved; invalid JSON, and a
+    /// `hooks` or written-event value of the wrong shape, throw rather than overwrite what could not be read.
+    /// Status entries a PRIOR install pointed straight at the generic wrapper are migrated onto the Claude
+    /// adapter first, so the ownership guard reaches an existing install rather than only a fresh one.
     public static func mergeClaudeSettings(existing: String?, scriptDir: String) throws -> (json: String, changed: Bool) {
         var root = try parsedObject(existing)
 
-        var hooks = root["hooks"] as? [String: Any] ?? [:]
-        var didChange = false
+        var hooks = try claudeHooksObject(root)
+        var didChange = migrateClaudeEntriesToAdapter(&hooks, scriptDir: scriptDir)
         for hook in claudeHooks {
             let script = scriptDir + "/" + hook.script
-            var entries = hooks[hook.event] as? [[String: Any]] ?? []
-            if entries.contains(where: { entryUsesScript($0, path: script) }) {
+            var entries = hooks[hook.event] as? [[String: Any]] ?? [] // shape already checked above
+            if entries.contains(where: { entryUsesScript($0, paths: installedProbes(hook, scriptDir: scriptDir)) }) {
                 continue
             }
             entries.append(hookEntry(command: shellQuote(script) + " " + hook.arguments, matcher: hook.matcher))
@@ -304,6 +317,46 @@ public enum AgentHooksInstall {
         return lines.joined(separator: "\n")
     }
 
+    /// bake `toolPath` — the bundled `agtermctl` — into an installed wrapper, replacing the block a previous
+    /// install left behind. The `-x` test sits INSIDE the unset branch so an explicit override is never
+    /// second-guessed; the wrapper's own header owns why the PATH rung has to stay reachable.
+    public static func bakeAgtermctlPath(into text: String, toolPath: String) -> String {
+        let block = agtermctlBlockLines(toolPath: toolPath)
+        return insertAfterShebang(stripBakedBlock(from: text, bodyLines: block.count - 1), lines: block)
+    }
+
+    // the baked block, marker line first.
+    private static func agtermctlBlockLines(toolPath: String) -> [String] {
+        [
+            agtermctlMarker,
+            "if [ -z \"${AGTERMCTL:-}\" ]; then",
+            "  AGTERMCTL=\(shellQuote(toolPath))",
+            "  [ -x \"$AGTERMCTL\" ] || AGTERMCTL=\"$(command -v agtermctl || true)\"",
+            "fi",
+        ]
+    }
+
+    // drop a previously baked block: the marker plus `bodyLines` lines below it. `bodyLines` measures the block
+    // being WRITTEN, so an older build's block of another length mis-strips; safe only because
+    // `copyBundledFolder` re-copies the pristine wrapper first, leaving no marker to match.
+    private static func stripBakedBlock(from text: String, bodyLines: Int) -> String {
+        var result: [String] = []
+        var skip = 0
+        for line in text.components(separatedBy: "\n") {
+            if skip > 0 { skip -= 1; continue }
+            if line == agtermctlMarker { skip = bodyLines; continue }
+            result.append(line)
+        }
+        return result.joined(separator: "\n")
+    }
+
+    private static func insertAfterShebang(_ text: String, lines block: [String]) -> String {
+        var lines = text.components(separatedBy: "\n")
+        let insertAt = lines.first?.hasPrefix("#!") == true ? 1 : 0
+        lines.insert(contentsOf: block, at: insertAt)
+        return lines.joined(separator: "\n")
+    }
+
     /// derive a backup path by appending `.bak` to the full path, extension intact (`settings.json.bak`).
     public static func backupPath(for path: String) -> String {
         path + ".bak"
@@ -311,12 +364,16 @@ public enum AgentHooksInstall {
 
     /// the absolute wrapper-script path the installed hooks invoke (`<scriptDir>/agterm-agent-status.sh`); the
     /// caller's hook entry appends the state.
-    public static func wrapperPath(scriptDir: String) -> String {
+    static func wrapperPath(scriptDir: String) -> String {
         scriptDir + "/" + wrapperName
     }
 
-    public static func codexWrapperPath(scriptDir: String) -> String {
+    static func codexWrapperPath(scriptDir: String) -> String {
         scriptDir + "/" + codexWrapperName
+    }
+
+    static func claudeWrapperPath(scriptDir: String) -> String {
+        scriptDir + "/" + claudeWrapperName
     }
 
     /// render the `~/.codex/config.toml` `[[hooks.*]]` block the installer merges in, wiring Codex's lifecycle
@@ -324,7 +381,7 @@ public enum AgentHooksInstall {
     /// merge declines, and nothing checks the two against each other.
     /// The wrapper's absolute path is baked into each command — shell-quoted (so a path with spaces stays one
     /// token) inside a TOML basic string — so the hook fires without the CLI on PATH.
-    public static func codexHooksBlock(scriptDir: String) -> String {
+    static func codexHooksBlock(scriptDir: String) -> String {
         let wrapper = shellQuote(codexWrapperPath(scriptDir: scriptDir))
         return codexHooks.map { hook in
             """
@@ -353,6 +410,56 @@ public enum AgentHooksInstall {
         }
     }
 
+    // build the command string a Claude hook runs: the quoted CLAUDE ADAPTER path plus the state argument. The
+    // adapter forwards the state to the generic wrapper verbatim once it decides the firing agent owns the pane.
+    private static func wrapperCommand(scriptDir: String) -> String {
+        shellQuote(claudeWrapperPath(scriptDir: scriptDir)) + " "
+    }
+
+    // repoint an EARLIER install's four entries from the generic wrapper at the Claude adapter, returning
+    // whether anything moved. Without it the guard would reach fresh installs only: the merge below skips an
+    // event whose entries already invoke us, and the Claude side has no refresh path (`refreshManagedCodexBlock`
+    // is Codex-only), so an existing settings.json would keep its unguarded entries forever.
+    //
+    // The match is BYTE-EXACT against the command this installer generates for that same event — the quoted
+    // wrapper path plus the state — which is what makes the rewrite safe: an entry carrying extra flags and a
+    // user's own hook that merely mentions the wrapper both fail the comparison and are left alone, and only
+    // the command string is replaced, so a matcher and any sibling keys survive. One hand edit is NOT left
+    // alone: deleting `--blink` from UserPromptSubmit reproduces the pre-`a9e678d9` form byte for byte, so it
+    // migrates and the flag returns; the installer's `.bak` is the recovery.
+    // Idempotent, because a migrated entry names the adapter and no longer matches.
+    private static func migrateClaudeEntriesToAdapter(_ hooks: inout [String: Any], scriptDir: String) -> Bool {
+        let generated = shellQuote(wrapperPath(scriptDir: scriptDir)) + " "
+        let replacement = wrapperCommand(scriptDir: scriptDir)
+        var didChange = false
+        for hook in claudeHooks where hook.script == claudeWrapperName {
+            guard var entries = hooks[hook.event] as? [[String: Any]] else { continue }
+            // the states this installer EVER generated for the event, current form first. UserPromptSubmit
+            // predates the --blink promotion (a9e678d9) and an install from that window — source builds only,
+            // no tag carries the bare form — still holds `active`; every other event has a single historical
+            // form. A stale state migrates onto the adapter AND the current state in one rewrite.
+            let generatedStates = hook.event == "UserPromptSubmit" ? [hook.arguments, "active"] : [hook.arguments]
+            var eventChanged = false
+            for index in entries.indices {
+                guard var commands = entries[index]["hooks"] as? [[String: Any]] else { continue }
+                var entryChanged = false
+                for slot in commands.indices where generatedStates.contains(where: { commands[slot]["command"] as? String == generated + $0 }) {
+                    commands[slot]["command"] = replacement + hook.arguments
+                    entryChanged = true
+                }
+                if entryChanged {
+                    entries[index]["hooks"] = commands
+                    eventChanged = true
+                }
+            }
+            if eventChanged {
+                hooks[hook.event] = entries
+                didChange = true
+            }
+        }
+        return didChange
+    }
+
     // a single Claude hook entry: { (matcher?), hooks: [{ type: command, command }] }.
     private static func hookEntry(command: String, matcher: String?) -> [String: Any] {
         var entry: [String: Any] = [
@@ -364,14 +471,39 @@ public enum AgentHooksInstall {
         return entry
     }
 
-    // does a hook entry already invoke this installed script (idempotency probe, by script path)?
-    private static func entryUsesScript(_ entry: [String: Any], path: String) -> Bool {
+    // the paths that count as "already installed" for one hook. A status hook accepts EITHER the adapter,
+    // which is what a current install writes and what the migration leaves behind, or the generic wrapper,
+    // which is what an entry the migration declined to rewrite still names. Accepting only the adapter would
+    // answer "not installed" for a customized wrapper entry and add a stock one beside it, so both would fire
+    // and the row would be posted twice. A restore hook only ever named its own adapter.
+    private static func installedProbes(_ hook: ClaudeHook, scriptDir: String) -> [String] {
+        let script = scriptDir + "/" + hook.script
+        return hook.script == claudeWrapperName ? [script, wrapperPath(scriptDir: scriptDir)] : [script]
+    }
+
+    // does a hook entry already invoke one of these installed scripts (idempotency probe, by script path)?
+    private static func entryUsesScript(_ entry: [String: Any], paths: [String]) -> Bool {
         guard let commands = entry["hooks"] as? [[String: Any]] else { return false }
-        return commands.contains { ($0["command"] as? String)?.contains(path) == true }
+        return commands.contains { command in
+            guard let command = command["command"] as? String else { return false }
+            return paths.contains { command.contains($0) }
+        }
     }
 
     // absent/empty/whitespace-only → fresh empty object; a non-empty file that is not a valid JSON object →
     // throw rather than silently discard the user's file.
+    // a wrong-TYPED value is not an absent one: `as?` plus an empty default would read it as missing and then
+    // write over it, deleting the key the merge could not understand. Only the four events this merge writes
+    // are checked; an unrelated event of any shape is never read and round-trips.
+    private static func claudeHooksObject(_ root: [String: Any]) throws -> [String: Any] {
+        guard let value = root["hooks"] else { return [:] }
+        guard let hooks = value as? [String: Any] else { throw MergeError.malformedExistingSettings }
+        for hook in claudeHooks where hooks[hook.event] != nil {
+            guard hooks[hook.event] is [[String: Any]] else { throw MergeError.malformedExistingSettings }
+        }
+        return hooks
+    }
+
     private static func parsedObject(_ text: String?) throws -> [String: Any] {
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [:] }
         guard let data = text.data(using: .utf8),

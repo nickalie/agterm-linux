@@ -1,7 +1,7 @@
 # agterm control reference
 
-Full detail for every `agtermctl` command. See `SKILL.md` for the model and addressing overview, and
-`examples.md` for recipes.
+Full detail for every `agtermctl` command. See `SKILL.md` for the model and addressing overview,
+`examples.md` for worked examples, and `cookbook.md` for the repository's installable recipes.
 
 ## Connection and output
 
@@ -15,8 +15,11 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   `--json` when you need to read ids or values back.
 - **Response shape**: `{"ok": true, "result": {…}}` or `{"ok": false, "error": "<message>"}`.
   `result` carries one of: `id` (affected/new session/workspace/window), `text` (session copy/text),
-  `exitCode` (overlay result), `count` (diagnostics/search), `affected` (sessions actually changed by a
-  batch close/move), `tree` (the tree), `windows` (window list). The process exit code is non-zero when
+  `exitCode` (overlay result), `count` (diagnostics/search), `restore` (the restore-mode policy),
+  `zmx` (the daemon inventory), `remote` (another Mac's attachable sessions, for `zmx tree`),
+  `affected` (things actually changed: sessions
+  for a batch close/move, daemons killed for `zmx prune`), `tree` (the tree), `windows` (window list), `app` (the serving app's identity, for
+  `version`). The process exit code is non-zero when
   `ok` is false.
 - **Options go after the subcommand**: `agtermctl session type "ls" --target active`, never before it.
 
@@ -43,7 +46,8 @@ The five event kinds and payloads are:
   visible window tree. Undo emits a new `session.created`; grace-period finalization does not emit a
   second close.
 - `tree.changed`: an empty payload and the affected window id. Name, membership, and ordering changes
-  are coalesced for 100 ms per window. Read `tree --json` for the current snapshot.
+  are coalesced for 100 ms per window, as is a `session context` set or clear that changes the value.
+  Read `tree --json` for the current snapshot.
 
 Every event has `seq` (app-wide sequence), `ts` (Unix timestamp), `kind`, optional
 `window`/`workspace`/`session` ids, and `payload`. Human mode prints one compact line. `--json` emits
@@ -81,7 +85,7 @@ SIGTERM use normal process behavior.
   session or to none at all, as when you close the last one — or `workspace select` names another, it is
   deleted, or the workspace filter hides it. Hiding drops it for good, so turning the filter off does not
   restore it. Reselecting the already-selected session does not count: `session select`,
-  `overlay open --follow` and single-session `session go` leave it in place. `workspace select` on an EMPTY
+  `session overlay open --follow` and single-session `session go` leave it in place. `workspace select` on an EMPTY
   workspace has no session to select, so it takes the target instead (and is revealed if the filter was
   hiding it). Else the selected session's workspace, else the last one. A background create (`workspace new --collapsed`,
   `session new --create-workspace --no-select`) never takes it. The tree workspace node's `active` flag
@@ -89,9 +93,10 @@ SIGTERM use normal process behavior.
   different workspace than `--target active` resolves to; address by id when the two must agree.
 - **For an agent, `active` is the USER's GUI-selected session, not yours.** Your shell is
   `$AGTERM_SESSION_ID`; the user is usually on a different session while you work. Pass
-  `--target "$AGTERM_SESSION_ID"` on any session-scoped command (`overlay open`, `scratch`, `type`,
-  `text`, `background`, `status`, `copy`, …) that must act on the session you run in — otherwise it hits
-  whatever the user has selected. `overlay open` opens in the background without switching the user
+  `--target "$AGTERM_SESSION_ID"` on any session-scoped command (`session overlay open`, `session scratch`,
+  `session type`, `session text`, `session background`, `session status`, `session copy`, …) that must act
+  on the session you run in — otherwise it hits
+  whatever the user has selected. `session overlay open` opens in the background without switching the user
   (both full and floating); pass `--follow` to additionally SELECT the target, switching the user to it.
 - `--window <id|prefix|active>` (on session/workspace/tree/font/notify/pick commands) picks which window's
   tree to act on; default is the frontmost. With `--window` set, that window must be open. Without it,
@@ -106,12 +111,20 @@ SIGTERM use normal process behavior.
 when none reported; distinct from `name`, the derived sidebar label, which ignores the title unless the
 user turned on "Name sessions after the terminal title"), `active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
-`realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned, a
-`--command` has not run, and `session type`/`session text` will answer `session not realized`. `session
-new` returns `ok` for a session that exists in the model, which is not the same thing: libghostty refuses
-to create a surface while the DISPLAY is asleep, so a session a scheduled job creates overnight stays
-unrealized until the displays wake, at which point it recovers on its own. Poll this after creating a
-session unattended; `agtermctl tree` also tags the row `(not realized)`),
+`realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned and a
+`--command` has not run. `session text` then answers `session not realized` without realizing anything;
+`session type` brings up a restored main pane still waiting its turn in a launch that replays commands,
+while any other unrealized cause can still exhaust its poll and fail the same way; `session search`
+expedites such a pane too.
+`session new` returns `ok` for a session that exists in the model, which is not the same thing: libghostty
+refuses to create a surface while the DISPLAY is asleep, so a session a scheduled job creates overnight
+stays unrealized until the displays wake, at which point it recovers on its own. A queued right pane shows
+nothing here. Poll this after creating a session unattended; `agtermctl tree` also tags the row
+`(not realized)`),
+`backedByZmx` (true only when every existing primary/split pane is currently zmx-backed; older servers omit
+it),
+`remoteHost` (the machine an attached session came from — the read side of `zmx attach`; omitted for a
+local session, and never present after a relaunch because a remote session is never written to disk),
 `hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
 read THIS to decide whether a session has a split, because a hidden split reports `split: false` while
 its pane stays alive, and it is present exactly when `splitRatio`/`splitFocused` can be),
@@ -123,8 +136,8 @@ of `session resize`, record it to restore the exact divider position),
 `splitFocused` (which pane holds focus in a session that HAS a split: `true` = the split/right/bottom pane,
 `false` = the primary/left/top pane; omitted when there's no split; the read side of `session focus`, record it
 to restore focus via `session focus left|right`),
-`commandWait` (whether a `--command` session was created with `--wait` to hold open after the command
-exits — the read side of `session new --wait`; omitted for a plain or non-holding session),
+`commandWait`/`splitCommandWait` (whether either pane's `--command` was created with `--wait` to hold open
+after exit, the read side of `session new --wait`; each omitted for a plain or non-holding pane),
 `overlay` (overlay shown),
 `overlaySizePercent` (an open overlay's size — the
 floating panel's percent of the pane, 1–100; omitted = a full-pane overlay or no overlay, so gate on
@@ -150,7 +163,8 @@ tracks the latest update. `spinner` names the STYLE, a string, so a static panel
 FALSE with `overlaySizePercent` omitted, so a poll for "is a program covering this session" cannot mistake
 a message for one. No event announces a HUD; poll `tree` for it),
 `scratch` (scratch shown), `flagged` (in the
-flagged working-set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
+flagged working-set), `context` (what the session is about — the `session context` value, persisted and
+omitted when unset), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
 idle), `statusPane` (which pane set that status — `left` (main) | `right` (split) | `scratch` — the
 `--pane` value from `session status`, omitted when unset or idle; gated on the same non-idle condition
 as `status`, so it is never reported without a `status`), `statusBlink` (`true` when the status glyph is
@@ -159,10 +173,24 @@ glyph-tint override — the `--color` value; omitted when idle or using the conf
 `statusShape` (the glyph silhouette override — the `--shape` value, one of
 `circle`|`square`|`triangle`|`diamond`|`capsule`|`star`; omitted when idle or using the configured shape.
 Like `statusColor` it reports the PER-CALL override only, so a shape picked in Settings reads back as
-absent),
+absent), `statusChangedAt` (when the status was last SET, in epoch seconds — the same clock an event's
+`ts` carries, so the two compare directly; omitted when idle. It is stamped on every ACCEPTED non-idle
+`session status` — a call refused by the pane-precedence rule below stamps nothing — not only on a
+change of state, so a hook re-pushing `active` refreshes it and
+`now - statusChangedAt` reads as how long ago the status was last WRITTEN — the age of the glyph.
+Normally that write is the agent's own push; a pane promotion re-tags the indicator and also counts.
+Ephemeral like `unseen`: never persisted, so it is absent after a restart even for a restored session),
 `foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt, and also for a
 setuid/setgid foreground process like `top` or `sudo`, whose argv macOS refuses to expose),
+`foregroundShell`/`splitForegroundShell` (the shell HOLDING each pane's foreground as a basename — `zsh`,
+`fish` — present exactly when that pane's `foreground` is omitted because a shell holds it. For a pane that
+EXISTS, both omitted together means agterm could not read the process, which is how you tell "a shell has it"
+from "cannot tell"; check `hasSplit` before reading the split pair, since a session with no split omits both
+simply because there is no pane. It is NOT a claim the pane is at a prompt and NEVER permission to type: a
+builtin like `read` runs inside the shell, so a pane blocked on input is indistinguishable from an idle one.
+A shell agterm does not recognize, outside its known set and your `$SHELL`, reports in `foreground` like any
+other program),
 `restoreCommand`/`splitRestoreCommand` (each pane's persisted restore-command override — the read side of
 `session restore`: omitted = no override (auto-capture), `""` = pinned to nothing (a plain shell), a
 command string = the shell line that runs on the next launch; reported from persisted state, so a read
@@ -175,8 +203,9 @@ the read side of `font --pane`; each omitted when that pane isn't realized. `fon
 default/left target (the main pane, or the promoted split survivor once the primary exits — the same pane
 `font --pane left` writes); only the main pane's size survives a relaunch, so the split/scratch sizes and a
 promoted survivor are live-only — read them back here rather than from the snapshot), and `surfaces` (array
-of `{id, kind, active, visible}` where `kind` is
+of `{id, kind, active, visible, backedByZmx?}` where `kind` is
 `left`|`right`|`scratch`|`overlay`|`overlay-left`|`overlay-right`).
+Primary/split surfaces report `backedByZmx`; scratch and overlays omit it.
 The surface `id` is the address for `surface zoom`; hidden-but-alive split/scratch surfaces are included
 so a script can zoom them without changing split/scratch visibility first. Caveat: `active`/`visible`
 derive from the session's own flags, not from zoom — and `visible` reads false for a pane behind a
@@ -194,13 +223,14 @@ members), and `collapsed` (whether this workspace is COLLAPSED in the sidebar tr
 `workspace collapse`/`workspace expand` and `workspace new --collapsed`; `true` when collapsed, omitted
 when expanded, so an all-expanded tree carries no `collapsed` keys).
 
-The tree object itself carries twelve top-level read-only fields: `idleMs` (milliseconds since the last
+The tree object itself carries fourteen top-level read-only fields: `idleMs` (milliseconds since the last
 user input in the window, omitted before any activity), `autoFollowMs` (the window's Auto-follow
 timeout in milliseconds, omitted when the setting is Disabled), `sidebarVisible` (whether the
 window's sidebar is currently shown — the read side of the write-only `sidebar` command, so a script
 can restore it, e.g. a tmux-style zoom that hides the sidebar and must re-show it only when it was
 visible before), `sidebarMode` (`tree` or `flagged` — the sidebar view mode, the read side of
-`sidebar mode`), `workspaceFilter` (whether the window's workspace focus filter is currently APPLIED —
+`sidebar mode`), `sidebarWidth` (the sidebar divider position in points, the read side of
+`sidebar width`, reported here and nowhere else), `workspaceFilter` (whether the window's workspace focus filter is currently APPLIED —
 the flag half of the focus set, whose member half is each workspace node's `focused`; the read side of
 `workspace filter`, so a script can record the filter state, restore it, or make the toggle idempotent),
 `quickVisible` (whether the quick terminal is currently shown — the read
@@ -218,12 +248,17 @@ as both), `dashboardHighlighted` (the highlighted cell's pane ref — the one En
 that exact pane), `dashboardFontSize` (the absolute font size in points applied to the cells, omitted when
 the mode is `untouched`), and `dashboardFontMode` (`auto` for `--auto-size`, `fixed` for `--font-size`, or
 `untouched`), plus `pickPending` (the id of the native picker currently awaiting an answer in this
-window, omitted when none is pending). `idleMs` is live
+window, omitted when none is pending), and `app` (which agterm is serving this socket: `version`, plus
+`commit` when the build recorded one — the same value `agtermctl version` returns, so an agent already
+reading the tree gets its version floor without a second round-trip; it is not duplicated onto
+`window.list`, where a caller uses `version` instead). `idleMs` is live
 and grows while the window is idle, so it is on `tree` only, never `window.list`; `sidebarVisible` is on
-both; `sidebarMode`, `workspaceFilter`, `quickVisible`, `zoomedSurface`, the four `dashboard*` fields, and
-`pickPending`
-are `tree`-only (a GUI/keyboard change would leave a cached copy stale).
-All twelve are read-only projections of GUI state.
+both; `sidebarMode`, `sidebarWidth`, `workspaceFilter`, `quickVisible`, `zoomedSurface`, the four
+`dashboard*` fields, and `pickPending`
+are `tree`-only (a GUI/keyboard change would leave a cached copy stale). All of those are read-only
+projections of live GUI state. `app` is the one CONSTANT among them, and is absent from `window.list`
+for a different reason: it describes the serving app rather than a window, so repeating it on every row
+buys nothing. A caller with no tree uses `version`.
 
 ## workspace
 
@@ -325,11 +360,14 @@ All twelve are read-only projections of GUI state.
   `--wait` (only with `--command`, else an error) HOLDS the session open after the command exits —
   showing libghostty's press-any-key prompt with the final output intact instead of closing immediately —
   so you can read a build/test/deploy's final output or an early failure that would otherwise flash and
-  vanish. It persists across restart (unlike an overlay's live-only `--wait`), so a restored command
-  session that re-runs its command holds again; read it back on `tree`'s `commandWait`.
-  The command is persisted (`SessionSnapshot.initialCommand`) and re-runs on restore when **Restore
-  running commands on restart** is on (default off → a restored session is a plain shell); a live
-  captured foreground takes precedence over it. `--name`
+  vanish. In Re-run commands mode it persists across restart (unlike an overlay's live-only `--wait`),
+  so a restored command session that starts its command again also holds; read it back on `tree`'s
+  `commandWait`. Live sessions mode types the command into the persistent zmx shell only on first creation.
+  The shell stays open when it exits, and `--wait` adds no hold prompt. After a clean quit, a missing daemon
+  is recreated running whatever that pane's foreground command was; if the command had already exited, or the
+  quit never happened, the pane comes back as a fresh shell.
+  The command is persisted (`SessionSnapshot.initialCommand`) and starts again on restore in Re-run commands
+  mode; a captured foreground takes precedence over it. Fresh shells mode restores a plain shell. `--name`
   seeds the session's custom name (the sidebar label; blank/omitted leaves the auto basename),
   equivalent to a `session rename` right after create. `--after SID` / `--before SID` place the new
   session directly after / before an anchor session instead of appending at the end (the anchor is a
@@ -397,6 +435,8 @@ error keeps those names for compatibility.
   surface, so `session new --no-select` followed straight away by `session type` does not race the mount.
   `--select` selects the session first, and only when its surface is not ready — a realized session is typed
   into without moving the user's selection. A surface that never comes up → `session not realized`.
+  Text carrying a NUL is rejected with `text must not contain a NUL byte`, since libghostty's key-text
+  field is NUL-terminated and could only deliver the run up to it.
   `--pane left` types into the main pane (the default when omitted), `--pane right` into the split pane
   (errors with `session has no split pane` when the session has no split), `--pane scratch` into the
   session's scratch terminal even while it is hidden (`session has no scratch terminal` when none opened);
@@ -419,7 +459,7 @@ error keeps those names for compatibility.
 - `session select-all [--target] [--window W]` — select the session's entire terminal buffer (main pane),
   the socket analogue of ⌘A / Edit ▸ Select All (libghostty `select_all`). Read the resulting selection
   back with `session copy`. A never-shown session → `session not realized`.
-- `session text [--all] [--lines N] [--pane left|right|scratch] [--target] [--window W]` — returns `result.text`
+- `session text [--all] [--lines N] [--pane left|right|scratch] [--pane-id TOKEN] [--target] [--window W]`: returns `result.text`
   with the session's terminal buffer as PLAIN TEXT (no ANSI/color). By default it reads the VISIBLE
   SCREEN of the on-screen pane. `--all` reads the whole buffer including scrollback; `--lines N` reads the
   full buffer and keeps only the last N CONTENT lines (trailing blank rows trimmed; `--all` and `--lines`
@@ -427,7 +467,10 @@ error keeps those names for compatibility.
   main pane, `--pane right` the split pane (errors if the session has no split), `--pane scratch` the
   session's scratch terminal even while it is hidden (its buffer is kept alive; `session has no scratch
   terminal` when none opened); omit `--pane` for the visible pane (the scratch terminal when it covers the
-  session, else the focused pane). NOTE: unlike
+  session, else the focused pane). `--pane-id` accepts the shell's stable `$AGTERM_PANE_ID`, resolves its
+  current live slot and overrides `--pane` when found. An absent or unknown token falls back to `--pane`,
+  then to the visible pane. Use it for a long-running watcher because `$AGTERM_PANE` is a spawn role and can
+  become stale after promotion or `session swap`. NOTE: unlike
   `session focus`, `--pane` here has NO `other` value — only `left`/`right`/`scratch`, and no overlay value:
   every one of them reads the surface UNDER a covering overlay, whose buffer is `session overlay text`'s.
   A genuinely BLANK screen is
@@ -450,6 +493,11 @@ error keeps those names for compatibility.
   runs dies with it, and `hasSplit`/`splitRatio`/`splitFocused` drop out of `tree`. Reaches a HIDDEN pane
   too, which is what `session type --pane right $'exit\n'` cannot do once the pane is past a prompt
   (nested shell, ssh, an agent). Answers ok on a session with no split.
+- `session swap [--target] [--window W]`: exchange both terminals' physical positions and primary/split
+  roles without restarting either process. Focus follows its terminal; split axis and ratio stay fixed.
+  Works when the split is shown or hidden and under zoom/dashboard. Errors when there is no split or a
+  surface is not ready. The new primary supplies `tree`'s `cwd`/`title`/`foreground`/`restoreCommand`/
+  `commandWait`; the other side supplies `splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
@@ -472,7 +520,10 @@ error keeps those names for compatibility.
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
 - `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--shape circle|square|triangle|diamond|capsule|star] [--pane left|right|scratch] [--pane-id TOKEN] [--target] [--window W]` —
-  set the sidebar agent-status glyph. `--blink` requests an attention pulse; macOS Reduce Motion
+  set the sidebar agent-status glyph. Every ACCEPTED non-idle call stamps the session node's
+  `statusChangedAt`, including one that re-pushes the status already showing, so a poller can tell a fresh
+  glyph from a stale one without keeping state of its own; a call refused by the pane-precedence rule
+  changes nothing, the stamp included. `--blink` requests an attention pulse; macOS Reduce Motion
   suppresses the repeating sidebar and dashboard animation while keeping the status visible, and the
   pulse resumes when Reduce Motion is disabled. `--auto-reset` clears it back to idle once the session
   is visited (use for a one-shot completion flash). `--sound` plays a
@@ -494,10 +545,16 @@ error keeps those names for compatibility.
   explain a shape-only change.
   A `--shape` on `idle` is accepted and ignored, since an idle session draws no glyph.
   `--pane` (canonical `left`|`right`|`scratch`; role and position aliases above are also accepted) records
-  which pane set the status. It has two effects: (1) keystroke-clear becomes pane-scoped — a status set
+  which pane set the status. It has three effects: (1) keystroke-clear becomes pane-scoped — a status set
   from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
-  no longer wiped by foreground typing in the main pane, and only a keystroke in the OWNING pane clears
-  it), and (2) when the status needs attention (`blocked`/`completed`), any user-initiated GUI selection of
+  no longer wiped by foreground typing in the main pane, and only input in the OWNING pane clears it,
+  whether typed by hand or sent with `session type`), (2) while the session is `blocked`, a status from
+  another pane that is not itself `blocked` is REFUSED with `blocked status owned by pane <pane>` —
+  it changes nothing and plays no sound, so an agent working in one pane cannot erase the other pane's
+  request for input; a second pane may still report its own `blocked`, `idle` is NOT exempt (Codex's
+  `session-start` hook and the shell integration's post-command hook both send it from their own pane),
+  and the owning
+  pane writes freely, and (3) when the status needs attention (`blocked`/`completed`), any user-initiated GUI selection of
   the session lands on the tagged pane — auto-follow,
   the attention-nav (⌃⌥↑/⌃⌥↓, the Navigate menu), plain session nav (⌥⌘↑/↓/first/last),
   the command palettes, a sidebar row click, and a Dock-menu session row all reveal and focus it, flipping to the split or
@@ -521,6 +578,18 @@ error keeps those names for compatibility.
   `active`) and are idempotent; `clear` ignores the target and unflags every session in the window.
   Pair with `sidebar mode flagged` to see just the flagged sessions as a flat `session : workspace`
   list. Unknown mode errors. The tree's `flagged` flag tracks membership.
+- `session context <TEXT|--clear> [--target] [--window W]` — set or clear what the session is ABOUT, shown
+  in the title bar — a PR number, an issue, the task in hand. It is set from OUTSIDE the session, so a
+  hook or an orchestrator can say what a session it just created is for. Exactly one of TEXT or `--clear`, enforced at parse time and again server-side: a blank
+  TEXT is rejected, not treated as a second clear, so `--clear` is the only route to unset. The value is
+  trimmed of outer spaces and rejected if empty, over 256 UTF-8 bytes, or carrying any control character or
+  line/paragraph separator; a rejected call leaves the previous context standing. It states durable purpose,
+  not current activity: it persists across quit, relaunch and restore, and nothing expires it. A duplicated
+  session starts without one. A set or clear that CHANGES the value emits `tree.changed`; re-setting the
+  same value emits nothing. The tree's `context` field is the read side, omitted when unset. In the title
+  bar it takes line two in normal mode (replacing the cwd/terminal-title detail) and follows the session and
+  window names on line one in compact mode, where a long value tail-truncates before the names do. Settings
+  ▸ Interface ▸ Title Bar ▸ "Session context" hides it without clearing it.
 - `session seen [--target] [--window W]` — clear the session's unseen-notification badge without changing
   the selection, focus, or agent status. It is the focus-free counterpart to `notify`: `notify` (and a
   terminal's own OSC 9/777) raise the red badge, and until now the only way to clear it was visiting the
@@ -538,13 +607,13 @@ error keeps those names for compatibility.
   restore: the captured foreground AND the session's own `session new --command`, which a pinned line (or
   `--none`) suppresses — so a restored `--command` session runs the pinned line instead, as typed input
   rather than the exec path, and its `--wait` close-on-exit behavior no longer applies.
-  It is gated on the **Restore running commands on restart** setting (a pinned command while the setting is
-  off succeeds with a note in `result.text` that nothing will run; `--none`/`--clear` get no note, since
-  their outcome is delivered either way), and bypasses `restore-denylist.conf`
+  It runs only in `rerun` mode. In fresh-shell or live mode, a command or `--none` still saves policy for a
+  future rerun launch and returns a note in `result.text` naming the active mode; `--clear` works in every
+  mode. A pin never opts one session out of live mode. Deliberate pins bypass `restore-denylist.conf`
   (it names its command deliberately, so the denylist is never the reason it does not fire). It is typed
   verbatim as a shell line, so `cd x && claude --resume y` works as written.
-  A split HIDDEN at quit is not restored, so its pin is dropped on that launch rather than left to fire
-  into a later manual split.
+  A split hidden at quit keeps its identity and pin; showing it after restart creates the pane and applies
+  the saved rerun policy.
   It exists for NON-IDEMPOTENT commands — `claude --resume <id> --fork-session` mints a NEW session on every
   restart, so restoring it verbatim never reattaches the session the user was in. A Claude Code
   `SessionStart` hook that rewrites the override to the live session id on every start makes the next
@@ -555,6 +624,11 @@ error keeps those names for compatibility.
   `$AGTERM_PANE_ID`) resolves the pane's LIVE slot, so a hook in a promoted-then-re-split pane still pins
   the right one; UNLIKE `session status`, a token that does not resolve is an error unless `--pane` is also
   given as the fallback (a silent main-pane default here would overwrite the wrong pane).
+  Every success names the pane it wrote in `result.pane` (`left`/`right`), which is the read-back for
+  `--pane-id`: a token names a surface rather than a role, so without it the caller has to re-read the tree
+  and diff `restoreCommand` against `splitRestoreCommand` to find out where the pin landed. Only an app
+  predating the field omits it from a successful `session.restore`; treat absence as UNKNOWN, never as the
+  default `left` pane.
   The pinned value is SHELL CODE: it persists in the window's state file (`windows/<id>.json`), is readable
   via `tree`, and may enter shell history when it runs — so it must not carry secrets, and only
   safely-interpolated values (a UUID-shaped session id) belong in it. It persists immediately, so a
@@ -591,12 +665,13 @@ error keeps those names for compatibility.
   — run `command` in an ephemeral terminal on top of the session; it closes when the command exits.
   `command` runs through `sh -c` (so shell operators DO work here) but with the app's GUI `PATH` (no
   `/opt/homebrew/bin`), so a bare Homebrew or other non-default binary fails with exit 127 — the overlay
-  flashes open then vanishes and `overlay result` reports 127; give an absolute path or wrap in
+  flashes open then vanishes and `session overlay result` reports 127; give an absolute path or wrap in
   `"zsh -lc '…'"`.
   Full-size by default (hides the session); `--size-percent N` (1–100) makes it a floating framed panel
-  with the session visible behind. **By default the overlay does NOT switch the active session** — full
-  and floating both open on `--target` and run their program in the background, appearing when the user
-  visits that session. **Pass `--follow` to select the target after opening** (a no-op if it is already
+  with the session visible behind, and a percent outside that range is an error. **By default the
+  overlay does NOT switch the active session** — full and floating both open on `--target` and run
+  their program in the background, appearing when the user visits that session. **Pass `--follow` to
+  select the target after opening** (a no-op if it is already
   active); use it when you want the user pulled to the overlay, omit it to open quietly. `--background-color #rrggbb` gives the overlay pane its own solid
   background color, independent of the session's own `session background color` (nil = the default theme
   background); it honors the Settings window translucency, captured when the overlay opens. `--wait` keeps the overlay open after the command exits (press a key
@@ -612,8 +687,9 @@ error keeps those names for compatibility.
   usage error and `session overlay resize` takes no `--pane`. Everything else matches the session-wide
   overlay: it closes when the program exits, `--wait` holds it open on the press-any-key prompt,
   `--block` blocks and exits with the program's status, and `--follow` selects the target. A NON-SPLIT
-  session accepts `--pane left`, because such a session reports `AGTERM_PANE=left` — so an agent can
-  pass `--pane "$AGTERM_PANE"` without first checking whether the session is split. A pane that is not
+  session accepts `--pane left`. `AGTERM_PANE` is the shell's spawn role and may be stale after promotion
+  or `session swap`, so a long-running shell must not assume `--pane "$AGTERM_PANE"` still names its slot.
+  A pane that is not
   currently rendered is refused with `pane not visible`: a SHOWN split renders both panes, a HIDDEN one
   renders only the FOCUSED pane, so the refused one is the pane without focus — `--pane left` on a
   session whose hidden split holds it, `--pane right` when the main pane does; hiding the split AFTER
@@ -664,7 +740,7 @@ error keeps those names for compatibility.
   Meant for the seconds before an agent can show anything — computing the items for `pick`, waiting on a
   slow command — so the user reads what is happening in the session he is about to be pulled into.
   `open` is the group's default subcommand (`session hud "gathering options…"`); a message that is
-  literally `update` or `close` needs the explicit `hud open` verb. `--detail` adds a dim second line,
+  literally `update` or `close` needs the explicit `session hud open` verb. `--detail` adds a dim second line,
   `--spinner` animates a glyph beside the message in the default `bar` style, `--spinner-style` picks
   another from `bar|braille|circle|blocks|dot` and turns the spinner on by itself — `dot` blinks rather than
   animating, for a panel that sits up for minutes. `--spinner-style none` is accepted too and leaves the
@@ -967,7 +1043,8 @@ it waited for. Results age out oldest-first: the 8 most recent per open window, 
 ## quick
 
 `agtermctl quick [show|hide|toggle]` — the app's one quick terminal (a single scratch terminal in a
-floating panel at 90% of the focused screen up to 1100x700, not in the tree and owned by no window; its
+floating panel at 90% of the focused screen up to 1100x700 unless Settings > Interface sets a share of its
+own, not in the tree and owned by no window; its
 shell stays alive across hides). Errors with `no open window` when none is open, and with `pick pending`
 while a picker is up. Read its visibility back from the tree's top-level `quickVisible`.
 A panel YOU open with `show` stays up when agterm loses focus — including when it was already visible
@@ -1017,6 +1094,21 @@ resolution as `--target active`), which stays expanded and is scrolled into view
 selector and defaults as `expand`. Idempotent; a graceful no-op in `flagged` mode; a named-but-closed
 window errors, and `no open window` when none is open. The GUI half (frontmost only) is View ▸ Collapse
 Workspaces and the ⌃⇧P palette "Collapse Workspaces".
+
+`agtermctl sidebar width <points> [--window W]` sets the sidebar divider position in points, the one
+thing the divider drag does that had no command. Clamped server-side to the same 160...560pt range the
+drag enforces, persisted through the window snapshot, and ECHOED: the command prints the STORED width,
+so an out-of-range request reads back as the bound it landed on rather than as what was asked for. The
+echo is the stored value, not a measured on-screen width. Same `--window` selector and defaults as
+`expand`. Fractional points are accepted and preserved without rounding, which is why the value is not an
+integer: the drag itself writes a fractional cursor x. Compare request against echo NUMERICALLY rather than
+as strings - the echo is a Double, so `300` comes back `300.0`. Read back from the tree's top-level `sidebarWidth`;
+`window list` does NOT carry it. There is no GUI half beyond dragging the divider.
+
+Terminal width is the window width minus the sidebar width minus a 1pt divider, so widening the sidebar
+is how a caller shrinks the terminal below what the window's own minimum width allows. agterm reports no
+column count, so a caller fitting an exact number of columns measures its own grid and corrects; do not
+expect points to convert to columns without one.
 
 ## notify
 
@@ -1139,7 +1231,8 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 - `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (a custom name, else its
   directory basename — or the focused pane's terminal title when the user turned on "Name sessions after
   the terminal title", which makes it remote-settable via OSC).
-- `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the focused pane's working directory.
+- `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the working directory of the pane the command fired from;
+  the scratch terminal reports the main pane's, since it tracks no cwd of its own.
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
 - `{AGT_PANE}` / `$AGT_PANE` — the pane the command fired from: `left` (main), `right` (split), or
   `scratch` (the session's scratch terminal). Feed it back as `session type --pane "$AGT_PANE"` to type
@@ -1173,8 +1266,9 @@ as the GUI's File ▸ Reload Config menu/palette item, which posts a warning ban
 ghostty config and the place to put agterm overrides/customizations. It is ALWAYS loaded. The app builds
 its terminal config in order, each source overriding the one before: ghostty's bundled defaults, then
 your global `~/.config/ghostty/config` (OFF by default — opt in with Settings ▸ General ▸ Use my global
-Ghostty config), then `<config dir>/ghostty.conf`, then agterm's own Settings (font, theme, background
-opacity/blur, scroll speed), which load last and win for the keys the UI manages. The scoped file is
+Ghostty config), then `<config dir>/ghostty.conf`, then the values agterm emits from Settings, which
+load last and win over matching values in `ghostty.conf`. The current list of those keys is at
+https://agterm.com/docs#ghostty. The scoped file is
 agterm-only; the standalone Ghostty.app never reads it. agterm is self-contained by default, so a config
 written for Ghostty.app does not silently change agterm — put agterm overrides in `ghostty.conf` (e.g.
 `macos-option-as-alt = true`); the full reference is at https://ghostty.org/docs/config. Editing it from
@@ -1208,25 +1302,180 @@ output prints `ok`. App-global (no `--window`). The GUI's live-preview picker (V
 is keyboard-only — committing it replaces the CURRENT appearance's side when syncing (the pair is
 kept); over the socket `theme set` is the commit, with no preview.
 
+## restore modes
+
+**Settings ▸ General ▸ Restore sessions** chooses one global launch mode. The process keeps the mode it
+started with, so a change applies after restarting agterm.
+
+- **Fresh shells** restores the structural snapshot with new shells.
+- **Re-run commands** starts captured commands again. The old processes are not attached.
+- **Live sessions** wraps primary and split panes with zmx and reattaches to their running processes. Zsh
+  must be the macOS login shell. Scratch, overlay, and quick terminals remain temporary.
+
+Closing agterm or sending it SIGTERM ends the attach clients and leaves live daemons running. A clean quit
+also captures each live pane's foreground command, so a daemon missing after an orderly machine restart is
+recreated under the same name running that command. Four cases still come back as a
+fresh shell: a pane in a window closed before the quit, a hard power loss or force quit that never reached
+capture, a command refused by `restore-denylist.conf` or carrying control bytes, and SIGTERM, which leaves
+the daemons running but skips the clean-quit capture. A session or split that is explicitly deleted has its
+daemon killed after the undo grace period.
+Switching to Fresh shells or Re-run commands and restarting ends every detached live process in the state
+directory. A launch that still requests Live sessions but cannot use it preserves those processes.
+
+The tree exposes actual backing without adding sidebar UI. Primary and split surface entries carry
+`backedByZmx`; the session-level field is true only when every existing primary or split pane is backed.
+Reattach keeps usable text, TUI state, and normal colors. It does not retain inline images, earlier OSC 133
+prompt markers, program-changed palette entries, or existing cell hyperlink metadata. New terminal output
+after reattach behaves normally.
+
 ## restore
+
+`agtermctl restore capture` — capture every open pane's live foreground command NOW, into the same slot the
+quit-time capture fills, and persist it. For the exit that never reaches `applicationWillTerminate`: a force
+quit, a crash, a hard reset, a power loss, all of which today leave every pane restoring a plain shell. (A
+shutdown, restart or logout is not one of them: that path quits the app normally and captures by itself.)
+Run it from a scheduled job or bind it, and an exit nobody was there for restores like a deliberate
+quit. Consumption is unchanged — the next launch arms each captured command once and clears it. App-global
+(no `--window`), prints `count`, the number of panes it captured a command for (main and shown split count
+one each). It runs only when `rerun` is configured for the next launch. Configured fresh-shell and live
+modes return `restore.capture requires rerun mode; configured restore mode is MODE`. A capture is only as
+fresh as its last run: a pager or a build that has finished since still re-runs after a crash, which
+`restore clear` drops wholesale and `restore-denylist.conf` prevents per program. Typed at a prompt the
+command records ITSELF, since while it runs it is that pane's foreground process and the pane comes back
+running `agtermctl restore capture` (which
+prints its count and captures itself again). Bind it or schedule it rather than running it by hand:
+`restore clear` is app-global, so it is no per-pane undo.
 
 `agtermctl restore clear` — clear every session's saved CAPTURED foreground command and persist, so the
 next restart restores plain shells for those panes (not whatever each pane was running). It does NOT clear
 a `session.new --command` session's own command (`initialCommand`, the durable creation identity), which
-still re-runs on restore when the setting is on. This is the counterpart to the
-opt-in **Restore running commands on restart** setting: that setting captures each pane's foreground
-command at a clean quit and re-runs it on relaunch; `restore clear` wipes those saved commands now
-(also closing the force-quit re-fire window). App-global (no `--window`), prints `ok`.
+still re-runs in `rerun` mode. This command works in every mode. `rerun` captures each pane's foreground
+command at a clean quit and starts it again on relaunch; `restore clear` wipes those saved commands now
+(also closing the force-quit re-fire window). App-global (no `--window`), prints `ok`. Like `restore capture`
+it acknowledges only a save that landed: if any window's write fails it reports that at least one window
+failed to save, since those captures are still on disk and nothing reads those slots back.
+
+`agtermctl restore mode [none|rerun|live]` — read the restore policy, or write it for the NEXT launch.
+Bare, it reports five things: `configured` (what settings hold, so what the next launch asks for),
+`requestedAtLaunch` and `active` (what THIS launch asked for and what it got), `restartRequired`, and
+`unavailableReason` when live was requested and refused. The two requested values differ once the mode has
+changed since this instance started, which is exactly when a caller wonders why nothing happened.
+
+Setting it changes nothing in the running app, and no flag makes it: a pane is wrapped in a zmx daemon or
+not at the moment it is created, so a running shell cannot be retrofitted either way. A failed write is
+reported as a failure rather than acknowledged.
+
+`agtermctl zmx list` — every daemon and every pane expecting one, joined, under the restore status as a
+header. `state` is `claimed`, `orphan`, `unknown`, `conflicted`, `pendingClose` or `foreign`;
+`observation` is `running`, `unreadable` or `absent`, separate from the client count because a daemon that
+is gone and one zmx could not read are different answers. A CLOSED window's panes are `claimed` with zero
+clients. That is the resting state after you close a window, not a leak, which is why the owner's window
+state is its own column. `unknown` means the pane inventory was incomplete, so no row can be called an orphan.
+The header also carries `endpoint.executable` and `endpoint.socketDirectory`, which is what another machine
+needs to reach these daemons; a server older than remote sessions omits the key.
+
+`agtermctl zmx prune` — kill the daemons no pane claims and nothing is attached to. It refuses outright on
+an incomplete or conflicted inventory. The gate is checked and revalidated rather than atomic: zmx has no
+kill-if-detached, so prune re-lists immediately before killing and drops anything that gained a client,
+but a client attaching from outside agterm in the remaining gap can still be terminated. It reports each
+daemon separately, and a "cleaned up a stale socket" line is NOT a kill: zmx unlinked a socket it could
+not reach, and that daemon may still be running.
+
+`agtermctl zmx kill --target ID --pane left|right --force` — destroy one pane's daemon and the process in
+it. All three are required: this kills a backend process, reaches a pane no window is showing, and takes
+down every client attached to that daemon, so there is no sensible default for who is affected. Killing a
+shown split closes that split; killing a primary promotes its split survivor, or closes the session when
+there is none; a pane whose window is closed simply comes back as a fresh shell. None of these gets the
+three-second undo. It refuses a daemon already gone, one zmx could not read (forcing that can unlink a
+live daemon's socket and leave it running unreachable), and a session inside its undo window. Killing the
+daemon of the pane you are typing in can kill the calling `agtermctl` before it reads the reply.
+
+`--window ID` scopes the search to one window's claims, for a session prefix claimed in more than one.
+Omit it to search every window, closed and unindexed ones included; `active` is not accepted, and neither
+is it for `--target`. Without it an ambiguous prefix reports `no left pane daemon for session ID`, the
+same answer a target that does not exist gets.
+
+`agtermctl zmx tree [HOST]` — attachable sessions across EVERY open window. With a `HOST` it reads another
+Mac over ssh; with none it reports this app's own, which is exactly the form the remote call runs on the
+far side, so it is also how to see what another machine would answer without sshing anywhere.
+`result.remote` carries `endpoint` (the zmx `executable` and `socketDirectory`), `host` when one was given,
+and `sessions`, each with `id`, `name`, `windowID`/`windowName` and `workspaceID`/`workspaceName` (show the
+names, group by the ids — neither is unique, so two windows called `main` merge if you group by name),
+`context` when its owner set one, `cwd`, `splitAxis` when it has a split, and `panes`
+(`{pane, daemon, foreground}`, the last being the argv that pane is running and omitted when none is
+reported). `host` is the ssh destination the REQUESTING app was given, stamped on after decoding: the far
+side has no idea which name reached it.
+
+Only a session whose every pane still has a live daemon is listed: attaching to a name that no longer
+exists would CREATE a daemon and hand back a fresh shell wearing it, so an incomplete one is omitted
+rather than offered half. An empty list is a successful answer and does NOT diagnose the restore mode —
+`zmx list` does that. The far side must be running in `live` mode, which is what puts a daemon behind each
+pane, and be new enough to answer `zmx tree` at all; an older one is refused by name rather than
+half-attached. It also needs `agtermctl` installed by the cask or the Help action: a machine merely
+running agterm has no CLI an ssh command can find, and the read fails with exit 127.
+
+`agtermctl zmx attach HOST SESSION` — open one of those sessions here, marked remote, in the current
+window's current workspace, selected, with the remote session's split when it has one. `SESSION` is the
+`id` from `zmx tree`, never the name: remote names are editable and repeat across workspaces. Returns the
+new local session's `id`; read `remoteHost` on its tree node. The remote is resolved AGAIN before anything
+is created, so a session that has gone since the listing fails and creates nothing. Everything reported
+here is a failure found before that point — a connection that starts and later drops is an ordinary pane
+exit, which holds on Ghostty's press-any-key prompt under one line naming the host, the session, the pane
+and the exit status.
+
+Closing a remote session here ends only this side's connection: the far-side processes keep running and
+nothing agterm does from this end can kill them. It is never written to disk, so it does not come back
+after a relaunch whatever the restore mode is.
+
+Both commands run ssh non-interactively (`BatchMode`), so key-based auth must already work for the host —
+a password or host-key prompt is a failure, not a question. An attach joins as a follower and pinned zmx
+keeps one leader per pane, so the pane arrives at the OTHER machine's window size and drops input until
+the first CLASSIFIED key (a printable character, Return, Tab or Backspace) takes the lead and reflows
+it. Until then the mouse, focus reporting and Ctrl-L do not reach the far side, so a mouse-driven TUI looks
+dead, and an ordinary control key may not wake it. Because the lead is per pane, typing in one half of a split leaves the other at the
+remote's geometry, and after the session closes the far side keeps that size until something there resizes
+it.
+
+Every zmx command needs a running agterm: only the app can join its live windows, its pending closes and
+its persisted snapshots against what zmx reports. With agterm stopped there is nothing to ask.
 
 Which programs are NOT re-run is controlled by `restore-denylist.conf` in the config directory (one
 command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain
-user-edited file read at launch — there is no control command for it.
+user-edited file read at launch — there is no control command for it. Two more things are skipped
+whatever the denylist says, and the pane starts a plain shell. A control character in the command's
+name or any argument: the restored line is typed, so the line editor reads that byte as an editing key
+rather than as text. A byte sequence that was not valid UTF-8: it is captured lossily, so replaying it
+would run an argument the process never had.
 
 For a PER-SESSION, per-pane override that pins (or suppresses) what a pane restores, use
 `session restore` (in the session section above): it wins over the captured foreground, bypasses the
 denylist, and is what a `SessionStart` hook rewrites to reattach an agent session — agterm's installed
 Claude Code hooks already do that for `claude`. `restore clear` here is app-global and touches only the
 captured commands, not those overrides.
+
+## version
+
+`agtermctl version` — which agterm is serving this socket. App-global: no target, no `--window`, and no
+window need be open, so it works as a preflight from a keymap-launched script. Returns `result.app`:
+
+- `version` — the app's version, the number a cookbook recipe's minimum is compared against.
+- `commit` — the build's git commit, omitted when the build recorded none. Diagnostics only; never part
+  of a version comparison.
+
+Human output is `version` alone, or `version (commit)`, followed by a `client:` line naming the resolved
+path of the `agtermctl` that ran — a diagnostic for a stale CLI earlier on `PATH` than the app's bundled
+helper. That line is human output only: `--json` stays the raw server response, and a caller that needs
+the client path resolves the binary it invoked itself.
+
+Address the socket explicitly when the answer must be about THIS session's app: `agtermctl` never reads
+`AGTERM_SOCKET`, so a bare call resolves the default path and may report a different instance. Use
+`--socket "$AGTERM_SOCKET"` from a session shell and `--socket "$AGT_SOCKET"` from a keymap- or
+palette-launched child.
+
+The same identity is on the `tree` top level as `app`, so an agent already reading the tree needs no
+second call. In a session shell `$TERM_PROGRAM_VERSION` carries the same number, but it is ABSENT in a
+process launched from the keymap or the palette, which inherits the app's launch environment rather than
+a terminal surface's.
 
 ## Errors you may see
 
@@ -1240,6 +1489,8 @@ captured commands, not those overrides.
 `session.hud.open requires a message` (also for a blank one) / `session.hud.update requires a message` /
 `hud text must not contain control characters` /
 `hud message too long (max 256 characters)` / `hud detail too long (max 256 characters)` /
+`session.overlay.open: --size-percent must be 1...100` /
+`session.overlay.resize: --size-percent must be 1...100` /
 `session.hud.open: --size-percent must be 1...100` /
 `hud helper is not bundled in this build` / `could not write the hud message` /
 `invalid position: <value> (top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right|top|bottom)`
@@ -1259,6 +1510,7 @@ CLI rejects the same value locally with `mode must be one of: on, off, toggle, a
 locally with `mode must be on, off, or toggle`),
 `no open window` (quick/sidebar/workspace filter), `quick terminal not open` / `quick terminal not realized` (quick type) /
 `failed to read surface buffer` (quick text / session text),
+`text must not contain a NUL byte` (session type / quick type),
 `invalid restore mode` / `session.restore set requires a command` / `command must not contain control characters` /
 `command too long (max 1024 bytes)` / `the scratch terminal is never restored` / `unknown pane id` /
 `failed to save the restore override, the previous value is still in effect` (session
@@ -1273,4 +1525,7 @@ raw socket; the `agtermctl` CLI rejects the same value locally with
 canonical read-back names while the role and position aliases documented above are accepted. The
 `agtermctl` CLI rejects a bad pane with this for session status/type/text, and over the raw socket
 `session.status` returns this same string;
-`session.type`/`session.text` over the raw socket instead return `invalid pane: <value>`). Unknown commands fail to decode and return a structured error, never a crash.
+`session.type`/`session.text` over the raw socket instead return `invalid pane: <value>`),
+`blocked status owned by pane <pane> (write from that pane to change it)` (session status,
+the pane-precedence refusal — the one `session status` error a well-formed call can hit, so retry from the
+owning pane rather than treating it as a bad argument). Unknown commands fail to decode and return a structured error, never a crash.

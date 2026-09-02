@@ -32,6 +32,9 @@ public protocol ControlActions {
     func setWorkspaceFilter(window: String?, mode: ControlToggleMode) -> ControlResponse
     func setWorkspaceExpansion(_ target: String?, window: String?, expanded: Bool) -> ControlResponse
     func setSessionFlag(_ target: String?, window: String?, mode: String?) -> ControlResponse
+    /// Sets or clears the session's title-bar context; `context` is already trimmed and validated, and nil
+    /// means clear.
+    func setSessionContext(_ target: String?, window: String?, context: String?) -> ControlResponse
     func markSessionSeen(_ target: String?, window: String?) -> ControlResponse
     func setSessionStatus(_ target: String?, window: String?, update: ControlSessionStatusUpdate) -> ControlResponse
     /// Write a pane's PERSISTED restore-command override (consumed on the NEXT launch, never this run).
@@ -48,6 +51,9 @@ public protocol ControlActions {
     /// Tear the split pane down rather than hide it, the write side `splitSession`'s `on|off|toggle` cannot
     /// express: the surface dies and `hasSplit`/`splitRatio`/`splitFocused` go nil in `tree`.
     func closeSessionSplit(_ target: String?, window: String?) -> ControlResponse
+    /// Exchange the two live pane roles. The default below keeps existing hosts source-compatible and
+    /// reports that the optional operation is unsupported.
+    func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse
     func scratchSession(_ target: String?, window: String?, mode: String?, command: String?) -> ControlResponse
     func focusSessionPane(_ target: String?, window: String?, pane: String?) -> ControlResponse
     func resizeSplit(_ target: String?, window: String?, resize: ControlSplitResize) -> ControlResponse
@@ -60,6 +66,7 @@ public protocol ControlActions {
     func font(_ target: String?, window: String?, pane: String?, action: String) -> ControlResponse
     func reloadKeymap() -> ControlResponse
     func listKeymap() -> ControlResponse
+    func appIdentity() -> ControlResponse
     func reloadGhosttyConfig() -> ControlResponse
     func sendNotification(_ target: String?, window: String?, title: String?, body: String) -> ControlResponse
     func setTheme(args: ControlArgs?) -> ControlResponse
@@ -68,6 +75,7 @@ public protocol ControlActions {
     func setSidebarViewMode(_ mode: ControlSidebarViewMode) -> ControlResponse
     func expandSidebar(window: String?) -> ControlResponse
     func collapseSidebar(window: String?) -> ControlResponse
+    func setSidebarWidth(_ points: Double, window: String?) -> ControlResponse
     func setQuickTerminal(mode: String?) -> ControlResponse
     func typeQuick(text: String) async -> ControlResponse
     func readQuickText(all: Bool, lines: Int?) async -> ControlResponse
@@ -119,82 +127,27 @@ public protocol ControlActions {
     /// Cancel a native picker. The host owns window resolution, registry lookup, and dismissal.
     func cancelPick(_ target: String, window: String?) -> ControlResponse
     func clearRestoreCommands() -> ControlResponse
-}
-
-public extension ControlActions {
-    func splitSession(_ target: String?, window: String?, mode: String?, axis _: SplitAxis?) -> ControlResponse {
-        splitSession(target, window: window, mode: mode)
-    }
-}
-
-public struct ControlSessionTypeOptions: Equatable, Sendable {
-    public let text: String
-    public let select: Bool
-    public let pane: String?
-
-    public init(text: String, select: Bool, pane: String?) {
-        self.text = text
-        self.select = select
-        self.pane = pane
-    }
-}
-
-public struct ControlSessionOverlayOpenOptions: Equatable, Sendable {
-    public let command: String
-    public let cwd: String?
-    public let wait: Bool
-    public let sizePercent: Int?
-    public let backgroundColor: String?
-    public let follow: Bool
-    /// The pane to cover, nil for the session-wide overlay. A pane overlay is always full, so this and
-    /// `sizePercent` are mutually exclusive (rejected in the dispatcher).
-    public let pane: OverlayPane?
-
-    public init(command: String, cwd: String?, wait: Bool, sizePercent: Int?, backgroundColor: String?,
-                follow: Bool = false, pane: OverlayPane? = nil) {
-        self.command = command
-        self.cwd = cwd
-        self.wait = wait
-        self.sizePercent = sizePercent
-        self.backgroundColor = backgroundColor
-        self.follow = follow
-        self.pane = pane
-    }
-}
-
-public struct ControlSessionBackgroundOptions: Equatable, Sendable {
-    public let watermark: BackgroundWatermark?
-
-    public init(watermark: BackgroundWatermark?) {
-        self.watermark = watermark
-    }
-}
-
-public struct ControlSessionTextOptions: Equatable, Sendable {
-    public let pane: String?
-    public let all: Bool
-    public let lines: Int?
-
-    public init(pane: String?, all: Bool, lines: Int?) {
-        self.pane = pane
-        self.all = all
-        self.lines = lines
-    }
-}
-
-/// `session.overlay.text`'s inputs. `pane` is the parsed `OverlayPane` rather than
-/// `ControlSessionTextOptions`' raw string: the overlay family takes only `left`/`right`, so the dispatcher
-/// resolves it and the host never re-parses a vocabulary it could widen by accident.
-public struct ControlSessionOverlayTextOptions: Equatable, Sendable {
-    public let pane: OverlayPane?
-    public let all: Bool
-    public let lines: Int?
-
-    public init(pane: OverlayPane?, all: Bool, lines: Int?) {
-        self.pane = pane
-        self.all = all
-        self.lines = lines
-    }
+    /// Capture every open pane's foreground command now, the same read `applicationWillTerminate` does. The
+    /// host owns the `sysctl` read, the save, and the count it reports back.
+    func captureRestoreCommands() -> ControlResponse
+    /// The restore-mode policy: what settings hold, what this launch requested, and what it got.
+    func readRestoreMode() -> ControlResponse
+    /// Persist the mode for the NEXT launch. The host owns the save and must report a failed write rather
+    /// than leaving memory claiming a value the disk rejected.
+    func setRestoreMode(_ mode: RestoreMode) -> ControlResponse
+    /// The daemon inventory: observed daemons joined against the panes that claim them.
+    func listZmxDaemons() -> ControlResponse
+    /// Kill the daemons no pane claims and nothing is attached to.
+    func pruneZmxDaemons() -> ControlResponse
+    /// Destroy ONE pane's daemon. The host resolves the owner against the inventory rather than the open
+    /// stores, since this reaches closed and unindexed claims the target resolver cannot see.
+    func killZmxDaemon(target: String, window: String?, pane: ZmxPaneRole) -> ControlResponse
+    /// Another machine's attachable sessions. Async because it runs ssh: a blocking wait here would hold
+    /// the main actor for the whole network deadline.
+    func remoteTree(host: String?) async -> ControlResponse
+    /// Create a local session attached to `session` on `host`. Resolves the remote itself before inserting
+    /// anything, so a session that has gone since the tree was read creates nothing.
+    func attachRemoteSession(host: String, session: String) async -> ControlResponse
 }
 
 /// Routes control commands through a host-provided action seam. The dispatcher owns command parsing and
@@ -214,9 +167,10 @@ public struct ControlDispatcher {
         case .eventsRead:
             return dispatchEventsRead(request)
         case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
-                .sessionReveal, .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus, .sessionRestore:
+                .sessionReveal, .sessionMove, .sessionFlag, .sessionContext, .sessionSeen, .sessionStatus,
+                .sessionRestore:
             return dispatchSessionCommand(request)
-        case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize,
+        case .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionScratch, .sessionFocus, .sessionResize,
                 .surfaceZoom, .surfaceCursor, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult, .sessionOverlayCopy,
@@ -228,8 +182,10 @@ public struct ControlDispatcher {
             return dispatchWorkspaceCommand(request)
         case .quick, .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList,
                 .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
-                .sidebarCollapse, .restoreClear:
+                .sidebarCollapse, .sidebarWidth, .restoreClear, .restoreCapture, .version:
             return dispatchAppCommand(request)
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach:
+            return await dispatchZmxCommand(request)
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
@@ -386,6 +342,8 @@ public struct ControlDispatcher {
             return actions.moveSession(request.target, window: args?.window, move: move)
         case .sessionFlag:
             return actions.setSessionFlag(request.target, window: request.args?.window, mode: request.args?.mode)
+        case .sessionContext:
+            return dispatchSessionContext(request)
         case .sessionSeen:
             return actions.markSessionSeen(request.target, window: request.args?.window)
         case .sessionStatus:
@@ -435,7 +393,7 @@ public struct ControlDispatcher {
             }
             // a control character would smuggle an extra line (or an escape sequence) into the shell the
             // override is typed into, so the whole class is rejected — tab included.
-            guard !command.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
+            guard !CommandRestore.hasControlCharacter(command) else {
                 return ControlResponse(ok: false, error: "command must not contain control characters")
             }
             guard command.utf8.count <= ControlRestoreOverride.maxCommandBytes else {
@@ -460,12 +418,46 @@ public struct ControlDispatcher {
         return actions.setSessionRestore(request.target, window: args?.window, update: update)
     }
 
+    /// `session.context`: `set` takes `text`, `clear` takes none. An invalid value is REJECTED, never
+    /// normalized, so `clear` stays the only route to nil and a refused call leaves the previous context
+    /// standing. The mode is required rather than inferred from `text`, which is what makes "both" and
+    /// "neither" reachable errors for a raw socket client that never sees the CLI's own exclusivity check.
+    private func dispatchSessionContext(_ request: ControlRequest) -> ControlResponse {
+        let args = request.args
+        let context: String?
+        switch args?.mode ?? "" {
+        case "set":
+            guard let text = args?.text else {
+                return ControlResponse(ok: false, error: "session.context set requires text")
+            }
+            switch Session.validateContext(text) {
+            case .valid(let value): context = value
+            case .invalid(let message): return ControlResponse(ok: false, error: message)
+            }
+        case "clear":
+            guard args?.text == nil else {
+                return ControlResponse(ok: false, error: "session.context clear takes no text")
+            }
+            context = nil
+        default:
+            return ControlResponse(ok: false, error: "invalid context mode: \(args?.mode ?? "") (set|clear)")
+        }
+        return actions.setSessionContext(request.target, window: args?.window, context: context)
+    }
+
     /// The outcome of parsing a `--pane` selector: the pane (nil when the selector was absent), or the
     /// rejection response the arm returns as-is. Generic over the pane type, so the role selector and the
     /// overlay selector differ only in which enum they parse into and which rejection they carry.
     private enum PaneSelection<Pane> {
         case pane(Pane?)
         case rejected(ControlResponse)
+    }
+
+    /// Non-nil when `text` carries a NUL: libghostty's key-text field is NUL-terminated and slices at the
+    /// first zero, dropping the run's tail while the Return after it still submits the shortened line (#455).
+    private func nulRejection(_ text: String) -> ControlResponse? {
+        guard text.unicodeScalars.contains(where: { $0.value == 0 }) else { return nil }
+        return ControlResponse(ok: false, error: "text must not contain a NUL byte")
     }
 
     /// The shared `--pane` selector: nil when absent, the parsed pane when `parse` accepts it, and `error`
@@ -570,6 +562,8 @@ public struct ControlDispatcher {
                                         mode: request.args?.mode, axis: axis)
         case .sessionSplitClose:
             return actions.closeSessionSplit(request.target, window: request.args?.window)
+        case .sessionSwap:
+            return await actions.swapSessionPanes(request.target, window: request.args?.window)
         case .sessionScratch:
             return actions.scratchSession(request.target, window: request.args?.window, mode: request.args?.mode,
                                           command: request.args?.command)
@@ -597,6 +591,7 @@ public struct ControlDispatcher {
             guard let text = request.args?.text else {
                 return ControlResponse(ok: false, error: "session.type requires text")
             }
+            if let rejection = nulRejection(text) { return rejection }
             return await actions.typeSession(request.target, window: request.args?.window,
                                              options: ControlSessionTypeOptions(
                                                 text: text,
@@ -626,6 +621,9 @@ public struct ControlDispatcher {
             }
             if pane != nil, request.args?.sizePercent != nil {
                 return ControlResponse(ok: false, error: PaneOverlayError.sizePercentConflict)
+            }
+            if let percent = request.args?.sizePercent, !(1...100).contains(percent) {
+                return ControlResponse(ok: false, error: "session.overlay.open: --size-percent must be 1...100")
             }
             return actions.openSessionOverlay(request.target, window: request.args?.window,
                                               options: ControlSessionOverlayOpenOptions(
@@ -701,6 +699,8 @@ public struct ControlDispatcher {
             return actions.reloadKeymap()
         case .keymapList:
             return actions.listKeymap()
+        case .version:
+            return actions.appIdentity()
         case .configReload:
             return actions.reloadGhosttyConfig()
         case .notify:
@@ -727,8 +727,15 @@ public struct ControlDispatcher {
             return actions.expandSidebar(window: request.args?.window)
         case .sidebarCollapse:
             return actions.collapseSidebar(window: request.args?.window)
+        case .sidebarWidth:
+            guard let points = request.args?.sidebarWidth, points.isFinite else {
+                return ControlResponse(ok: false, error: "sidebar.width requires a width in points")
+            }
+            return actions.setSidebarWidth(points, window: request.args?.window)
         case .restoreClear:
             return actions.clearRestoreCommands()
+        case .restoreCapture:
+            return actions.captureRestoreCommands()
         default:
             preconditionFailure("unexpected app command: \(request.cmd.rawValue)")
         }
@@ -743,6 +750,7 @@ public struct ControlDispatcher {
             guard let text = request.args?.text else {
                 return ControlResponse(ok: false, error: "quick.type requires text")
             }
+            if let rejection = nulRejection(text) { return rejection }
             return await actions.typeQuick(text: text)
         case .quickText:
             let all = request.args?.all ?? false
@@ -845,6 +853,7 @@ public struct ControlDispatcher {
         case .extent(let all, let lines):
             return actions.readSessionText(request.target, window: request.args?.window,
                                            options: ControlSessionTextOptions(pane: request.args?.pane,
+                                                                              paneID: request.args?.paneID,
                                                                               all: all,
                                                                               lines: lines))
         }

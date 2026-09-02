@@ -6,6 +6,7 @@ paths:
   - "agterm/Views/WindowAppearance.swift"
   - "agterm/NSColor+AgtermHex.swift"
   - "agtermCore/Sources/agtermCore/AppSettings.swift"
+  - "agtermCore/Sources/agtermCore/QuickTerminalMetrics.swift"
   - "agtermCore/Sources/agtermCore/SettingsStore.swift"
   - "agtermUITests/SettingsUITests.swift"
 ---
@@ -25,8 +26,9 @@ paths:
   writing a mode clears the legacy field.
 - Default-on nil fields are `notificationsEnabled`, `notificationBadgeEnabled`, `rightClickPaste`, and
   `workspaceRowClickExpands`, whose mirror gates the sidebar row-click toggle only ([[sidebar]]).
-  Default-off nil fields include attention button, Dock bounce, restore commands, global config
-  inheritance, close confirmation, auto-follow, hidden inactive sidebars, and interface hiding.
+  Default-off nil fields include attention button, Dock bounce, global config inheritance, close
+  confirmation, auto-follow, hidden inactive sidebars, and interface hiding. `restoreMode` defaults to
+  `none`; the legacy `restoreRunningCommand` boolean migrates to `rerun` or `none`.
 - `sidebarFontSize` and `interfaceFontSize` are separate settings, both 9...20 default 13, read through
   `effectiveSidebarFontSize`/`effectiveInterfaceFontSize`. Neither falls back to the other: the sidebar
   is a density knob, the palette a readability one.
@@ -50,9 +52,19 @@ paths:
   `3024 Night`. It always owns and emits `mouse-scroll-multiplier` (nil = 3 for wheel and trackpad) and
   `right-click-action` (nil/on = paste, off = ignore), overriding earlier config layers. Their Settings
   controls map defaults back to nil; right-click changes reload surfaces.
+  The settings conf loads last among the top-level config sources, but `ghostty_config_load_recursive_files`
+  expands `config-file` includes AFTER it, so an included value for a SCALAR key replaces what Settings
+  wrote — `cursor-style`, `font-size`, `right-click-action` and the rest.
+  `font-family` is ghostty's `RepeatableString` and ACCUMULATES instead, so the merge rule is per key and
+  not a single precedence order.
+  Never tell a user a picked value beats their `ghostty.conf`; it beats a scalar key written directly in it.
 - Non-Ghostty settings update app mirrors and `.agtermAppearanceChanged`, not surfaces. The mute wash
   fades text toward terminal color; with transparency it also tints the see-through area. Sidebar tint
   composes over opaque or blurred backgrounds; AppKit must leave the sidebar unfilled.
+- `quickTerminalSizePercent` is the quick-terminal panel's share of its screen, nil for the built-in size.
+  `QuickTerminalMetrics` owns the arithmetic, the offered choices and the clamp; [[windows]] owns why a set
+  percentage replaces the points cap instead of raising it. Mirrored to `GhosttyApp` like `toolbarMode`,
+  and read when the panel is framed, so no appearance broadcast is involved.
 - `inactivePaneMuteStrength` drives the inactive split pane and the backdrop behind a floating overlay and
   the quick terminal, so its label names both. [[libghostty]] owns how those washes render.
 - Status colors default to active `#DBD9E6`, system amber, and system green. Shapes are raw
@@ -78,9 +90,11 @@ paths:
   `terminalColor`, quick-terminal backing, title/window appearance, and non-observable chrome mirrors.
 - Settings is a 540x640 six-tab SwiftUI scene with explicit selection defaulting General, preventing
   `com_apple_SwiftUI_Settings_selectedTabIndex` persistence. General holds Mouse, Sessions, and Ghostty
-  Config. Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row plus
-  Multiple Windows. Notifications holds banner/badge/attention/bounce/sound. Agent Status holds
-  colors/shapes, sound, auto-follow, and Reset. Key Mapping holds config directory, diagnostics, and Reload.
+  Config. Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row, plus
+  Multiple Windows and the quick terminal's panel size, which sits there rather than under Appearance's
+  Window because the panel belongs to no window.
+  Notifications holds banner/badge/attention/bounce/sound. Agent Status holds colors/shapes, sound,
+  auto-follow, and Reset. Key Mapping holds config directory, diagnostics, and Reload.
 - Keep titlebar construction in `WindowContentView+Titlebar.swift` so `WindowContentView.swift` remains
   below the 1000-line limit.
 - Keep Agent Status shape pickers in a trailing-aligned 80-point column wider than the 64.5...68-point
@@ -119,16 +133,34 @@ paths:
   libghostty diagnostics across all sources, clear all session zoom, post appearance change, and notify
   non-zero diagnostics. A config-directory change reloads both co-located files. Launch also reports
   cached diagnostics.
-- **Restore running commands is opt-in, and both capture and replay are exit-scoped.**
-  `AppDelegate.captureForegroundCommands` runs at two points: `applicationWillTerminate` before
-  `saveAllOpen()`, and the LAST window's `willClose` before its surface teardown, which precedes
+- **Process restore mode is frozen at launch; capture follows the configured next mode.** `none` restores fresh shells, `rerun` uses the captured-command path
+  below, and `live` is zmx-backed. Settings changes apply after restart. A live request falls back to
+  `none` when the bundled executable, zsh integration, or password-database login shell is unsupported, and
+  Settings reports the reason. The requested-live latch still claims persisted daemons during fallback; only
+  a deliberate `none` or `rerun` launch reaps them. Factories, control status, and reap read the immutable
+  requested or active mode. Exit capture and `restore.capture` read the configured next-launch mode.
+- **Command replay is launch-scoped; capture runs at two exits and on demand.**
+  `AppDelegate.captureForegroundCommands` runs at three points: `applicationWillTerminate` before
+  `saveAllOpen()`, the LAST window's `willClose` before its surface teardown, which precedes
   `applicationWillTerminate` and is therefore the only point where a close-the-last-window exit's
-  commands are still readable.
-  Guarded by `openIDs() == [windowID]`, skipped under `isTerminating`.
-  A NON-last close captures nothing: a launch restore can't tell that window's file from one open at
-  exit, so its argv could replay via the never-windowless reopen fallback.
-  Argv comes from `ghostty_surface_foreground_pid`, `sysctl(KERN_PROCARGS2)`, and host-free parsing.
-  Capture no hidden split.
+  commands are still readable, and `restore.capture` on demand, which exists for the exit that reaches
+  neither: a force quit, a crash, a hard reset, a power loss. A system shutdown/restart/logout is NOT in
+  that set — since #447 it reaches `applicationWillTerminate` like any quit — so do not re-motivate the
+  command with an OS update. The on-demand arm changes nothing else: it fills the same
+  slots, persists through the same `saveAllOpen`, and replay stays launch-only and one-shot.
+  The two automatic exit arms run when the configured mode is `rerun` or `live`. The on-demand arm remains
+  rerun-only: it refuses when `none` or `live` is configured and names that mode. Deliberately unlike a
+  `session.restore` pin, which saves future rerun policy with an explanatory note, because a pin outlives
+  the mode and a capture only goes stale.
+  The `willClose` arm alone is guarded by `openIDs() == [windowID]` and skipped under `isTerminating`.
+  A NON-last close captures nothing AND clears both persisted slots plus the pending pair: a launch
+  restore can't tell that window's file from one open at exit, so its argv could replay via the
+  never-windowless reopen fallback, and on demand a capture can now have written argv there mid-run.
+  Ordinary and rerun argv comes from `ghostty_surface_foreground_pid`, `sysctl(KERN_PROCARGS2)`, and
+  host-free parsing. Live panes use one fresh zmx leader snapshot, then the same sysctl parsing against the
+  daemon-side leaders. A live hidden split is captured while its backing surface exists; an ordinary or
+  rerun hidden split remains nil. Refresh failure or deadline expiry clears the affected slots rather than
+  reading the resolver's retained map.
   Strip login `-` before shell recognition; a known shell with only flags is idle and omitted, while
   scripts/payload args remain, including `/bin/sh <script>`.
   System shutdown, restart, and logout skip quit confirmation so `applicationWillTerminate` can capture
@@ -148,21 +180,42 @@ paths:
   Anything else that must cancel an armed replay clears those slots too, never the persisted fields:
   `recoverOrphanedWindows`, `Session.clearPendingRestoreOverrides` on the soft-close round trip, and
   `restore.clear`, which the socket can receive before the later windows' decks have mounted.
+  The pending pair is consumed on the first PERMITTED surface-creation attempt, not at view construction
+  (`LaunchSeedProvider`): while a pane waits on its launch spawn permit the argv and pin stay on the
+  session, so `restore.clear` disarms it and a clean quit re-captures it across that window. The on-demand
+  arm (`restore.capture`) keeps its rerun-only boundary.
   Against STALE files from older builds, `loadStore` also rewrites a snapshot that carried captures on a
   mid-run reopen, and `recoverOrphanedWindows` drops captures while the sticky override still arms
   (a corrupt index must not re-execute a closed window's last command).
-- Restore only when the toggle is on and basename is absent from user
-  `restore-denylist.conf`, seeded with `tmux`, `screen`, and `zellij`. Feed captured argv once through
-  shell-quoted `config.initial_input` so exit returns to the shell, then nil it. Only one foreground
-  process from a typed pipeline/compound command can be captured.
+- Restore captured argv only in `rerun` or a wrapped `live` pane, and only when basename is absent from user
+  `restore-denylist.conf`, seeded with `tmux`, `screen`, and `zellij`. A control character anywhere in the
+  argv also refuses, matching what `session.restore set` rejects a pin for: the line is typed, so the line
+  editor reads the byte before the shell parser and quoting cannot protect it. U+FFFD refuses with it,
+  since `parseProcArgs` decodes lossily and replaying it would run a different argument. Both refuse at
+  RENDER, keeping `hadForeground` true so a stale `initialCommand` stays preempted. A pin loaded from a
+  snapshot never passed the dispatcher's check, so `restoreInput` applies it again at the sink; both share
+  `CommandRestore.hasControlCharacter`. Feed captured argv once through
+  shell-quoted `config.initial_input` in rerun mode, then nil it. A wrapped live pane consumes the pending
+  argv only after configuration succeeds and passes it as a create-only zmx attach payload. An existing
+  daemon ignores the payload; a missing daemon runs it, then starts the final integrated login shell.
+  Fallback never consumes. Only one foreground process from a typed pipeline/compound command can be captured.
 - `session.new --command` persists durable `initialCommand` and restores through shell-replacing
-  `config.command`; fresh creation always runs, restored creation honors the toggle, and captured
+  `config.command`; fresh creation always runs, restored creation honors `rerun`, and captured
   foreground wins. Do not consume `initialCommand`; remove it only when primary exit promotes a split.
-  `restore.clear` and tree foreground fields are the control surface.
+  `restore.capture`, `restore.clear` and tree foreground fields are the control surface; the tree fields
+  report the live process, not the captured slot, which [[control-api]] keeps read-back-free by design.
 - `newSessionDirectory` is raw `home|currentSession|custom`, with fixed custom path. Unknown/blank/missing
   values fall back home. Resolve once from active session's `focusedCwd` for every GUI creation path,
   including a right-clicked workspace; setters save only. Control `session.new --cwd` remains explicit
   and ignores this setting.
+- `cursorStyle` is a raw string that `effectiveCursorStyle` recognizes only as `block|bar|underline`, and
+  `cursorBlink` is ghostty's own `?bool`. Unlike the two keys above, neither is emitted unconditionally:
+  only a RECOGNIZED style emits `cursor-style`, and `cursorBlink` emits whenever it is non-nil.
+  nil, and any unoffered name including ghostty's real `block_hollow`, resolve to nil and emit nothing,
+  leaving the config chain to pick the shape — an unknown value is stored yet still silent.
+  `block_hollow` is excluded because an unfocused surface is already marked by drawing its cursor hollow.
+  nil `cursorBlink` is a third state rather than off: the cursor blinks AND DEC mode 12 can still change it,
+  while either explicit value takes DEC mode 12 away. `DECSCUSR` wins over all three.
 - `inheritGlobalGhosttyConfig` defaults off. It changes which files load, so its setter saves then reloads
   unconditionally; it is not a config line or live mirror. Scoped config always loads.
 - `attentionButtonEnabled` defaults off and mirrors to `GhosttyApp` for live titlebar redraw. Its three

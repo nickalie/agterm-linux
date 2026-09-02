@@ -21,6 +21,8 @@ final class ControlServer {
     let library: WindowLibrary
     let actions: AppActions
     let settingsModel: SettingsModel
+    let launchRestoreMode: RestoreMode
+    let zmxForegroundResolver: ZmxForegroundResolver?
     private let socketPath: String
 
     /// The target-resolution query layer: owns the `emptyStore`/`store` frontmost-fallback and wraps the
@@ -90,6 +92,21 @@ final class ControlServer {
         }
     }
 
+    /// The sentence inside a `DecodingError`, read off its `Context` rather than off the error: the error's
+    /// own `debugDescription` is macOS 26.4+, so at this app's 14.0 deployment target `String(describing:)`
+    /// falls back to a reflection dump that buries the same sentence inside `DecodingError.Context(...)`.
+    /// Every case carries a context, and the `@unknown default` keeps a future case readable rather than
+    /// silent.
+    nonisolated private static func decodeDetail(_ error: DecodingError) -> String {
+        switch error {
+        case .dataCorrupted(let context), .keyNotFound(_, let context),
+                .typeMismatch(_, let context), .valueNotFound(_, let context):
+            return context.debugDescription
+        @unknown default:
+            return String(describing: error)
+        }
+    }
+
     /// Cap on a request line, shared with the client via `ControlWire` so the two sides can't drift; over
     /// it the line is rejected and the connection closed, so a bad client can't grow the buffer unbounded.
     nonisolated private static let maxLineBytes = ControlWire.maxRequestLineBytes
@@ -111,10 +128,36 @@ final class ControlServer {
     /// progressing and parks the accept loop. A normal reader drains in milliseconds.
     nonisolated private static let writeDeadlineSeconds = 10
 
-    init(library: WindowLibrary, actions: AppActions, settingsModel: SettingsModel, socketPath: String? = nil) {
+    /// Which agterm this is, injected rather than read from `Bundle.main` here: the identity is the app's to
+    /// know, and a hosted test would otherwise see its own host bundle.
+    let identity: AppIdentity
+    /// Talks to the daemons behind the zmx commands. Present in every real launch, live mode or not —
+    /// `list` and `prune` must still work after a launch in `none` or `rerun`, which is exactly when
+    /// detached daemons are left over. Nil only in hosted tests, where the commands answer that the
+    /// backend is unavailable rather than pretending an empty listing.
+    let zmxClient: ZmxClient?
+
+    /// Runs the ssh invocations behind the remote commands. Injectable so hosted tests drive them against
+    /// a fake instead of a second Mac.
+    let remoteRunner: any RemoteCommandRunner
+
+    /// How long a remote projection read may take before it is abandoned. `ConnectTimeout` bounds only the
+    /// handshake, so this is what covers a remote agterm that never answers.
+    static let remoteTreeDeadline: TimeInterval = 10
+
+    init(library: WindowLibrary, actions: AppActions, settingsModel: SettingsModel, identity: AppIdentity,
+         launchRestoreMode: RestoreMode = GhosttyApp.shared.launchRestoreMode,
+         zmxForegroundResolver: ZmxForegroundResolver? = nil, zmxClient: ZmxClient? = nil,
+         remoteRunner: (any RemoteCommandRunner)? = nil,
+         socketPath: String? = nil) {
+        self.remoteRunner = remoteRunner ?? RemoteCommandProcessRunner()
         self.library = library
         self.actions = actions
         self.settingsModel = settingsModel
+        self.launchRestoreMode = launchRestoreMode
+        self.zmxForegroundResolver = zmxForegroundResolver
+        self.zmxClient = zmxClient
+        self.identity = identity
         self.resolver = ControlTargetResolver(library: library)
         self.socketPath = socketPath ?? ControlServer.defaultSocketPath()
         // ownership is decided HERE, not in `start()`. The launch window's surfaces are built during the
@@ -307,7 +350,9 @@ final class ControlServer {
     /// Read one newline-delimited request from `conn`, decode it, dispatch it on `server` (main actor), write
     /// the response back, close. A decode failure replies with a structured error. Runs on the background queue.
     nonisolated private static func handleConnection(_ conn: Int32, server: ControlServer) {
-        defer { close(conn) }
+        // the remote commands hand the descriptor to a thread of their own, which then owns closing it
+        var handedOff = false
+        defer { if !handedOff { close(conn) } }
         // a write to a client that already hung up would raise the default-fatal SIGPIPE and take the whole
         // app down mid-request; SO_NOSIGPIPE turns it into a normal EPIPE write error.
         var noSigPipe: Int32 = 1
@@ -328,7 +373,11 @@ final class ControlServer {
         do {
             request = try JSONDecoder().decode(ControlRequest.self, from: line)
         } catch {
-            writeResponse(conn, ControlResponse(ok: false, error: "invalid request: \(error.localizedDescription)"))
+            // the decode CONTEXT over `localizedDescription`, which is the generic "data couldn't be read":
+            // the context names the rejected `cmd`, telling a caller its agterm is older than its agtermctl,
+            // and only for a command added after THIS code shipped, since an older server returns the generic.
+            let detail = (error as? DecodingError).map(Self.decodeDetail) ?? error.localizedDescription
+            writeResponse(conn, ControlResponse(ok: false, error: "invalid request: \(detail)"))
             return
         }
 
@@ -339,10 +388,29 @@ final class ControlServer {
             return
         }
 
+        // `zmx tree <this machine>` would otherwise deadlock against itself: the far side's own agtermctl
+        // waits in this server's backlog while this connection holds the only accept thread.
+        if Self.waitsOnNetwork(request.cmd) {
+            handedOff = true
+            let worker = Thread {
+                defer { close(conn) }
+                writeResponse(conn, runBlocking { await server.dispatch(request) })
+            }
+            worker.name = "com.umputun.agterm.control.remote"
+            worker.start()
+            return
+        }
+
         // hop to the main actor, blocking this background thread. dispatch refreshes the window cache in that
         // same execution, so the fast path sees this command's mutations without a second, stallable hop.
         let response = runBlocking { await server.dispatch(request) }
         writeResponse(conn, response)
+    }
+
+    /// Commands whose dispatch awaits an ssh round trip. `zmx.attach` re-resolves the remote first, so it
+    /// carries the same wait; local `zmx.list` blocks too, but bounded, and stays inline to keep cache order.
+    nonisolated private static func waitsOnNetwork(_ cmd: Command) -> Bool {
+        cmd == .zmxTree || cmd == .zmxAttach
     }
 
     /// Read bytes from `conn` up to (and excluding) the first newline. Returns nil on EOF-before-newline, a
@@ -421,11 +489,12 @@ final class ControlServer {
                 .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete, .workspaceMove,
                 .workspaceFocus,
                 .workspaceFilter, .workspaceCollapse, .workspaceExpand,
-                .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
+                .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionScratch, .sessionFocus, .sessionResize,
+                .surfaceZoom,
                 .surfaceCursor,
-                .sessionStatus, .sessionFlag, .sessionSeen, .sessionRestore, .notify,
+                .sessionStatus, .sessionFlag, .sessionContext, .sessionSeen, .sessionRestore, .notify,
                 .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .configReload, .themeSet, .themeList,
-                .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sessionType, .sessionCopy,
+                .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sidebarWidth, .sessionType, .sessionCopy,
                 .sessionPaste, .sessionSelectAll,
                 .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize,
                 .sessionOverlayResult, .sessionOverlayCopy, .sessionOverlayText,
@@ -433,7 +502,8 @@ final class ControlServer {
                 .windowNew, .windowList, .windowSelect,
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
                 .windowFullscreen, .windowMinimize,
-                .restoreClear, .dashboard:
+                .restoreClear, .restoreCapture, .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree,
+                .zmxAttach, .dashboard, .version:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
         case .debugAppearance:
             return setDebugAppearance(args: request.args)
@@ -483,13 +553,67 @@ final class ControlServer {
     /// answer ok and then watch those windows run the commands anyway. The `session.restore` pins are
     /// deliberately untouched — they are sticky, and this command clears captures.
     func clearRestoreCommands() -> ControlResponse {
-        for session in library.allOpenSessions() {
-            session.foregroundCommand = nil
-            session.splitForegroundCommand = nil
-            session.clearPendingForegroundCommands()
+        for session in library.allOpenSessions() { session.clearCapturedForegroundCommands() }
+        // the ack waits on the write for the same reason `restore.capture`'s does: the save IS the clear, and
+        // the slots are not readable, so an ok over a failed write leaves a stale capture nothing can detect.
+        guard library.saveAllOpenChecked() else {
+            return ControlResponse(ok: false, error: "cleared every open pane but at least one window's save "
+                + "failed; those windows keep their captured commands on disk until they save successfully")
         }
-        library.saveAllOpen()
         return ControlResponse(ok: true)
+    }
+
+    /// The restore-mode policy: settings, this launch's request, and what it got.
+    func readRestoreMode() -> ControlResponse {
+        ControlResponse(ok: true, result: ControlResult(restore: restoreStatus()))
+    }
+
+    /// Persist the mode for the NEXT launch; a pane is wrapped or not at creation, so this process keeps
+    /// the mode it started with.
+    func setRestoreMode(_ mode: RestoreMode) -> ControlResponse {
+        guard settingsModel.setRestoreMode(mode) else {
+            return ControlResponse(ok: false, error: "could not save the restore mode; settings keep "
+                + settingsModel.settings.effectiveRestoreMode.rawValue)
+        }
+        return ControlResponse(ok: true, result: ControlResult(restore: restoreStatus()))
+    }
+
+    func restoreStatus() -> ControlRestoreStatus {
+        let decision = GhosttyApp.shared.restoreLaunchDecision
+        return ControlRestoreStatus(configured: settingsModel.settings.effectiveRestoreMode,
+                                    requestedAtLaunch: decision.requested, active: decision.active,
+                                    unavailableReason: decision.liveUnavailableReason)
+    }
+
+    /// Capture every open pane's live foreground command NOW, filling the same slots the quit-time capture
+    /// fills, then persist them. The point is the exit that never runs `applicationWillTerminate`: a crash, a
+    /// SIGKILL, a hard reset, or a restart that outruns the app's termination window. Run this from a
+    /// scheduled job or a keybind and such an exit restores like a ⌘Q.
+    ///
+    /// App-global like `clearRestoreCommands`, its inverse over the same slots: no `--window` selector, every
+    /// open window. Consumption stays one-shot and launch-only, so nothing here changes replay.
+    ///
+    /// Available only when rerun is configured for the next launch. It refuses in the other two modes,
+    /// unlike `session.restore`, which saves future rerun policy with a note.
+    func captureRestoreCommands() -> ControlResponse {
+        let configuredMode = settingsModel.settings.effectiveRestoreMode
+        guard configuredMode == .rerun else {
+            return ControlResponse(ok: false, error: "restore.capture requires rerun mode; configured restore mode is "
+                + configuredMode.rawValue)
+        }
+        let sessions = library.allOpenSessions()
+        let captured = AppDelegate.captureForegroundCommands(
+            sessions: sessions, zmxResolver: zmxForegroundResolver)
+        // this command's whole claim is that the argv reached disk, so the ack waits on the write and not on
+        // the assignment: `saveAllOpen` swallows the result, `saveAllOpenChecked` reports it.
+        guard library.saveAllOpenChecked() else {
+            return ControlResponse(ok: false, error: "captured \(captured) pane\(captured == 1 ? "" : "s") "
+                + "but at least one window's save failed; failed windows keep their argv in memory until they "
+                + "save successfully")
+        }
+        var result = ControlResult(count: captured)
+        result.text = "captured \(captured) pane\(captured == 1 ? "" : "s")"
+        return ControlResponse(ok: true, result: result)
     }
 
     /// Open or close the target window's dashboard overlay — the app side of the host-free `dashboard`
@@ -585,6 +709,10 @@ final class ControlServer {
     /// selected session's owner, since an empty or foreground-created workspace becomes current on its own).
     func buildTree(in store: AppStore) -> ControlTree {
         let shellBasename = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
+        let sessions = store.workspaces.flatMap(\.sessions)
+        if ZmxForegroundRefreshPolicy.hasWrappedPane(in: sessions) {
+            zmxForegroundResolver?.refreshIfNeeded()
+        }
         // the projected window owns its quick terminal; find its id by store identity to read the live
         // QuickTerminalController.isVisible (a nil controller — never opened, or tearing down — reads false).
         let windowID = library.windowID(for: store)
@@ -592,14 +720,16 @@ final class ControlServer {
         // dashboard read-backs: the keyboard-driven dashboard bypasses the command path, so a cache goes stale.
         let dashboard = DashboardControllerRegistry.shared.controller(for: windowID)
         return store.controlTree(
-            foreground: { session in
+            paneForeground: { session in
                 (session.surface as? GhosttySurfaceView).flatMap {
-                    ForegroundProcess.running(for: $0, shellBasename: shellBasename)
+                    ForegroundProcess.running(for: $0, shellBasename: shellBasename,
+                                              zmxResolver: zmxForegroundResolver)
                 }
             },
-            splitForeground: { session in
+            splitPaneForeground: { session in
                 (session.splitSurface as? GhosttySurfaceView).flatMap {
-                    ForegroundProcess.running(for: $0, shellBasename: shellBasename)
+                    ForegroundProcess.running(for: $0, shellBasename: shellBasename,
+                                              zmxResolver: zmxForegroundResolver)
                 }
             },
             fontSize: { ($0.addressableSurface as? GhosttySurfaceView)?.currentFontSize() },
@@ -634,7 +764,8 @@ final class ControlServer {
                 case .fixed: return "fixed"
                 case .untouched: return "untouched"
                 }
-            }
+            },
+            app: identity
         )
     }
 

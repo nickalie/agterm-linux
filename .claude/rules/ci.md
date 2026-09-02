@@ -7,6 +7,9 @@ paths:
 
 - `ci.yml` runs for pushes and PRs to `master`; concurrency cancels the older run for the same ref. All
   macOS jobs use `macos-26`. Releases are local; see `.claude/rules/release.md`.
+- Every job carries its own `timeout-minutes`, with generous headroom over observed runtime. A job without
+  one inherits GitHub's 360-minute default, so a wedge can hold its check pending for six hours. Give a new
+  job a cap in the commit that adds it.
 - The `dorny/paths-filter` Swift set includes `**/*.swift`, `agtermCore/**`, `agterm/**`, `plugins/**`,
   `.claude-plugin/**`, `.agents/**`, `project.yml`, `scripts/**`, both SwiftLint configs, and `ci.yml`.
   Keep all three plugin paths: `SkillInstallTests` checks the bundled `SKILL.md` command count, every
@@ -15,17 +18,18 @@ paths:
 - `test` runs `swift test --enable-code-coverage` in `agtermCore`, exports lcov, and uploads it.
   `coverage`, the only Swift-gated Linux job, downloads it for best-effort Coveralls.
   `lint` installs SwiftLint and runs `swiftlint lint --strict`; every warning fails.
-- `build` restores the libghostty/resource `actions/cache` keyed by `hashFiles('scripts/setup.sh')`,
-  installs xcodegen, runs Release `scripts/build.sh`, asserts the built `agtermctl` carries no
-  entitlements, then Debug `scripts/test-app.sh`. Editing
-  `setup.sh` rebuilds libghostty. Keep both app builds: Release exercises the whole-module optimizer and
-  its SIL-deserializer failure; Debug provides `ENABLE_TESTABILITY` for
-  `DockMenuTests`'s `@testable import agterm`. Do not enable testability in the notarized Release app.
+- `build` restores separate revision-keyed caches for libghostty and zmx, including each build stamp,
+  installs xcodegen, runs Release `scripts/build.sh`, asserts both helpers have valid signatures and no
+  entitlements, then Debug `scripts/test-app.sh`. A zmx pin change does not rebuild libghostty. Keep both
+  app builds: Release exercises the whole-module optimizer and its SIL-deserializer failure. Debug provides
+  `ENABLE_TESTABILITY` for `DockMenuTests`'s `@testable import agterm`. Do not enable testability in the
+  notarized Release app.
 - Three entitlement assertions run, all because a wrong entitlement set stays green. The first two read
   the built Release app. The first guards issue #396: `--deep` with `--entitlements` stamps the app's TCC
-  entitlements onto the bundled CLI on the user's PATH. `scripts/release.sh` repeats it after its
+  entitlements onto bundled helpers. `scripts/release.sh` repeats it after its
   Developer ID re-sign, which runs after CI's copy and is not covered by it.
-  Use `codesign -d --entitlements -`; the `:-` spelling is deprecated and warns.
+  The helper check covers both `agtermctl` and zmx and also verifies their signatures. Use
+  `codesign -d --entitlements -`; the `:-` spelling is deprecated and warns.
 - The second pins the app's own Release set to the seven TCC keys, so neither a Debug-only hardened-runtime
   exception nor a dropped TCC key can ship. It ignores `com.apple.security.get-task-allow`, which the
   ad-hoc "Sign to Run Locally" identity adds and the Developer ID re-sign drops. It compares `key=value`
@@ -49,18 +53,20 @@ paths:
   changed; its Swift membership also runs macOS jobs.
 - The cookbook job builds nothing. It compares the `cookbook/README.md` table and recipe directories in
   both directions; requires kebab-case directories, a `README.md` with all six exact
-  (`grep -qxF`) headings, and shebangs for `.sh`/`.zsh`/`.py`; runs `shellcheck` on `.sh`; parses `.zsh`
-  with `zsh -n`; and runs `ruff check` on `.py`. `shellcheck` is preinstalled. Install absent `zsh` and
-  `ruff` in separate steps immediately before their own; shellcheck cannot lint zsh, and `ruff` needs
-  `pipx` because the runner's python is externally managed.
+  (`grep -qxF`) headings, and shebangs for `.sh`/`.zsh`/`.fish`/`.py`; runs `shellcheck` on `.sh`; parses
+  `.zsh` with `zsh -n` and `.fish` with `fish --no-execute`; runs `ruff check` on `.py`; and executes every
+  `test_*.py` regression script directly. `shellcheck` is preinstalled. Install absent `zsh` and `fish`
+  together before the shell gates, and install `ruff` through `pipx` because the runner's python is
+  externally managed.
 - Recipes are not shell-only. A language gains a gate by adding its extension to the shebang glob plus a
   lint or parse step; until then it merges unchecked, which is why `cookbook/CONTRIBUTING.md` tells a
   contributor to flag any other language in the pull request. Keep that file, `cookbook/README.md` and
   this bullet in step when the set changes.
-- Keep explicit `shell: bash` on the layout, shellcheck, and zsh steps. It supplies bash process
-  substitution and `bash -eo pipefail`; default `bash -e` can hide a failed `find` behind successful
-  `xargs -r`. Use `-print0 | xargs -0 -r` for whitespace and empty matches, plus `-n1` for `zsh -n`
-  because it parses only its first path. Keep `[ -d "$d" ] || continue` so an empty recipe tree does not
+- Keep explicit `shell: bash` on every cookbook validation step with a pipeline or process substitution.
+  It supplies bash process substitution and `bash -eo pipefail`; default `bash -e` can hide a failed
+  `find` behind successful `xargs -r`. Use `-print0 | xargs -0 -r` for whitespace and empty matches,
+  plus `-n1` for `zsh -n` because it parses only its first path.
+  Keep `[ -d "$d" ] || continue` so an empty recipe tree does not
   turn the unexpanded glob into directory `*`.
 - The two-way index scan accepts only lines starting with `|`, so prose links/comments cannot satisfy it
   and deleted directories leave stale rows. It is line-based, so keep fenced sample rows in

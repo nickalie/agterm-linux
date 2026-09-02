@@ -136,7 +136,7 @@ Reload after every edit (File ▸ Reload Keymap, or `agtermctl keymap reload`). 
 
 ## Changing ghostty settings
 
-Most terminal behavior comes from ghostty. The common knobs (font, theme, background opacity and blur, scroll speed) are in agterm's Settings, but any other ghostty key (`macos-option-as-alt`, `keybind`, `window-padding-*`, and so on) is set in a config file.
+Most terminal behavior comes from ghostty. Use agterm's Settings for its built-in controls and a config file for other ghostty keys such as `macos-option-as-alt`, `keybind`, and `window-padding-*`.
 
 agterm reads four config sources, each overriding the one before it:
 
@@ -147,7 +147,7 @@ ghostty's bundled defaults  →  ~/.config/ghostty/config  →  <config dir>/gho
 
 - `<config dir>/ghostty.conf` (default `~/.config/agterm/ghostty.conf`, next to `keymap.conf`) is scoped to agterm only; the standalone Ghostty.app never reads it. Use it for keys you want in agterm but not everywhere.
 - `~/.config/ghostty/config` is your global ghostty config, shared with Ghostty.app, and already in the chain.
-- The keys agterm sets from its Settings window load last, so the Settings picker wins for what it manages. Put everything else in `ghostty.conf`.
+- Values agterm emits from Settings load last and win over matching values in `ghostty.conf`. The [Ghostty config guide](https://agterm.com/docs#ghostty) lists the keys. Put everything else in `ghostty.conf`.
 
 Edit `ghostty.conf` with **File ▸ Edit ghostty.conf…** (or the ⌃⇧P palette), which opens it in `$EDITOR` and reloads on exit, the same as Edit Keymap. After editing it elsewhere, apply it with **File ▸ Reload Config**, the action palette, or `agtermctl config reload`. A malformed line is skipped while the good ones still apply. The diagnostic count (shown in a banner and printed by `config.reload`, where `0` means a clean reload) covers every ghostty config source, not just `ghostty.conf`, because the diagnostics do not record which file they came from. Check the Console log for the offending line.
 
@@ -156,7 +156,7 @@ A reload applies most keys to your open terminals right away — colors, theme, 
 - **Layout keys** — `window-padding-x`, `window-padding-y`, and other size-affecting keys — do not re-apply to an open pane. libghostty re-derives a surface's padding only when it is first laid out, so a reload (and even resizing the window) leaves existing panes on their old padding. Open a new session or new window to pick up the change; the panes that were already open need a relaunch.
 - **Spawn-time keys** — `term` and `shell-integration-features` — are read once when the shell starts, so a reload cannot change them for a shell that is already running. Open a new session, whose shell is spawned fresh, to apply them.
 
-The full ghostty key reference is at <https://ghostty.org/docs/config>.
+The full ghostty key reference is at <https://ghostty.org/docs/config>. One pair of values in it does not apply to agterm: the `ssh-env` and `ssh-terminfo` values of `shell-integration-features`. Ghostty implements both by replacing your `ssh` with a wrapper that calls the `ghostty` command-line tool absent from agterm's bundle, so in agterm the wrapper would fail on every connection. agterm forces those two values back off and keeps the rest of your `shell-integration-features` flags, so `ssh` stays the real `ssh`. If you need agterm's terminfo entry on a remote host, install it there once with `infocmp -x xterm-ghostty | ssh <host> 'tic -x -'`.
 
 ## Copy/paste and shortcuts on a non-Latin or alternative layout
 
@@ -194,9 +194,56 @@ Reload with **File ▸ Reload Config** or `agtermctl config reload`. The keybind
 - **No desktop notifications.** Check **Settings ▸ Notifications ▸ Show notification banners** first — when it is off, `agtermctl notify` still reports success and the unseen-count badge still tracks, but nothing is posted to macOS. Since agterm 0.17.0 the command says so, answering `badge updated, but "Show notification banners" is off, so no banner was posted` instead of a bare `ok`. macOS must also have granted permission (System Settings ▸ Notifications ▸ agterm), and Do Not Disturb / a Focus mode suppresses banners system-wide.
 
   To tell "never posted" from "posted but not shown", run `agtermctl notify "test"` and check two things: `agtermctl tree --json` — a rising `unseen` on the target session proves the command reached the notification path — and the log below, which now records every posted and every suppressed notification.
-- **A permission prompt carrying agterm's name, or a tool that cannot get one.** Command-line tools request Automation, Camera, Microphone, Contacts, Calendars, Reminders, Photos, Location, Bluetooth, local network, speech recognition, system administration and system audio recording *through* agterm: macOS treats agterm as the responsible app, so the prompt names agterm and the answer is recorded against agterm rather than against the tool. One grant then covers every program in every session, with no further prompt. A dismissed prompt is not re-offered either, the tool just keeps failing (`osascript` reports "Not authorized to send Apple events"), so change the answer in System Settings ▸ Privacy & Security under the matching service, for example Automation ▸ agterm.
+- **A permission prompt carrying agterm's name, or a tool that cannot get one.** Command-line tools request Automation, Camera, Microphone, Contacts, Calendars, Reminders, Photos, Location, Bluetooth, local network, speech recognition, system administration and system audio recording *through* agterm, so the prompt names agterm rather than the tool. A dismissed prompt is not re-offered, the tool just keeps failing (`osascript` reports "Not authorized to send Apple events"). See [Why agterm asks for camera, microphone and the rest](#why-agterm-asks-for-camera-microphone-and-the-rest) for why, what a grant then covers, and where to change your answer.
+- **A command cannot read `~/Downloads`, `~/Desktop` or `~/Documents`.** Those folders are protected by macOS itself, separately from the services above, and the grant is per application — another terminal reading them says nothing about agterm. See [A command cannot read ~/Downloads, ~/Desktop or ~/Documents](#a-command-cannot-read-downloads-desktop-or-documents).
 - **Agent-status glyph does not update.** Install the hooks from Help ▸ Install Agent Status Hooks…. For shell-integrated agents, start a fresh shell so the `source` line added to your shell rc takes effect. For Pi, restart it or run `/reload` so it loads `~/.pi/agent/extensions/agterm-status.ts`; Pi status is only installed when `~/.pi/agent` already exists. For OpenCode, restart it so it loads `~/.config/opencode/plugins/agterm-status.js`; the plugin installs only when `~/.config/opencode` already exists. The hooks call `agtermctl session status`, so `agtermctl` must resolve first (see above).
 - **Agent-status glyph updates the wrong session.** One session's glyph blinks while the work happens in another — typically when agents run inside tmux (or a tmux-backed session manager such as agent-deck). The working process inherited another session's `AGTERM_SESSION_ID`: the status hooks target whatever id is in their environment, and a long-lived daemon started from inside an agterm session (a tmux server is the usual carrier) captures that session's `AGTERM_*` variables into its global environment and passes them to every child it ever creates. Check `tmux show-environment -g | grep AGTERM` — if present, clear them with `tmux set-environment -g -r AGTERM_SESSION_ID` (and the other `AGTERM_*` names), then restart the affected panes. To avoid it, start such daemons with the variables scrubbed (`env -u AGTERM_SESSION_ID … <command>`) or from a terminal outside agterm.
+
+## Every session restores to the directory it was created in
+
+Sessions come back in the directory they were opened in rather than the one you left them in, the directory
+shown under the session name never follows a `cd`, `session reveal` opens the wrong folder, and
+`{AGT_SESSION_PWD}` in a custom command expands to the creation directory.
+
+agterm learns a session's working directory only from OSC 7, which Ghostty's shell integration reports.
+That integration is injected into the shell agterm spawns and does not survive that shell replacing itself.
+A startup file that `exec`s another shell replaces it before it ever reaches a prompt, so the directory is
+never reported at all and every consumer falls back to the one the session started in. Shell-wrapper
+installers do exactly this: Amazon Q CLI, Kiro CLI and Fig add an `exec` block at the top of `.zshrc`.
+
+To confirm it, `cd` somewhere in the session and run `agtermctl tree --json`: if the session's `cwd` does
+not follow the `cd`, nothing is reporting it.
+
+The fix is Ghostty's own recipe — load the integration explicitly, below the block that replaced your
+shell:
+
+```zsh
+if [[ -n "$GHOSTTY_RESOURCES_DIR" ]]; then
+  builtin source "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration"
+fi
+```
+
+It is a no-op in a shell that already loaded it, so it is safe to add unconditionally. bash, fish and
+nushell have their own integration files in the same `shell-integration` directory. Removing the wrapper
+works too.
+
+Three neighbouring cases share the cause, and the block above covers all but the last:
+
+- **`exec zsh` typed at a prompt** replaces a shell that has already reported, so the directory freezes
+  where it was rather than never being set. The replacement reads `.zshrc`, so the block fixes it.
+- **`sudo -E zsh` or any other nested shell** is a child rather than a replacement: the directory stays
+  frozen while it runs, then the outer shell resumes reporting at its next prompt.
+- **A shell running inside tmux** needs the block *and* a tmux setting. tmux is a terminal emulator rather
+  than a passthrough, so the pane shell's report goes to tmux, which forwards it to agterm only with its
+  `osc7` terminal feature on — and its default `terminal-features` does not grant that to `xterm-ghostty`.
+  Add `set -as terminal-features ',xterm-ghostty:osc7'` to `~/.tmux.conf` as well, then restart the tmux
+  server.
+
+Restoring a running command has its own limit, unrelated to the block above: with **Restore running
+commands on restart** on, a pane behind a wrapper does not come back running what it was running. The
+program is on a second terminal the wrapper owns, which agterm cannot see into, so the capture never
+reaches it. Pin what such a pane should re-run with `agtermctl session restore '<command>'`, which is read
+back on `tree` and wins over the capture.
 
 ## ⌘-hover does not underline links inside tmux or vim
 
@@ -227,6 +274,57 @@ This is a Claude Code bug, not an agterm bug. When a window regains focus, agter
 agterm is behaving correctly: it emits paired focus-in and focus-out reports with nothing stray, and it follows the macOS focus-first convention, so a click that refocuses the window only focuses it and is not forwarded into the terminal. The trigger is the focus report itself, so any terminal with focus reporting on is affected the same way.
 
 Workaround until the upstream fix: answer the prompt before switching away, or if you have already returned to a stuck prompt, press `Esc` to dismiss it and let Claude Code re-ask.
+
+## Why agterm asks for camera, microphone and the rest
+
+agterm's code signature carries seven resource-access entitlements: Automation (Apple Events), camera,
+microphone, contacts, calendars, location and photos. agterm never touches any of them itself, and the
+`NSxxxUsageDescription` strings in `Info.plist` say so.
+
+They are there for the programs you run inside a session. macOS treats agterm as the *responsible app* for
+what it spawns, so when a command-line tool asks for the microphone, the request is charged to agterm. This
+is attribution, not inheritance: the entitlement has to sit on agterm precisely because the child does not
+get one of its own. Under hardened runtime, which agterm is signed with, a missing entitlement does not
+produce a denial. `tccd` refuses to prompt at all, records nothing, and agterm never appears in the matching
+Privacy pane, so there is no way to approve it by hand either. The tool just fails, with nothing pointing at
+the cause. Ghostty, kitty, iTerm2 and Macterm ship the same seven; WezTerm ships those plus Bluetooth.
+
+**They grant nothing on their own.** An entitlement only makes the request possible. Every service is still
+off until you approve it, and the first request raises the standard macOS prompt.
+
+**What a grant gives away.** The answer is recorded against agterm, not against the command that asked for
+it. Approve the camera once and every program in every session can use it from then on, with no further
+prompt and no identity of its own, for as long as macOS attributes it to agterm. Code running as a
+compromised agterm has the same access. That is the trade for running arbitrary tools in a terminal that can
+obtain permissions at all, and it is worth knowing before approving something you only meant for one tool.
+
+**Changing your mind.** Grants and denials both live in System Settings ▸ Privacy & Security under the
+matching service, listed as agterm, for example Automation ▸ agterm. A dismissed prompt is not re-offered,
+so if a tool keeps failing after you dismissed one, that is where to fix it.
+
+## A command cannot read ~/Downloads, ~/Desktop or ~/Documents
+
+`ls ~/Downloads` fails for a directory that belongs to you, and another terminal on the same Mac lists it
+without complaint.
+
+Those three folders, along with removable and network volumes, are protected by macOS directly. It is a
+different mechanism from the section above: agterm is not sandboxed, and unlike the services listed there no
+missing entitlement can suppress this family's prompt. macOS defines an optional usage-description string per
+folder and agterm ships none, so the prompt carries macOS's own wording rather than agterm's. What matters is
+that the answer is recorded against the application macOS holds responsible. Approving kitty or
+Terminal says nothing about agterm, so a Mac where every other terminal reads the folder can still refuse
+this one, and as with the services above a dismissed prompt is not re-offered and the command just keeps
+failing.
+
+Grant it in System Settings ▸ Privacy & Security ▸ Files & Folders, where agterm appears with a switch per
+folder once something in a session has asked. Full Disk Access covers all of them at once and accepts agterm
+from the + button without waiting for a request, at the cost of giving every program you ever run in a
+session that same reach — the section above covers what a grant gives away.
+
+To tell a privacy denial from ordinary permission bits, run `/bin/ls -la ~/Downloads` — the real `ls`,
+against the folder itself, rather than a replacement such as `eza`. A privacy denial usually reads as
+`Operation not permitted` and ordinary permission bits as `Permission denied`, and some replacements print
+the same wording for both.
 
 ## Reporting a problem
 

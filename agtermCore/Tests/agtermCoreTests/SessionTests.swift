@@ -259,13 +259,28 @@ struct SessionTests {
     }
 
     @Test func effectiveCwdStaysPrimaryWhileSplitFocused() {
-        // effectiveCwd (new-pane seeding + AGTERM_SESSION_PWD) is NOT focus-aware.
         let session = Session(initialCwd: "/repo")
         session.currentCwd = "/repo/primary"
         session.isSplit = true
         session.splitFocused = true
         session.splitCwd = "/var/log"
         #expect(session.effectiveCwd == "/repo/primary")
+    }
+
+    @Test func cwdForPaneResolvesPaneSpecificDirectory() {
+        let session = Session(initialCwd: "/repo")
+        session.currentCwd = "/repo/primary"
+        session.splitCwd = "/var/log"
+        #expect(session.cwd(for: .left) == "/repo/primary")
+        #expect(session.cwd(for: .scratch) == "/repo/primary")
+        #expect(session.cwd(for: .right) == "/var/log")
+
+        session.splitCwd = nil
+        session.initialSplitCwd = "/var/restored"
+        #expect(session.cwd(for: .right) == "/var/restored")
+
+        session.initialSplitCwd = nil
+        #expect(session.cwd(for: .right) == "/repo/primary")
     }
 
     @Test func agentIndicatorDefaultsToIdle() {
@@ -557,6 +572,27 @@ struct SessionTests {
         #expect(session.restoreCommand == "claude --resume main")
     }
 
+    @Test func clearCapturedForegroundCommandsDropsThePersistedAndPendingPairsTogether() {
+        // what `restore.clear` and a non-last window close both need: the persisted pair is what a launch
+        // reads, the pending pair is what an already-started launch is holding, so dropping one leaves the
+        // other to replay. The session.restore pins are sticky and must survive.
+        let session = Session(initialCwd: "/repo")
+        session.foregroundCommand = ["tee", "/tmp/m"]
+        session.splitForegroundCommand = ["tail", "-f", "/var/log/x"]
+        session.pendingForegroundCommand = session.foregroundCommand
+        session.pendingSplitForegroundCommand = session.splitForegroundCommand
+        session.restoreCommand = "claude --resume main"
+        session.pendingRestoreCommand = session.restoreCommand
+
+        session.clearCapturedForegroundCommands()
+        #expect(session.foregroundCommand == nil)
+        #expect(session.splitForegroundCommand == nil)
+        #expect(session.takePendingForegroundCommand(pane: .left) == nil)
+        #expect(session.takePendingForegroundCommand(pane: .right) == nil)
+        #expect(session.restoreCommand == "claude --resume main")
+        #expect(session.takePendingRestoreOverride(pane: .left) == "claude --resume main")
+    }
+
     @Test func clearPendingRestoreOverridesDropsBothPayloadsAndKeepsThePins() {
         // the same object comes back on undo, so an unconsumed payload must not survive the round trip —
         // while the persisted pins stay, to fire on the next launch.
@@ -565,12 +601,20 @@ struct SessionTests {
         session.splitRestoreCommand = "tail -f /var/log/x"
         session.pendingRestoreCommand = session.restoreCommand
         session.pendingSplitRestoreCommand = session.splitRestoreCommand
+        session.foregroundCommand = ["tee", "/tmp/m"]
+        session.splitForegroundCommand = ["tail", "-f", "/var/log/x"]
+        session.pendingForegroundCommand = session.foregroundCommand
+        session.pendingSplitForegroundCommand = session.splitForegroundCommand
 
         session.clearPendingRestoreOverrides()
         #expect(session.takePendingRestoreOverride(pane: .left) == nil)
         #expect(session.takePendingRestoreOverride(pane: .right) == nil)
+        #expect(session.takePendingForegroundCommand(pane: .left) == nil)
+        #expect(session.takePendingForegroundCommand(pane: .right) == nil)
         #expect(session.restoreCommand == "claude --resume main")
         #expect(session.splitRestoreCommand == "tail -f /var/log/x")
+        #expect(session.foregroundCommand == ["tee", "/tmp/m"])
+        #expect(session.splitForegroundCommand == ["tail", "-f", "/var/log/x"])
     }
 
     @Test func takePendingRestoreOverrideLeavesThePersistedValueIntact() {
@@ -1011,6 +1055,75 @@ struct SessionTests {
         session.splitRestoreCommand = "tail -f /var/log/x"
         #expect(session.takePendingRestoreOverride(pane: .left) == nil)
         #expect(session.takePendingRestoreOverride(pane: .right) == nil)
+    }
+
+    @Test func contextStartsUnset() {
+        #expect(Session(initialCwd: "/repo").context == nil)
+    }
+
+    @Test(arguments: [
+        ("PR #517", "PR #517"),
+        ("  PR #517  ", "PR #517"),
+        (" a ", "a"),
+    ])
+    func contextTrimsOuterSpaces(input: String, expected: String) {
+        #expect(Session.validateContext(input) == .valid(expected))
+    }
+
+    @Test(arguments: ["PR #517\n", "\nPR #517", "PR #517\t", "\tPR #517", "PR #517\r", "PR #517\u{2028}"])
+    func contextRejectsEdgeControlCharactersRatherThanTrimmingThem(input: String) {
+        #expect(isInvalidContext(input))
+    }
+
+    @Test(arguments: ["", " ", "\t", "\n", "   \n\t  "])
+    func contextRejectsBlank(input: String) {
+        #expect(isInvalidContext(input))
+    }
+
+    @Test func contextRejectionMessagePointsAtClear() {
+        #expect(Session.validateContext("") == .invalid("context must not be empty (use --clear to remove it)"))
+    }
+
+    @Test func contextAcceptsExactlyTheByteLimit() {
+        let value = String(repeating: "a", count: Session.contextByteLimit)
+        #expect(Session.validateContext(value) == .valid(value))
+    }
+
+    @Test func contextRejectsOneByteOverTheLimit() {
+        #expect(isInvalidContext(String(repeating: "a", count: Session.contextByteLimit + 1)))
+    }
+
+    @Test func contextLimitCountsBytesNotCharacters() {
+        let value = String(repeating: "é", count: 129)
+        #expect(value.count == 129)
+        #expect(value.utf8.count == 258)
+        #expect(isInvalidContext(value))
+    }
+
+    @Test func contextAcceptsMultibyteUpToTheByteLimit() {
+        let value = String(repeating: "é", count: 128)
+        #expect(value.utf8.count == Session.contextByteLimit)
+        #expect(Session.validateContext(value) == .valid(value))
+    }
+
+    @Test(arguments: ["PR\u{2028}517", "PR\u{2029}517"])
+    func contextRejectsUnicodeLineSeparators(input: String) {
+        #expect(isInvalidContext(input))
+    }
+
+    @Test(arguments: ["PR\n517", "PR\r517", "PR\u{0}517", "PR\u{7}517", "PR\t517", "PR\u{85}517"])
+    func contextRejectsInnerControlCharacters(input: String) {
+        #expect(isInvalidContext(input))
+    }
+
+    @Test func contextKeepsEmojiAndZeroWidthJoiners() {
+        let value = "ship it 👩‍💻"
+        #expect(Session.validateContext(value) == .valid(value))
+    }
+
+    private func isInvalidContext(_ raw: String) -> Bool {
+        if case .invalid = Session.validateContext(raw) { return true }
+        return false
     }
 }
 

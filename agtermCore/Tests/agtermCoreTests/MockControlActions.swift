@@ -31,11 +31,13 @@ final class MockControlActions: ControlActions {
         case workspaceFilter(window: String?, ControlToggleMode)
         case workspaceExpansion(target: String?, window: String?, expanded: Bool)
         case sessionFlag(target: String?, window: String?, String?)
+        case sessionContext(target: String?, window: String?, context: String?)
         case markSessionSeen(target: String?, window: String?)
         case sessionStatus(target: String?, window: String?, ControlSessionStatusUpdate)
         case sessionRestore(target: String?, window: String?, ControlSessionRestoreUpdate)
         case sessionSplit(target: String?, window: String?, String?, SplitAxis?)
         case sessionSplitClose(target: String?, window: String?)
+        case sessionSwap(target: String?, window: String?)
         case sessionScratch(target: String?, window: String?, String?, command: String?)
         case sessionFocus(target: String?, window: String?, String?)
         case sessionResize(target: String?, window: String?, ControlSplitResize)
@@ -45,14 +47,23 @@ final class MockControlActions: ControlActions {
         case font(target: String?, window: String?, pane: String?, String)
         case keymapReload
         case keymapList
+        case version
         case configReload
         case notify(target: String?, window: String?, title: String?, body: String)
         case themeSet(String?)
         case themeList
+        case restoreModeRead
+        case restoreModeSet(RestoreMode)
+        case zmxList
+        case zmxPrune
+        case zmxKill(target: String, window: String?, pane: ZmxPaneRole)
+        case zmxTree(host: String?)
+        case zmxAttach(host: String, session: String)
         case sidebarVisibility(ControlToggleMode)
         case sidebarViewMode(ControlSidebarViewMode)
         case expand(window: String?)
         case collapse(window: String?)
+        case sidebarWidth(points: Double, window: String?)
         case quick(String?)
         case quickType(text: String)
         case quickText(all: Bool, lines: Int?)
@@ -87,6 +98,7 @@ final class MockControlActions: ControlActions {
         case pickResult(target: String, window: String?)
         case pickCancel(target: String, window: String?)
         case restoreClear
+        case restoreCapture
     }
 
     var calls: [Call] = []
@@ -109,13 +121,21 @@ final class MockControlActions: ControlActions {
     var nextSidebarViewModeResponse = ControlResponse(ok: true)
     var nextExpandResponse = ControlResponse(ok: true)
     var nextCollapseResponse = ControlResponse(ok: true)
+    var nextSidebarWidthResponse = ControlResponse(ok: true)
     var nextFontResponse = ControlResponse(ok: true)
     var nextNotifyResponse = ControlResponse(ok: true)
     var nextKeymapListResponse = ControlResponse(ok: true)
+    var nextVersionResponse = ControlResponse(ok: true)
     var nextKeymapResponse = ControlResponse(ok: true)
     var nextConfigResponse = ControlResponse(ok: true)
     var nextThemeSetResponse = ControlResponse(ok: true)
     var nextThemeListResponse = ControlResponse(ok: true)
+    var nextRestoreModeResponse = ControlResponse(ok: true)
+    var nextZmxListResponse = ControlResponse(ok: true)
+    var nextZmxPruneResponse = ControlResponse(ok: true)
+    var nextZmxKillResponse = ControlResponse(ok: true)
+    var nextRemoteTreeResponse = ControlResponse(ok: true)
+    var nextRemoteAttachResponse = ControlResponse(ok: true)
     var nextQuickResponse = ControlResponse(ok: true)
     var nextQuickTypeResponse = ControlResponse(ok: true)
     var nextQuickTextResponse = ControlResponse(ok: true)
@@ -153,7 +173,9 @@ final class MockControlActions: ControlActions {
     var nextPickResultResponse = ControlResponse(ok: true)
     var nextPickCancelResponse = ControlResponse(ok: true)
     var nextRestoreClearResponse = ControlResponse(ok: true)
+    var nextRestoreCaptureResponse = ControlResponse(ok: true)
     var nextSessionRestoreResponse = ControlResponse(ok: true)
+    var nextSessionSwapResponse = ControlResponse(ok: true)
 
     func controlTree(window: String?) -> ControlResponse {
         calls.append(.tree(window: window))
@@ -274,6 +296,11 @@ final class MockControlActions: ControlActions {
         return ControlResponse(ok: true)
     }
 
+    func setSessionContext(_ target: String?, window: String?, context: String?) -> ControlResponse {
+        calls.append(.sessionContext(target: target, window: window, context: context))
+        return ControlResponse(ok: true)
+    }
+
     func markSessionSeen(_ target: String?, window: String?) -> ControlResponse {
         calls.append(.markSessionSeen(target: target, window: window))
         return ControlResponse(ok: true)
@@ -303,6 +330,11 @@ final class MockControlActions: ControlActions {
     func closeSessionSplit(_ target: String?, window: String?) -> ControlResponse {
         calls.append(.sessionSplitClose(target: target, window: window))
         return ControlResponse(ok: true)
+    }
+
+    func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse {
+        calls.append(.sessionSwap(target: target, window: window))
+        return nextSessionSwapResponse
     }
 
     func scratchSession(_ target: String?, window: String?, mode: String?,
@@ -352,6 +384,11 @@ final class MockControlActions: ControlActions {
         return nextKeymapListResponse
     }
 
+    func appIdentity() -> ControlResponse {
+        calls.append(.version)
+        return nextVersionResponse
+    }
+
     func reloadGhosttyConfig() -> ControlResponse {
         calls.append(.configReload)
         return nextConfigResponse
@@ -373,6 +410,41 @@ final class MockControlActions: ControlActions {
         return nextThemeListResponse
     }
 
+    func readRestoreMode() -> ControlResponse {
+        calls.append(.restoreModeRead)
+        return nextRestoreModeResponse
+    }
+
+    func setRestoreMode(_ mode: RestoreMode) -> ControlResponse {
+        calls.append(.restoreModeSet(mode))
+        return nextRestoreModeResponse
+    }
+
+    func listZmxDaemons() -> ControlResponse {
+        calls.append(.zmxList)
+        return nextZmxListResponse
+    }
+
+    func pruneZmxDaemons() -> ControlResponse {
+        calls.append(.zmxPrune)
+        return nextZmxPruneResponse
+    }
+
+    func killZmxDaemon(target: String, window: String?, pane: ZmxPaneRole) -> ControlResponse {
+        calls.append(.zmxKill(target: target, window: window, pane: pane))
+        return nextZmxKillResponse
+    }
+
+    func remoteTree(host: String?) async -> ControlResponse {
+        calls.append(.zmxTree(host: host))
+        return nextRemoteTreeResponse
+    }
+
+    func attachRemoteSession(host: String, session: String) async -> ControlResponse {
+        calls.append(.zmxAttach(host: host, session: session))
+        return nextRemoteAttachResponse
+    }
+
     func setSidebarVisibility(_ mode: ControlToggleMode) -> ControlResponse {
         calls.append(.sidebarVisibility(mode))
         return nextSidebarVisibilityResponse
@@ -391,6 +463,11 @@ final class MockControlActions: ControlActions {
     func collapseSidebar(window: String?) -> ControlResponse {
         calls.append(.collapse(window: window))
         return nextCollapseResponse
+    }
+
+    func setSidebarWidth(_ points: Double, window: String?) -> ControlResponse {
+        calls.append(.sidebarWidth(points: points, window: window))
+        return nextSidebarWidthResponse
     }
 
     func setQuickTerminal(mode: String?) -> ControlResponse {
@@ -566,5 +643,10 @@ final class MockControlActions: ControlActions {
     func clearRestoreCommands() -> ControlResponse {
         calls.append(.restoreClear)
         return nextRestoreClearResponse
+    }
+
+    func captureRestoreCommands() -> ControlResponse {
+        calls.append(.restoreCapture)
+        return nextRestoreCaptureResponse
     }
 }
