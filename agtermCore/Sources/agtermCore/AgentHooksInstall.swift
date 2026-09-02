@@ -19,6 +19,9 @@ public enum AgentHooksInstall {
     /// delegates, keeping the Claude-specific knowledge in the hook resource the way the Codex adapter does.
     static let claudeWrapperName = "agterm-claude-status.sh"
 
+    /// The adapter's name for a host reporting install state; the installer itself reads `claudeHooks`.
+    public static var claudeStatusWrapperName: String { claudeWrapperName }
+
     /// Claude Code session-restore adapter: it pins the live claude session id as the pane's
     /// `session restore` override, so a restart reattaches instead of starting an empty session.
     public static let claudeRestoreWrapperName = "agterm-claude-restore.sh"

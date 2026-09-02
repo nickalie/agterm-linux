@@ -47,6 +47,16 @@ extension AppController {
         let page = preferencesPage("Interface", name: .interface, icon: "preferences-desktop-display-symbolic")
         addInterfaceGroup("Title Bar", section: .titleBar, settings: settings, to: page)
         addInterfaceGroup("Sidebar", section: .sidebar, settings: settings, to: page)
+        let quick = preferencesGroup("Quick Terminal")
+        let sizes = QuickTerminalMetrics.sizePercentChoices
+        let sizeIndex = settings.quickTerminalSizePercent.flatMap(sizes.firstIndex).map { $0 + 1 } ?? 0
+        adw_preferences_group_add(
+            cast(quick),
+            W(preferencesCombo(
+                "Panel size", values: ["Default"] + sizes.map { "\($0)%" }, selected: sizeIndex,
+                handler: unsafeBitCast(onQuickTerminalSizeChanged, to: GCallback.self))))
+        adw_preferences_page_add(cast(page), cast(quick))
+
         let windows = preferencesGroup("Multiple Windows")
         adw_preferences_group_add(
             cast(windows),
@@ -91,3 +101,11 @@ private let onAutoHideInactiveSidebarsChanged: @MainActor @convention(c)
                 adw_switch_row_get_active(row) != 0)
         }
     }
+
+private let onQuickTerminalSizeChanged: @MainActor @convention(c) (
+    OpaquePointer?, OpaquePointer?, gpointer?
+) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        controllerForWidget(row)?.setQuickTerminalSizeAtIndex(Int(adw_combo_row_get_selected(cast(row))))
+    }
+}

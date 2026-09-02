@@ -708,19 +708,18 @@ extension AppController {
         title.withCString { gtk_window_set_title(WIN(window), $0) }
         if let titleWidget {
             let hidden = settings.resolvedHiddenInterfaceElements
-            let sessionPart = hidden.contains(.sessionName) ? nil : (store.activeSession?.displayName ?? "agterm")
-            let windowPart = hidden.contains(.windowName) || windowInfo?.hasCustomName != true ? nil : windowInfo?.name
-            let visibleTitle: String
-            switch (sessionPart, windowPart) {
-            case let (session?, window?): visibleTitle = "\(session) — \(window)"
-            case let (session?, nil): visibleTitle = session
-            case let (nil, window?): visibleTitle = window
-            case (nil, nil): visibleTitle = ""
-            }
-            visibleTitle.withCString { adw_window_title_set_title(titleWidget, $0) }
-            let subtitle = settings.effectiveToolbarMode == .normal
-                ? (store.activeSession?.subtitleDetail ?? "") : ""
-            subtitle.withCString { adw_window_title_set_subtitle(titleWidget, $0) }
+            let composition = TitlebarComposition.compose(
+                TitlebarComposition.Parts(
+                    sessionName: hidden.contains(.sessionName) ? nil : (store.activeSession?.displayName ?? "agterm"),
+                    windowName: hidden.contains(.windowName) || windowInfo?.hasCustomName != true
+                        ? nil : windowInfo?.name,
+                    context: hidden.contains(.sessionContext) ? nil : store.activeSession?.context,
+                    detail: store.activeSession?.subtitleDetail ?? ""
+                ),
+                mode: settings.effectiveToolbarMode
+            )
+            composition.title.withCString { adw_window_title_set_title(titleWidget, $0) }
+            composition.subtitle.withCString { adw_window_title_set_subtitle(titleWidget, $0) }
         }
         normalTitle.withCString { value in
             if let zoomTitleLabel { gtk_label_set_text(zoomTitleLabel, value) }

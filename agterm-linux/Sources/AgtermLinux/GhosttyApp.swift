@@ -149,8 +149,28 @@ final class GhosttyApp: @unchecked Sendable {
         // recursive resolution after all load_file calls, before finalize). Without this a user's
         // `config-file` directives are silently ignored on Linux.
         ghostty_config_load_recursive_files(cfg)
+        Self.forceUnsupportedShellFeaturesOff(cfg)
         ghostty_config_finalize(cfg)
         return cfg
+    }
+
+    /// Their ssh wrappers call a `ghostty` CLI the Linux payload does not carry, and enabling either broke
+    /// `ssh` outright upstream (#463). Applied after the recursive includes so no user source can turn them
+    /// back on; setting either is a silent no-op by design.
+    private static let unsupportedShellFeatures: Set<String> = ["ssh-env", "ssh-terminfo"]
+
+    private static func forceUnsupportedShellFeaturesOff(_ cfg: ghostty_config_t?) {
+        guard let cfg else { return }
+        let key = "shell-integration-features"
+        var bits: UInt32 = 0
+        guard key.withCString({ ghostty_config_get(cfg, &bits, $0, UInt(key.utf8.count)) }) else { return }
+        // every flag is restated, not just the two: ghostty re-parses the key from its defaults on each
+        // occurrence, so an omitted flag would be reset rather than left alone
+        let value = ShellIntegrationFeatures.overrideValue(resolvedBits: bits,
+                                                           disabled: unsupportedShellFeatures)
+        guard let path = writeTempConf(["shell-integration-features = \(value)"]) else { return }
+        path.withCString { ghostty_config_load_file(cfg, $0) }
+        try? FileManager.default.removeItem(atPath: path)
     }
 
     /// Build a config for one surface with a final per-session overlay (`background-image*`, solid

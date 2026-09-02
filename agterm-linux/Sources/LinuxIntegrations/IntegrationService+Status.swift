@@ -467,7 +467,10 @@ private extension IntegrationService {
                                              path: path.path, detail: "Claude Code hooks are configured.")
             }
             let current = existing ?? ""
+            // either name counts: a current install writes the Claude adapter, an older one the generic
+            // wrapper the migration has not reached yet
             let hasAgterm = current.contains(AgentHooksInstall.wrapperName)
+                || current.contains(AgentHooksInstall.claudeStatusWrapperName)
             return IntegrationItemStatus(kind: .claudeHooks, state: hasAgterm ? .partial : .notInstalled,
                                          path: path.path,
                                          detail: hasAgterm ? "Some Claude Code hooks need repair."

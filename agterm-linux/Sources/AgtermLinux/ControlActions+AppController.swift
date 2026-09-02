@@ -76,8 +76,8 @@ extension AppController: ControlActions {
 
     func controlTree(window: String?) -> ControlResponse {
         let baseTree = store.controlTree(
-            foreground: { [weak self] session in self?.surfaces[session.id]?.foregroundCommand() },
-            splitForeground: { [weak self] session in self?.splitSurfaces[session.id]?.foregroundCommand() },
+            paneForeground: { [weak self] session in self?.surfaces[session.id]?.paneForeground() },
+            splitPaneForeground: { [weak self] session in self?.splitSurfaces[session.id]?.paneForeground() },
             fontSize: { [weak self] in self?.surfaces[$0.id]?.currentFontSize() },
             splitFontSize: { [weak self] in self?.splitSurfaces[$0.id]?.currentFontSize() },
             scratchFontSize: { [weak self] in self?.scratchSurfaces[$0.id]?.currentFontSize() },

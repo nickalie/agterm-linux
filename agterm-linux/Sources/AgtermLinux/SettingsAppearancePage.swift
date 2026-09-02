@@ -3,6 +3,8 @@ import agtermCore
 
 @MainActor
 extension AppController {
+    static let cursorStyles = AppSettings.CursorStyle.allCases
+
     func makeAppearanceSettingsPage(_ settings: AppSettings) -> OpaquePointer? {
         let page = preferencesPage(
             "Appearance", name: .appearance, icon: "applications-graphics-symbolic")
@@ -23,6 +25,24 @@ extension AppController {
         adw_spin_row_set_value(fontSize, settings.fontSize ?? 13)
         connect(fontSize, "notify::value", unsafeBitCast(onSettingsFontSize, to: GCallback.self))
         adw_preferences_group_add(cast(terminal), W(fontSize))
+
+        // "Default" is a state, not a synonym for Block: it emits no `cursor-style`, so the user's own
+        // ghostty config keeps whatever it set. Blink passes through ghostty's own three states.
+        let cursorIndex = settings.effectiveCursorStyle.flatMap(Self.cursorStyles.firstIndex).map { $0 + 1 } ?? 0
+        adw_preferences_group_add(
+            cast(terminal),
+            W(
+                preferencesCombo(
+                    "Cursor shape", values: ["Default"] + Self.cursorStyles.map { $0.rawValue.capitalized },
+                    selected: cursorIndex,
+                    handler: unsafeBitCast(onSettingsCursorStyle, to: GCallback.self))))
+        let blinkIndex = settings.cursorBlink.map { $0 ? 1 : 2 } ?? 0
+        adw_preferences_group_add(
+            cast(terminal),
+            W(
+                preferencesCombo(
+                    "Cursor blink", values: ["Program controlled", "On", "Off"], selected: blinkIndex,
+                    handler: unsafeBitCast(onSettingsCursorBlink, to: GCallback.self))))
 
         let themes = Self.bundledThemes()
         let following = settings.followSystemAppearance == true
@@ -191,4 +211,15 @@ private let onResetTerminalAppearance: @MainActor @convention(c) (OpaquePointer?
 }
 private let onResetWindowAppearance: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
     MainActor.assumeIsolated { controllerForWidget(button)?.resetWindowAppearance() }
+}
+
+private let onSettingsCursorStyle: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        controllerForWidget(row)?.setCursorStyleAtIndex(Int(adw_combo_row_get_selected(cast(row))))
+    }
+}
+private let onSettingsCursorBlink: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        controllerForWidget(row)?.setCursorBlinkAtIndex(Int(adw_combo_row_get_selected(cast(row))))
+    }
 }

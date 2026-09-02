@@ -66,7 +66,7 @@ for _ in 1 2 3 4 5 6 7 8; do
 
   is_agent "$base" && agents=$((agents + 1))
   [ "$agents" -gt 1 ] && exit 0        # a second agent above mine: I am a worker, not the pane's agent
-  case "$base" in login | agterm) break ;; esac # reached the pane boundary
+  case "$base" in login | agterm | agterm-linux | agterm-linux.bin) break ;; esac # reached the pane boundary
   p=$ppid
 done
 

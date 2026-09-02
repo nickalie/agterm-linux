@@ -586,6 +586,7 @@ final class AppController {
         }
         guard let frame = quickFrame else { return }
         quickVisible = visible
+        if visible { applyQuickCardGeometry(frame) }
         gtk_widget_set_visible(W(frame), visible ? 1 : 0)
         updateAllPaneDimming()   // the quick terminal mutes the session left visible behind it
         if visible { quickSurface?.grabFocus() }
@@ -738,6 +739,10 @@ final class AppController {
         gtk_label_set_xalign(label, 0)
         gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END)
         gtk_widget_set_hexpand(W(label), 1)
+        // reveal a name the column cut off; a name that fits gets no tooltip, so hovering the sidebar
+        // stays quiet in the common case
+        gtk_widget_set_has_tooltip(W(label), 1)
+        connect(label, "query-tooltip", unsafeBitCast(onNameTooltip, to: GCallback.self))
         nameLabels[label] = (id, isWorkspace)
         let dbl = gtk_gesture_click_new()
         gtk_gesture_single_set_button(dbl, 1)   // left double-click only; right-click goes to the context menu

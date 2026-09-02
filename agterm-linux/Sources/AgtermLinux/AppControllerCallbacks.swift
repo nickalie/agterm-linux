@@ -351,6 +351,17 @@ let onNameDoubleClick: @MainActor @convention(c) (OpaquePointer?, Int32, Double,
     MainActor.assumeIsolated { controllerForEventController(gesture)?.beginRenameFromLabel(data) }
 }
 
+/// Shows a sidebar row's full name only when the column ellipsized it, so a name that already fits
+/// raises no tooltip. The label carries the whole string either way — ellipsizing is display-only.
+let onNameTooltip: @MainActor @convention(c) (
+    OpaquePointer?, Int32, Int32, gboolean, OpaquePointer?, gpointer?
+) -> gboolean = { label, _, _, _, tooltip, _ in
+    guard let label, let layout = gtk_label_get_layout(label),
+          pango_layout_is_ellipsized(layout) != 0, let text = gtk_label_get_text(label) else { return 0 }
+    gtk_tooltip_set_text(tooltip, text)
+    return 1
+}
+
 let onRenameCommit: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, data in
     MainActor.assumeIsolated {
         controllerForWidget(data.map { OpaquePointer($0) })?.commitInlineRename(data)

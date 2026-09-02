@@ -1,3 +1,4 @@
+import CGtk
 import Foundation
 import agtermCore
 
@@ -52,6 +53,27 @@ extension AppController {
             }
             return ControlResponse(ok: false, error: error)
         }
+    }
+
+    func setSessionContext(_ target: String?, window: String?, context: String?) -> ControlResponse {
+        switch resolveSessionResponse(target) {
+        case .failure(let response): return response
+        case .success(let id):
+            guard store.session(withID: id) != nil else {
+                return ControlResponse(ok: false, error: "no such session: \(target ?? "active")")
+            }
+            _ = store.setContext(context, forSession: id) // no-op, no save and no event when unchanged
+            updateTitle()
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Moves the sidebar divider and echoes the STORED width, so a clamped request is distinguishable
+    /// from an honored one.
+    func setSidebarWidth(_ points: Double, window: String?) -> ControlResponse {
+        store.setSidebarWidth(points)
+        gtk_paned_set_position(splitView, Int32(store.sidebarWidth.rounded()))
+        return ControlResponse(ok: true, result: ControlResult(sidebarWidth: store.sidebarWidth))
     }
 
     func readEvents(_ options: ControlEventReadOptions) -> ControlResponse {

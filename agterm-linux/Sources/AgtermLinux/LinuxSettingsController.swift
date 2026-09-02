@@ -209,6 +209,26 @@ extension AppController {
         library.resetSessionFontSizesAllWindows()
     }
 
+    /// Index 0 is Default: the fixed insets the card shipped with, which no single percentage reproduces.
+    func setQuickTerminalSizeAtIndex(_ index: Int) {
+        let choices = QuickTerminalMetrics.sizePercentChoices
+        persist(\.quickTerminalSizePercent, index == 0 ? nil
+            : choices.indices.contains(index - 1) ? choices[index - 1] : nil)
+    }
+
+    /// Index 0 is Default: no `cursor-style` line at all, so a user's own ghostty config keeps its shape.
+    func setCursorStyleAtIndex(_ index: Int) {
+        let styles = AppController.cursorStyles
+        persist(\.cursorStyle, index == 0 ? nil : styles.indices.contains(index - 1) ? styles[index - 1].rawValue : nil)
+        reloadConfig()
+    }
+
+    /// Ghostty's own three states: program controlled (no line), forced on, forced off.
+    func setCursorBlinkAtIndex(_ index: Int) {
+        persist(\.cursorBlink, index == 0 ? nil : index == 1)
+        reloadConfig()
+    }
+
     func setFontFamilyAtIndex(_ index: Int) {
         let fonts = monospaceFonts()
         let value = index == 0 ? nil : fonts.indices.contains(index - 1) ? fonts[index - 1] : nil

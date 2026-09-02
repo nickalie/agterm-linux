@@ -761,15 +761,25 @@ final class GhosttySurface: PaneRoleMutableSurface {
     var isRealized: Bool { surface != nil }
 
     /// The live foreground-process argv (via `/proc/<pid>/cmdline`), or nil at the shell prompt — the
-    /// Linux analogue of macOS's KERN_PROCARGS2 capture, used for `tree` introspection / restore.
+    /// Linux analogue of macOS's KERN_PROCARGS2 capture, used for restore capture.
     func foregroundCommand() -> [String]? {
+        paneForeground()?.command
+    }
+
+    /// The same read classified for `tree`: a program to report, or the recognized shell holding the
+    /// foreground. `$SHELL` widens recognition to a non-standard login shell, as the capture does.
+    func paneForeground() -> CommandRestore.PaneForeground? {
+        guard let argv = rawForegroundArgv() else { return nil }
+        let loginShell = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
+        return CommandRestore.paneForeground(argv: argv, extra: loginShell)
+    }
+
+    private func rawForegroundArgv() -> [String]? {
         guard let surface else { return nil }
         let pid = ghostty_surface_foreground_pid(surface)
         guard pid > 0,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: "/proc/\(pid)/cmdline")),
-              let argv = CommandRestore.parseProcCmdline(data),
-              !CommandRestore.isIdleShell(argv: argv) else { return nil }
-        return argv
+              let data = try? Data(contentsOf: URL(fileURLWithPath: "/proc/\(pid)/cmdline")) else { return nil }
+        return CommandRestore.parseProcCmdline(data)
     }
 
     // MARK: - TerminalSurface
