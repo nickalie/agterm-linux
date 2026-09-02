@@ -393,6 +393,8 @@ struct ZmxLifecycleTests {
         // identity cannot persist and an unpersisted claim must not be trusted by the reap
         try FileManager.default.setAttributes([.posixPermissions: 0o500],
                                               ofItemAtPath: windowsDirectory.path)
+        // root ignores the mode, and root is the user the Linux CI container runs as
+        guard !FileManager.default.isWritableFile(atPath: windowsDirectory.path) else { return }
         var inventories: [Set<UUID>?] = []
 
         _ = WindowLibrary(directory: directory, paneFinalizer: nil,

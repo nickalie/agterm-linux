@@ -947,7 +947,13 @@ public final class WindowLibrary {
     /// are real panes whose daemons would otherwise read as unclaimed. Nil when the directory itself could
     /// not be read, which is not the same answer as "no stray files".
     private func strayWindowFileIDs(indexed: Set<UUID>) -> [UUID]? {
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: windowsDirectory,
+        // corelibs-foundation answers an EMPTY listing where Darwin throws when the path is not a directory,
+        // so the enumeration alone cannot tell "nothing there" from "could not look", and a stray pane would
+        // read as absent on Linux. Both platforms already report a missing directory as incomplete.
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: windowsDirectory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let contents = try? FileManager.default.contentsOfDirectory(at: windowsDirectory,
                                                                           includingPropertiesForKeys: nil) else {
             return nil
         }

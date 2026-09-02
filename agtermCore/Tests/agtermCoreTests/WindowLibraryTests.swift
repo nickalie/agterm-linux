@@ -1544,6 +1544,9 @@ final class WindowLibraryTests {
         let windowsDir = directory.appendingPathComponent("windows")
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: windowsDir.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: windowsDir.path) }
+        // the mode is the only way to make the write fail, and root ignores it — the user the Linux CI
+        // container runs as. Assert nothing rather than pin the opposite branch by accident.
+        guard !FileManager.default.isWritableFile(atPath: windowsDir.path) else { return }
         #expect(!library.saveAllOpenChecked())
     }
 

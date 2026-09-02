@@ -47,7 +47,9 @@ struct RemoteSessionTests {
         }
     }
 
-    @Test func theRemoteCommandIsOneOrdinaryCommandEvenUnderANonPosixLoginShell() throws {
+    // tcsh is the non-POSIX shell the wrapping exists for, and it ships with no Linux CI image
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/bin/tcsh")))
+    func theRemoteCommandIsOneOrdinaryCommandEvenUnderANonPosixLoginShell() throws {
         let fake = try FakeRemote()
         defer { fake.cleanUp() }
         try fake.installAgtermctl(exitCodes: [0])

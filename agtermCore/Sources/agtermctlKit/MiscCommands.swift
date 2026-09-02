@@ -727,9 +727,10 @@ struct Version: RequestCommand {
         }
     }
 
-    /// The running executable's real path. `_NSGetExecutablePath` rather than `argv[0]`, which is whatever
+    /// The running executable's real path. The kernel's own answer rather than `argv[0]`, which is whatever
     /// the caller chose to exec with, and `realpath` because the installed CLI is a symlink into the bundle.
     static func clientPath() -> String? {
+        #if canImport(Darwin)
         var size = UInt32(0)
         _ = _NSGetExecutablePath(nil, &size)
         var buffer = [CChar](repeating: 0, count: Int(size))
@@ -737,5 +738,10 @@ struct Version: RequestCommand {
         guard let resolved = realpath(buffer, nil) else { return String(cString: buffer) }
         defer { free(resolved) }
         return String(cString: resolved)
+        #else
+        guard let resolved = realpath("/proc/self/exe", nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+        #endif
     }
 }
