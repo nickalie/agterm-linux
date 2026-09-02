@@ -581,6 +581,14 @@ extension AppController {
     /// goes inactive rather than keeping whatever the last selection left behind.
     func showActive(focus: Bool = true) {
         let active = store.activeSession
+        // The selected session's panes jump the launch spawn queue. Unlike macOS, where every restored pane
+        // mounts at launch and the queue drains on its own, a deck page here realizes only while it is
+        // visible: the queue's head belongs to a session nobody has opened yet, so a pane behind it waits on
+        // a request that never comes and the user gets a blank terminal for the rest of the launch.
+        if let active {
+            gSpawnPacer.expedite(active.paneIdentity)
+            if active.isSplit, let split = active.splitPaneIdentity { gSpawnPacer.expedite(split) }
+        }
         for (id, stack) in sessionStacks {
             let presentation = DeckPagePresentation(pageID: id, activeID: active?.id, dashboardOpen: dashboard.isOpen)
             gtk_widget_set_opacity(W(stack), presentation.opacity)

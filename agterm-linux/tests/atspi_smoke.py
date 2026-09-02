@@ -1765,6 +1765,59 @@ def verify_launch_surface_environment(env, state):
         stop(process)
 
 
+def verify_restore_spawn_order(env):
+    """Select a restored session ahead of its place in the paced launch queue and prove it still spawns.
+
+    The queue releases panes in model order, and a deck page realizes only while it is visible, so the head
+    it waits on belongs to a session the user may never open — which used to strand every session behind it
+    on a blank terminal for the rest of the launch.
+    """
+    process, app = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        control_json(env, "restore", "mode", "rerun", "--json")
+        identities = [window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]]
+        for index in range(3):
+            identities.append(control_json(
+                env, "session", "new", "--name", f"paced-{index}", "--no-select",
+                "--window", window_id, "--json",
+            )["result"]["id"])
+        for identity in identities:
+            control_json(
+                env, "session", "restore", "printf paced-restore",
+                "--target", identity, "--window", window_id, "--json",
+            )
+        control_json(env, "session", "select", "--target", identities[0],
+                     "--window", window_id, "--json")
+        stop(process)
+        process = None
+
+        process, app = launch(env)
+
+        def session_node(identity):
+            return next(
+                session for workspace in window_tree(env, window_id)["workspaces"]
+                for session in workspace["sessions"] if session["id"] == identity
+            )
+
+        control_json(env, "session", "select", "--target", identities[-1],
+                     "--window", window_id, "--json")
+        wait_for(
+            lambda: session_node(identities[-1]).get("realized"),
+            "the selected restored session never spawned its pane",
+        )
+        assert not session_node(identities[1]).get("realized"), (
+            "a restored session spawned without its page ever being shown"
+        )
+        print("OK: a restored session selected out of queue order spawns")
+    except AssertionError:
+        describe_tree(app)
+        raise
+    finally:
+        if process is not None:
+            stop(process)
+
+
 def verify_sidebar_metadata_refresh(env):
     """An OSC title storm must retext rows in place instead of re-creating them.
 
@@ -2153,7 +2206,8 @@ def main():
             "normal", "upstream-controls", "v024-controls", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
-            "custom-command-failures", "surface-lifetimes", "surface-env", "sidebar-row-height",
+            "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
+            "sidebar-row-height",
             "sidebar-metadata",
             "auto-follow", "hidden-toolbar",
         ):
@@ -2212,6 +2266,8 @@ def main():
             verify_surface_configuration_lifetimes(env)
         elif scenario == "surface-env":
             verify_launch_surface_environment(env, state)
+        elif scenario == "restore-spawn":
+            verify_restore_spawn_order(env)
         elif scenario == "sidebar-row-height":
             verify_sidebar_row_height_follows_font_size(env)
         elif scenario == "sidebar-metadata":

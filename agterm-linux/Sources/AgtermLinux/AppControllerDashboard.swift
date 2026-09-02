@@ -63,11 +63,21 @@ extension AppController {
         searchSurface?.endSearch()
         if sessionSwitcher.isActive { endSessionSwitch() }
         dashboard.open(members: members, fontMode: fontMode)
+        prioritizeDashboardSpawns(members)
         suppressAutoFollow()
         showDashboardSourcePages()
         showActive(focus: false)
         applyDashboardFont()
         mountDashboard()
+    }
+
+    /// Opening the dashboard makes every deck page visible at once, so the queued panes spawn in model
+    /// order. Move the cells the user is about to look at to the front, still one interval apart.
+    private func prioritizeDashboardSpawns(_ members: [DashboardMember]) {
+        gSpawnPacer.prioritize(members.compactMap { member in
+            guard let session = store.session(withID: member.session) else { return nil }
+            return member.surface == .split ? session.splitPaneIdentity : session.paneIdentity
+        })
     }
 
     func closeDashboard(refocus: Bool = true) {
