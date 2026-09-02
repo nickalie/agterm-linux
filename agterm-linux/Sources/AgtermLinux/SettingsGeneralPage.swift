@@ -58,14 +58,18 @@ extension AppController {
                     subtitle: "Otherwise an unnamed session is named after its directory",
                     active: settings.sessionNameFromTerminalTitle ?? false,
                     handler: unsafeBitCast(onSettingsSessionNameFromTitle, to: GCallback.self))))
-        adw_preferences_group_add(
-            cast(sessions),
-            W(
-                preferencesSwitch(
-                    "Restore running commands on restart",
-                    subtitle: "Re-run each pane's foreground command on the next launch",
-                    active: settings.restoreRunningCommand ?? false,
-                    handler: unsafeBitCast(onSettingsRestoreCommand, to: GCallback.self))))
+        let restoreModes = RestoreMode.allCases
+        let restore = preferencesCombo(
+            "Restore sessions", values: restoreModes.map { $0.displayName },
+            selected: restoreModes.firstIndex(of: settings.effectiveRestoreMode) ?? 0,
+            handler: unsafeBitCast(onSettingsRestoreMode, to: GCallback.self))
+        // the mode is frozen for the life of the process, so the picker promises the NEXT launch
+        var restoreHint = "Changes apply after restarting agterm"
+        if settings.effectiveRestoreMode == .live, let reason = gZmx?.liveUnavailableReason {
+            restoreHint += ". " + reason
+        }
+        restoreHint.withCString { adw_action_row_set_subtitle(cast(restore), $0) }
+        adw_preferences_group_add(cast(sessions), W(restore))
         adw_preferences_group_add(
             cast(sessions),
             W(
@@ -139,9 +143,9 @@ private let onSettingsSessionNameFromTitle: @MainActor @convention(c) (OpaquePoi
         controllerForWidget(row)?.setSessionNameFromTerminalTitle(adw_switch_row_get_active(row) != 0)
     }
 }
-private let onSettingsRestoreCommand: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+private let onSettingsRestoreMode: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated {
-        controllerForWidget(row)?.setRestoreRunningCommand(adw_switch_row_get_active(row) != 0)
+        controllerForWidget(row)?.setRestoreModeAtIndex(Int(adw_combo_row_get_selected(cast(row))))
     }
 }
 private let onSettingsConfirmClose: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in

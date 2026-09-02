@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the pinned libghostty and deterministic Linux resources into agterm-linux/vendor/ghostty.
+# Build the pinned libghostty and deterministic Linux resources into agterm-linux/vendor/ghostty,
+# and the pinned zmx into agterm-linux/vendor/zmx through scripts/setup-linux-zmx.sh.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,6 +12,9 @@ VERIFY="$ROOT/scripts/verify-linux-resources.sh"
 GHOSTTY_REPO="https://github.com/ghostty-org/ghostty"
 # shellcheck source=../linux/ghostty-resources.env
 source "$ROOT/linux/ghostty-resources.env"
+
+# zmx builds with its own compiler and caches independently, so it runs before the libghostty cache check
+"$ROOT/scripts/setup-linux-zmx.sh"
 
 cache_is_complete() {
   [[ -s "$VENDOR/lib/libghostty.so" && -s "$VENDOR/include/ghostty.h"

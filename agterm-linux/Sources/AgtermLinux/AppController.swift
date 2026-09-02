@@ -498,10 +498,10 @@ final class AppController {
     /// The primary pane's shell exited. Mirrors macOS: if a split pane is alive the session SURVIVES,
     /// promoted to that single pane (a primary exit must never destroy the live split shell); with no
     /// split the session closes. `AppStore.closePrimaryPane` decides promote-vs-close.
-    func closePrimaryPane(_ id: UUID) {
+    func closePrimaryPane(_ id: UUID, alreadyFinalized: UUID? = nil) {
         // Capture the survivor (the split pane) before the store clears the session's split flags.
         if dashboard.isOpen { closeDashboard(refocus: false) }; let survivor = splitSurfaces[id]
-        store.closePrimaryPane(id)
+        store.closePrimaryPane(id, alreadyFinalized: alreadyFinalized)
         guard store.session(withID: id) != nil, let survivor, let paned = sessionPanes[id] else {
             reconcile()   // no split → the store closed the session; reconcile drops its widgets
             return

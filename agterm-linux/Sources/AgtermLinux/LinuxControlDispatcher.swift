@@ -25,6 +25,10 @@ struct LinuxControlDispatcher {
         case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename, .sessionReveal,
                 .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus, .sessionRestore:
             return dispatchSessionCommand(request)
+        case .sessionContext:
+            return dispatchSessionContext(request)
+        case .sessionSwap:
+            return dispatchSwapPanes(request)
         case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
                 .surfaceCursor,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionOverlayOpen,
@@ -41,6 +45,17 @@ struct LinuxControlDispatcher {
                 .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
+        case .version:
+            return actions.appIdentity()
+        case .restoreCapture:
+            return actions.captureRestoreCommands()
+        case .sidebarWidth:
+            guard let points = request.args?.sidebarWidth, points.isFinite else {
+                return ControlResponse(ok: false, error: "sidebar.width requires a width in points")
+            }
+            return actions.setSidebarWidth(points, window: request.args?.window)
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill:
+            return dispatchZmxCommand(request)
         case .windowRename, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize:
             return dispatchWindowCommand(request)
         case .pickOpen, .pickResult, .pickCancel:
@@ -49,6 +64,71 @@ struct LinuxControlDispatcher {
             return dispatchDashboard(request)
         default:
             return nil
+        }
+    }
+
+    /// `session.context`, whose mode is required so a client sending both or neither is refused, and
+    /// whose text validation lives on the model.
+    private func dispatchSessionContext(_ request: ControlRequest) -> ControlResponse {
+        let args = request.args
+        let context: String?
+        switch args?.mode ?? "" {
+        case "set":
+            guard let text = args?.text else {
+                return ControlResponse(ok: false, error: "session.context set requires text")
+            }
+            switch Session.validateContext(text) {
+            case .valid(let value): context = value
+            case .invalid(let message): return ControlResponse(ok: false, error: message)
+            }
+        case "clear":
+            guard args?.text == nil else {
+                return ControlResponse(ok: false, error: "session.context clear takes no text")
+            }
+            context = nil
+        default:
+            return ControlResponse(ok: false, error: "invalid context mode: \(args?.mode ?? "") (set|clear)")
+        }
+        return actions.setSessionContext(request.target, window: args?.window, context: context)
+    }
+
+    /// `session.swap`. Upstream awaits a readiness poll for a split still occupying its second slot; the
+    /// GTK deck creates both surfaces synchronously in `syncSplit`, so there is nothing to wait for.
+    private func dispatchSwapPanes(_ request: ControlRequest) -> ControlResponse {
+        actions.swapSessionPanes(request.target, window: request.args?.window)
+    }
+
+    /// `restore.mode` and the local half of the `zmx` group. `zmx.tree`/`zmx.attach` never reach here:
+    /// they run ssh, so the control server hands them to a worker thread of its own.
+    private func dispatchZmxCommand(_ request: ControlRequest) -> ControlResponse {
+        switch request.cmd {
+        case .restoreMode:
+            guard let raw = request.args?.mode else { return actions.readRestoreMode() }
+            // parsed strictly, unlike `RestoreMode`'s lossy decoder: a typo must not silently select
+            // `none`, the one mode whose next launch reaps every detached daemon
+            guard let mode = RestoreMode(rawValue: raw) else {
+                return ControlResponse(ok: false, error: "invalid restore mode: \(raw)")
+            }
+            return actions.setRestoreMode(mode)
+        case .zmxList:
+            return actions.listZmxDaemons()
+        case .zmxPrune:
+            return actions.pruneZmxDaemons()
+        case .zmxKill:
+            // no `active` or left-pane default: this destroys a backend process, reaching claims no window
+            // shows and every client attached to the daemon
+            guard let target = request.target, !target.isEmpty else {
+                return ControlResponse(ok: false, error: "zmx.kill requires an explicit --target")
+            }
+            guard let rawPane = request.args?.pane, let pane = ZmxPaneRole(controlName: rawPane) else {
+                return ControlResponse(ok: false, error: "zmx.kill requires --pane left|right")
+            }
+            guard request.args?.force == true else {
+                return ControlResponse(ok: false, error: "zmx.kill requires --force")
+            }
+            return actions.killZmxDaemon(target: target, window: request.args?.window, pane: pane)
+        default:
+            return ControlResponse(ok: false, error: "unexpected zmx command: \(request.cmd.rawValue)")
         }
     }
 

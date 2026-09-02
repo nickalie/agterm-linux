@@ -99,7 +99,7 @@ public enum RemoteSession {
 
     /// A host or remote-session token: no whitespace, no control characters. Shared with the dispatcher,
     /// so one predicate decides what may reach both an argv and an error message.
-    static func isPlain(_ value: String) -> Bool {
+    public static func isPlain(_ value: String) -> Bool {
         guard !value.isEmpty else { return false }
         return !value.unicodeScalars.contains { $0.properties.isWhitespace || $0.value < 0x20 || $0.value == 0x7f }
     }

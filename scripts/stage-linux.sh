@@ -48,6 +48,15 @@ install -m755 "$CTL" "$DEST/bin/agtermctl.bin"
 cp -R "$APP/vendor/ghostty/share/ghostty" "$DEST/share/ghostty"
 cp -R "$APP/vendor/ghostty/share/terminfo" "$DEST/share/terminfo"
 
+# zmx backs Live sessions. libexec, not bin: the app spawns it by absolute path and nothing should
+# shadow or be shadowed by a zmx the user installed himself.
+[[ -x "$APP/vendor/zmx/zmx" ]] || {
+  echo "no vendored zmx found — run 'scripts/setup-linux-zmx.sh' first" >&2
+  exit 1
+}
+install -Dm755 "$APP/vendor/zmx/zmx" "$DEST/libexec/zmx"
+install -Dm644 "$APP/vendor/zmx/LICENSE" "$DEST/share/agterm/zmx-LICENSE"
+
 [[ -d "$APP/Resources/icons" ]] && cp -R "$APP/Resources/icons" "$DEST/share/icons"
 mkdir -p "$DEST/share/agterm"
 cp -R "$ROOT/agterm/Resources/agent-status" "$DEST/share/agterm/agent-status"
@@ -84,6 +93,7 @@ export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 [[ -d "$HERE/share/ghostty" ]] && export AGTERM_GHOSTTY_RESOURCES="$HERE/share/ghostty"
 [[ -f "$HERE/share/agterm/VERSION" ]] && export AGTERM_VERSION="$(cat "$HERE/share/agterm/VERSION")"
 [[ -f "$HERE/share/agterm/COMMIT" ]] && export AGTERM_COMMIT="$(cat "$HERE/share/agterm/COMMIT")"
+[[ -x "$HERE/libexec/zmx" ]] && export AGTERM_ZMX="$HERE/libexec/zmx"
 exec "$HERE/bin/agterm-linux.bin" "$@"
 LAUNCH
 chmod 0755 "$DEST/bin/agterm-linux"

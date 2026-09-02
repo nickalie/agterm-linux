@@ -97,7 +97,7 @@ extension AppController {
         // no correct consumer — the mid-run reopen is gated on launch restore, and a launch cannot tell a
         // deliberately-closed window's file from one that was open at exit — so capturing there would replay
         // a stale command on the next start (upstream #370).
-        if library.openIDs() == [windowID], linuxSettingsStore().load().restoreRunningCommand ?? false {
+        if library.openIDs() == [windowID], gZmx.capturesForegroundOnExit {
             captureForegroundCommands()
         }
         store.save()

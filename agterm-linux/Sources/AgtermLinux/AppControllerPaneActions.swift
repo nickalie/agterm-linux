@@ -61,8 +61,8 @@ extension AppController {
         surfaces[id]?.grabFocus()
     }
 
-    func closeSplitPane(_ id: UUID) {
-        store.closeSplitPane(id)
+    func closeSplitPane(_ id: UUID, alreadyFinalized: UUID? = nil) {
+        store.closeSplitPane(id, alreadyFinalized: alreadyFinalized)
         reconcile()
         surfaces[id]?.grabFocus()
     }

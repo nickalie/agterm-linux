@@ -81,7 +81,12 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     let welcomeDue = WelcomeDialog.isDue(stateDirectory: linuxStateDirectory(), settings: launchSettings)
     // before the first store restores a session, so a restored row never renders under the wrong policy.
     SessionNaming.usesTerminalTitle = launchSettings.sessionNameFromTerminalTitle ?? false
-    gLibrary = WindowLibrary(directory: linuxStateDirectory())
+    // The restore policy freezes here, before the library reads its pane inventory: the launch reap, every
+    // pane's spawn and a window reopened later all follow one decision.
+    gZmx = LinuxZmxRuntime(settings: launchSettings)
+    gLibrary = gZmx.makeLibrary(directory: linuxStateDirectory())
+    let spawnPlan = gLibrary.launchSpawnPlan()
+    gSpawnPacer.arm(order: spawnPlan.order, burst: spawnPlan.burst)
     ensureStarterFiles()
     installAppCSS()
     installStatusColorCSS()

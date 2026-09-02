@@ -779,7 +779,7 @@ public final class Session: Identifiable {
 
 /// The outcome of checking a `session.context` value, carrying the message the control response reports
 /// on rejection so the caller learns which rule it broke.
-enum SessionContextValidation: Sendable, Equatable {
+public enum SessionContextValidation: Sendable, Equatable {
     case valid(String)
     case invalid(String)
 }
@@ -800,7 +800,7 @@ extension Session {
     /// hand-edited value instead of dropping it.
     ///
     /// `nonisolated` so `SessionSnapshot`'s decoder can drop an invalid stored value; it only reads a String.
-    nonisolated static func validateContext(_ raw: String) -> SessionContextValidation {
+    public nonisolated static func validateContext(_ raw: String) -> SessionContextValidation {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return .invalid("context must not be empty (use --clear to remove it)") }
         if trimmed.utf8.count > contextByteLimit {

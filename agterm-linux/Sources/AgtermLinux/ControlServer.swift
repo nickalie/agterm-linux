@@ -65,19 +65,56 @@ final class ControlServer: @unchecked Sendable {
                 if errno == EBADF || errno == EINVAL { return }
                 continue
             }
-            handle(conn)
+            guard handle(conn) else { continue }   // a handed-off connection closes itself
             close(conn)
         }
     }
 
-    private func handle(_ conn: Int32) {
-        guard let line = readLine(conn) else { return }
-        let response: ControlResponse
-        if let req = try? JSONDecoder().decode(ControlRequest.self, from: line) {
-            response = dispatchOnMain(req)
-        } else {
-            response = ControlResponse(ok: false, error: "could not decode request")
+    /// Answers one request; false when the connection was handed to a worker that owns it from here.
+    private func handle(_ conn: Int32) -> Bool {
+        guard let line = readLine(conn) else { return true }
+        guard let req = try? JSONDecoder().decode(ControlRequest.self, from: line) else {
+            respond(conn, ControlResponse(ok: false, error: "could not decode request"))
+            return true
         }
+        // `zmx.tree` and `zmx.attach` run ssh, and the two are the ONLY commands that leave this thread:
+        // `zmx tree <this machine>` would otherwise deadlock, the far side's own agtermctl waiting in the
+        // backlog this connection is holding. The GLib loop drains no Swift Concurrency executor, so the
+        // work blocks a thread of its own and hops to the GTK thread only for model access.
+        guard req.cmd == .zmxTree || req.cmd == .zmxAttach else {
+            respond(conn, dispatchOnMain(req))
+            return true
+        }
+        Thread.detachNewThread { [self] in
+            respond(conn, Self.remoteResponse(for: req))
+            close(conn)
+        }
+        return false
+    }
+
+    private static func remoteResponse(for req: ControlRequest) -> ControlResponse {
+        switch req.cmd {
+        case .zmxTree:
+            return LinuxRemoteSessions.tree(host: req.args?.host)
+        default:
+            guard let host = req.args?.host?.linuxTrimmedOrNil else {
+                return ControlResponse(ok: false, error: "zmx.attach requires a host")
+            }
+            // no `active` default: the target names a session on ANOTHER machine, which nothing local
+            // could resolve for the caller
+            guard let session = req.target?.linuxTrimmedOrNil else {
+                return ControlResponse(ok: false, error: "zmx.attach requires a remote session")
+            }
+            // the unresolved case names the id it could not find, so a control character here would reach
+            // a terminal through that message
+            guard RemoteSession.isPlain(session) else {
+                return ControlResponse(ok: false, error: "invalid remote session")
+            }
+            return LinuxRemoteSessions.attach(host: host, session: session)
+        }
+    }
+
+    private func respond(_ conn: Int32, _ response: ControlResponse) {
         guard var data = try? JSONEncoder().encode(response) else { return }
         data.append(0x0A)
         writeAll(conn, data)
@@ -227,6 +264,6 @@ final class ControlServer: @unchecked Sendable {
     }
 }
 
-private final class ResponseBox: @unchecked Sendable {
+final class ResponseBox: @unchecked Sendable {
     var value = ControlResponse(ok: false, error: "internal")
 }

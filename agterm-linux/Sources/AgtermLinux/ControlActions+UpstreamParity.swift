@@ -37,7 +37,7 @@ extension AppController {
         return ControlResponse(ok: true, result: result)
     }
 
-    func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse {
+    func swapSessionPanes(_ target: String?, window: String?) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):

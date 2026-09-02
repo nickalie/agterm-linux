@@ -101,7 +101,9 @@ extension WindowLibrary {
 @MainActor func flushOnQuit() {
     guard let library = gLibrary else { return }
     for controller in gWindows.values { controller.commitBackgroundOpacity() }
-    if linuxSettingsStore().load().restoreRunningCommand ?? false {
+    // live captures too: the argv is the fallback for a daemon that did not survive, which is what makes
+    // a reboot come back with the command rather than a bare shell
+    if gZmx.capturesForegroundOnExit {
         for ctl in gWindows.values { ctl.captureForegroundCommands() }
     }
     // capture each open window's on-screen size so it restores at the same size on reopen.

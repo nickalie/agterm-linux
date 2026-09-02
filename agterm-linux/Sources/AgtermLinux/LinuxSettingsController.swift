@@ -88,7 +88,30 @@ extension AppController {
         }
     }
 
-    func setRestoreRunningCommand(_ enabled: Bool) { persist(\.restoreRunningCommand, enabled ? true : nil) }
+    /// Persists the policy for the NEXT launch; this process keeps the mode it froze at startup. Rolls
+    /// memory back on a failed write, so a picker or a `restore.mode` read never reports a mode disk did
+    /// not take. Returns whether it reached disk.
+    @discardableResult
+    func persistRestoreMode(_ mode: RestoreMode) -> Bool {
+        let store = linuxSettingsStore()
+        var settings = store.load()
+        settings.restoreMode = mode
+        settings.restoreRunningCommand = nil
+        do {
+            try store.save(settings)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func setRestoreModeAtIndex(_ index: Int) {
+        let modes = RestoreMode.allCases
+        guard modes.indices.contains(index) else { return }
+        persistRestoreMode(modes[index])
+        rebuildSettings(page: .general)
+    }
+
     func setConfirmCloseSession(_ enabled: Bool) { persist(\.confirmCloseSession, enabled ? true : nil) }
     func setCloseGraceUndo(_ enabled: Bool) { persist(\.closeGraceUndoEnabled, enabled ? nil : false) }
     func setNotificationsEnabled(_ enabled: Bool) { persist(\.notificationsEnabled, enabled ? nil : false) }

@@ -297,28 +297,3 @@ extension ControlServer {
                                  alreadyFinalized: claim.paneIdentity)
     }
 }
-
-/// Error strings shared by the zmx commands, so the CLI and the server cannot word the same refusal
-/// differently.
-public enum ControlZmxError {
-    /// Why a row may not be killed, nil when it may. `absent` has nothing to kill, and `unreadable` is
-    /// refused in v1 because a forced kill there can unlink a live daemon's socket and still exit zero,
-    /// leaving the process running and unreachable by name.
-    static func killRefusal(_ row: ZmxInventoryRow) -> String? {
-        switch row.observation {
-        case .absent: return "\(row.daemon) is not running"
-        case .unreadable: return "\(row.daemon) is unreadable; killing it could orphan a live daemon"
-        case .running: break
-        }
-        switch row.state {
-        case .claimed: return nil
-        case .pendingClose: return "\(row.daemon) belongs to a session waiting out its undo window"
-        case .unknown, .conflicted: return incompleteInventory
-        case .orphan, .foreign: return "\(row.daemon) is not claimed by that pane"
-        }
-    }
-
-    public static let unavailable = "zmx is unavailable in this instance"
-    public static let incompleteInventory =
-        "the pane inventory is incomplete or has conflicting owners, so no daemon can be safely pruned"
-}

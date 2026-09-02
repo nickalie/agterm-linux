@@ -71,6 +71,10 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// Set by the host: the shell process exited.
     var onExit: (() -> Void)?
     private var didHandleProcessExit = false
+    private var spawnPacer: SpawnPacer?
+    private var spawnKey: UUID?
+    /// Whether the pacer denied this pane's turn, so a grant has a spawn to re-enter.
+    private(set) var awaitingSpawnPermit = false
 
     isolated deinit {
         if let surface { ghostty_surface_free(surface) }
@@ -81,7 +85,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     init(sessionID: UUID, cwd: String, command: String? = nil, env: [String: String] = [:],
          controller: AppController? = nil, waitAfterCommand: Bool = false,
          role: LinuxSurfaceRole = .main, reportsPaneState: Bool = true,
-         fontSize: Double? = nil, initialInput: String? = nil) {
+         fontSize: Double? = nil, initialInput: String? = nil, backedByZmx: Bool = false) {
         self.sessionID = sessionID
         self.controller = controller
         self.role = role
@@ -91,6 +95,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
         self.reportsPaneState = reportsPaneState
         self.fontSize = fontSize
         self.initialInput = initialInput
+        self.backedByZmx = backedByZmx
         self.env = env
         glArea = OpaquePointer(gtk_gl_area_new())
         gtk_gl_area_set_allowed_apis(GLA(glArea), GDK_GL_API_GL)
@@ -175,8 +180,27 @@ final class GhosttySurface: PaneRoleMutableSurface {
         controller?.applySidebarThemeColor()
     }
 
+    /// Queues this surface behind `pacer` under `key` — a launch that replays programs starts them one at
+    /// a time rather than all at once. Only a restored pane that actually replays something is enrolled.
+    func useSpawnPacer(_ pacer: SpawnPacer, key: UUID) {
+        spawnPacer = pacer
+        spawnKey = key
+    }
+
+    /// Re-enter the spawn after the pacer granted this pane's turn.
+    func spawnOnPermit() {
+        guard awaitingSpawnPermit else { return }
+        awaitingSpawnPermit = false
+        createSurface()
+    }
+
     private func createSurface() {
         guard surface == nil, let app = GhosttyApp.shared.app else { return }
+        if let spawnPacer, let spawnKey, !spawnPacer.request(spawnKey) {
+            awaitingSpawnPermit = true
+            return
+        }
+        awaitingSpawnPermit = false
         let scale = gtk_widget_get_scale_factor(W(glArea))
         var cfg = ghostty_surface_config_new()
         cfg.platform_tag = GHOSTTY_PLATFORM_OPENGL
@@ -715,6 +739,15 @@ final class GhosttySurface: PaneRoleMutableSurface {
         return size > 0 ? size : nil
     }
 
+    /// Claims this pane's exit for a caller that has already destroyed the process — `zmx.kill` — so the
+    /// surface's own exit path cannot run the transition a second time. False when it was already claimed.
+    func claimProcessExit() -> Bool {
+        guard !didHandleProcessExit else { return false }
+        didHandleProcessExit = true
+        onExit = nil
+        return true
+    }
+
     func handleProcessExit() {
         guard !didHandleProcessExit else { return }
         didHandleProcessExit = true
@@ -760,26 +793,46 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// proves nothing — the live pointer is the only honest signal.
     var isRealized: Bool { surface != nil }
 
+    /// Whether this pane's program lives inside a zmx daemon that outlives the app.
+    let backedByZmx: Bool
+
     /// The live foreground-process argv (via `/proc/<pid>/cmdline`), or nil at the shell prompt — the
     /// Linux analogue of macOS's KERN_PROCARGS2 capture, used for restore capture.
-    func foregroundCommand() -> [String]? {
-        paneForeground()?.command
+    func foregroundCommand(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot? = nil) -> [String]? {
+        paneForeground(zmxSnapshot: zmxSnapshot)?.command
     }
 
     /// The same read classified for `tree`: a program to report, or the recognized shell holding the
     /// foreground. `$SHELL` widens recognition to a non-standard login shell, as the capture does.
-    func paneForeground() -> CommandRestore.PaneForeground? {
-        guard let argv = rawForegroundArgv() else { return nil }
+    func paneForeground(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot? = nil)
+        -> CommandRestore.PaneForeground? {
+        guard let argv = rawForegroundArgv(zmxSnapshot: zmxSnapshot) else { return nil }
         let loginShell = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
         return CommandRestore.paneForeground(argv: argv, extra: loginShell)
     }
 
-    private func rawForegroundArgv() -> [String]? {
-        guard let surface else { return nil }
-        let pid = ghostty_surface_foreground_pid(surface)
-        guard pid > 0,
+    /// The daemon this pane attached to, for a live pane. Derived from the pane identity the attach was
+    /// configured with, which is also what the shell carries as `AGTERM_PANE_ID`.
+    var zmxDaemonName: String? {
+        guard backedByZmx, let identity = UUID(uuidString: paneToken) else { return nil }
+        return ZmxSupport.daemonName(for: identity)
+    }
+
+    private func rawForegroundArgv(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot?) -> [String]? {
+        guard let pid = foregroundPID(zmxSnapshot: zmxSnapshot),
               let data = try? Data(contentsOf: URL(fileURLWithPath: "/proc/\(pid)/cmdline")) else { return nil }
         return CommandRestore.parseProcCmdline(data)
+    }
+
+    /// libghostty's own answer is the ATTACH CLIENT for a live pane, so a wrapped pane resolves its
+    /// daemon's pty foreground group instead.
+    private func foregroundPID(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot?) -> Int32? {
+        if let name = zmxDaemonName {
+            return zmxSnapshot?.foregroundPID(sessionName: name) ?? gZmx?.foreground.foregroundPID(sessionName: name)
+        }
+        guard let surface else { return nil }
+        let pid = ghostty_surface_foreground_pid(surface)
+        return pid > 0 ? Int32(pid) : nil
     }
 
     // MARK: - TerminalSurface

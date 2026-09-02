@@ -75,6 +75,10 @@ extension AppController: ControlActions {
     }
 
     func controlTree(window: String?) -> ControlResponse {
+        // a live pane's foreground lives behind its daemon, so refresh the leader map before reading
+        if ZmxForegroundRefreshPolicy.hasWrappedPane(in: store.workspaces.flatMap(\.sessions)) {
+            gZmx.foreground.refreshIfNeeded()
+        }
         let baseTree = store.controlTree(
             paneForeground: { [weak self] session in self?.surfaces[session.id]?.paneForeground() },
             splitPaneForeground: { [weak self] session in self?.splitSurfaces[session.id]?.paneForeground() },

@@ -20,12 +20,12 @@ public final class SpawnPacer {
     /// Runs `body` on the main actor after `delay`.
     typealias Scheduler = @MainActor (Duration, @escaping @MainActor () -> Void) -> Void
 
-    /// The default `Scheduler`: a main-actor task that sleeps on the system clock.
+    /// The default `Scheduler`. Goes through `MainTimer` rather than `Task.sleep`, which never fires under
+    /// a host that owns the main thread with its own loop; the seam's own default is the main-queue timer
+    /// this used to schedule directly.
     static let liveSchedule: Scheduler = { delay, body in
-        Task { @MainActor in
-            try? await Task.sleep(for: delay)
-            body()
-        }
+        MainTimer.schedule(after: TimeInterval(delay.components.seconds)
+            + TimeInterval(delay.components.attoseconds) / 1e18, body)
     }
 
     /// Called with each granted key so the caller can spawn that pane's surface.

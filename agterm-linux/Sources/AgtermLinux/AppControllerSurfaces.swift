@@ -41,7 +41,7 @@ extension AppController {
 
     /// The `AGTERM_*` env injected into a session's spawned shells (main/split/scratch) so the
     /// agent-status hooks + `{AGT_X}` tokens can call back over the control socket.
-    private func sessionEnv(for s: Session, pane: StatusPane? = nil) -> [String: String] {
+    func sessionEnv(for s: Session, pane: StatusPane? = nil) -> [String: String] {
         SurfaceEnvironment.session(sessionID: s.id, windowID: windowID,
                                    workspaceID: store.workspace(forSession: s.id)?.id,
                                    socketPath: gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath(),
@@ -69,23 +69,14 @@ extension AppController {
         sessionStacks[s.id] = stack
         // The capture rides the TRANSIENT pending slot, seeded only by an app-bootstrap restore: the
         // persisted field is stripped at launch so a replay can fire exactly once. Taking it clears it, so
-        // this pane's next surface is a plain shell.
-        let pendingForeground = s.takePendingForegroundCommand(pane: .left)
-        let hadForeground = pendingForeground != nil
-        let restoreInput = consumeRestoreInput(pendingForeground)
-        let inputs = CommandRestore.RestoreInputs(
-            wasRestored: s.wasRestored,
-            restoreEnabled: restoreEnabled,
-            hadForeground: hadForeground,
-            foregroundInput: restoreInput,
-            initialCommand: s.initialCommand,
-            restoreOverride: s.takePendingRestoreOverride(pane: .left)
-        )
-        let plan = CommandRestore.restorePlan(inputs)
-        let surf = GhosttySurface(sessionID: s.id, cwd: s.effectiveCwd, command: plan.command,
-                                  env: sessionEnv(for: s, pane: .left), controller: self,
-                                  waitAfterCommand: s.commandWait, fontSize: s.fontSize,
-                                  initialInput: plan.initialInput)
+        // this pane's next surface is a plain shell. Under Live sessions the whole replay rides inside the
+        // zmx attach instead.
+        let launch = paneLaunch(for: s, pane: .left)
+        let surf = GhosttySurface(sessionID: s.id, cwd: s.effectiveCwd, command: launch.command,
+                                  env: launch.environment, controller: self,
+                                  waitAfterCommand: launch.waitAfterCommand, fontSize: s.fontSize,
+                                  initialInput: launch.initialInput, backedByZmx: launch.backedByZmx)
+        gSpawnRegistry.enqueue(surf, key: s.paneIdentity, paces: launch.paces)
         let sid = s.id
         surf.onExit = { [weak self] in self?.closePrimaryPane(sid) }
         s.surface = surf
@@ -273,15 +264,20 @@ extension AppController {
         let denylist = (try? String(contentsOf: denylistPath, encoding: .utf8)).map(CommandRestore.parseDenylist)
             ?? ["tmux", "screen", "zellij"]
         var captured = 0
+        // one bounded listing for every live pane: the per-pane read is then a name lookup plus a /proc hit
+        let snapshot = ZmxForegroundRefreshPolicy.hasWrappedPane(in: store.workspaces.flatMap(\.sessions))
+            ? gZmx.foreground.freshSnapshot(timeout: LinuxZmxClient.captureInvocationTimeout)
+            : nil
         for ws in store.workspaces {
             for s in ws.sessions {
-                if let argv = surfaces[s.id]?.foregroundCommand(), CommandRestore.shouldRestore(argv: argv, denylist: denylist) {
+                if let argv = surfaces[s.id]?.foregroundCommand(zmxSnapshot: snapshot),
+                   CommandRestore.shouldRestore(argv: argv, denylist: denylist) {
                     s.foregroundCommand = argv
                     captured += 1
                 } else {
                     s.foregroundCommand = nil
                 }
-                let splitArgv = s.isSplit ? splitSurfaces[s.id]?.foregroundCommand() : nil
+                let splitArgv = s.isSplit ? splitSurfaces[s.id]?.foregroundCommand(zmxSnapshot: snapshot) : nil
                 s.splitForegroundCommand = splitArgv.flatMap {
                     CommandRestore.shouldRestore(argv: $0, denylist: denylist) ? $0 : nil
                 }
@@ -291,11 +287,9 @@ extension AppController {
         return captured
     }
 
-    private var restoreEnabled: Bool { linuxSettingsStore().load().restoreRunningCommand ?? false }
-
     /// The captured argv as terminal input. Nil for no capture, and nil while restore is off — the slot is
     /// taken either way, so a pane that skipped its replay cannot fire it later.
-    private func consumeRestoreInput(_ argv: [String]?) -> String? {
+    func consumeRestoreInput(_ argv: [String]?) -> String? {
         guard let captured = argv, restoreEnabled else { return nil }
         return CommandRestore.shellQuotedLine(captured) + "\n"
     }
@@ -379,16 +373,13 @@ extension AppController {
            }) { return }
         guard let paned = sessionPanes[s.id] else { return }
         if s.isSplit, splitSurfaces[s.id] == nil {
-            let capturedInput = consumeRestoreInput(s.takePendingForegroundCommand(pane: .right))
-            let restoreInput = CommandRestore.restoreInput(
-                restoreEnabled: restoreEnabled,
-                restoreOverride: s.takePendingRestoreOverride(pane: .right),
-                capturedInput: capturedInput
-            )
+            let launch = paneLaunch(for: s, pane: .right)
             let split = GhosttySurface(sessionID: s.id, cwd: s.initialSplitCwd ?? s.effectiveCwd,
-                                       env: sessionEnv(for: s, pane: .right), controller: self,
+                                       command: launch.command, env: launch.environment, controller: self,
+                                       waitAfterCommand: launch.waitAfterCommand,
                                        role: .split, fontSize: s.fontSize,
-                                       initialInput: restoreInput)
+                                       initialInput: launch.initialInput, backedByZmx: launch.backedByZmx)
+            gSpawnRegistry.enqueue(split, key: s.splitPaneIdentity, paces: launch.paces)
             let sid = s.id
             split.onExit = { [weak self] in self?.closeSplitPane(sid) }
             s.splitSurface = split
