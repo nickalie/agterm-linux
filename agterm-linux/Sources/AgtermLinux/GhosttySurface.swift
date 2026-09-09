@@ -450,15 +450,18 @@ final class GhosttySurface: PaneRoleMutableSurface {
         guard columnZeroX >= 0 else { return nil }
 
         let size = ghostty_surface_size(surface)
-        // the scale libghostty was actually given, not the monitor's: `resize` pushes this widget's factor.
-        let scale = Double(gtk_widget_get_scale_factor(W(glArea)))
-        guard scale > 0, size.cell_width_px > 0, size.columns > 0 else { return nil }
-        let cellWidth = Double(size.cell_width_px) / scale
+        guard size.cell_width_px > 0, size.cell_height_px > 0, size.columns > 0 else { return nil }
 
         var x = 0.0, y = 0.0, w = 0.0, h = 0.0
         ghostty_surface_ime_point(surface, &x, &y, &w, &h)
         let after = ghostty_surface_size(surface)
-        guard after.cell_width_px == size.cell_width_px, after.columns == size.columns else { return nil }
+        guard after.cell_width_px == size.cell_width_px, after.cell_height_px == size.cell_height_px,
+              after.columns == size.columns else { return nil }
+        // `h` is one cell height over the content scale libghostty retains, the divisor behind `x` and
+        // `tl_px_x` too. agterm hands it equal X/Y scales, so `h` recovers the logical cell width without
+        // asking the widget for a scale factor it may not have while hidden.
+        guard h > 0, h.isFinite else { return nil }
+        let cellWidth = h * Double(size.cell_width_px) / Double(size.cell_height_px)
         let column = Int(((x - columnZeroX) / cellWidth).rounded(.down))
         guard column >= 0, column < Int(size.columns) else { return nil }
         return column
@@ -589,6 +592,10 @@ final class GhosttySurface: PaneRoleMutableSurface {
     }
 
     func grabFocus() {
+        // a deferred refocus can fire after this pane was torn down — closing the session that answered a
+        // dialog is the way in — and grabbing there leaves the keyboard on a dead pane instead of the
+        // reselected one. Not `isRealized`: a pane that has not spawned yet still takes its first focus.
+        guard !isTornDown else { return }
         _ = gtk_widget_grab_focus(W(glArea))
     }
 
@@ -793,6 +800,9 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// proves nothing — the live pointer is the only honest signal.
     var isRealized: Bool { surface != nil }
 
+    /// Set by `teardown`, so a retired pane can be told from one that has simply not spawned yet.
+    private(set) var isTornDown = false
+
     /// Whether this pane's program lives inside a zmx daemon that outlives the app.
     let backedByZmx: Bool
 
@@ -838,6 +848,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     // MARK: - TerminalSurface
 
     func teardown() {
+        isTornDown = true
         if let surface {
             ghostty_surface_free(surface)
             self.surface = nil
