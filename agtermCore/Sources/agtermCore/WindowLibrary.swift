@@ -328,6 +328,12 @@ public final class WindowLibrary {
         return windows.first { $0.id == id }?.name ?? ""
     }
 
+    /// The window's user-set name, nil for an auto "window N" name or an unknown id.
+    public func customWindowName(for id: UUID) -> String? {
+        guard let info = windows.first(where: { $0.id == id }), info.hasCustomName else { return nil }
+        return info.name
+    }
+
     public var defaultWindowName: String {
         "window \(windows.count + 1)"
     }
@@ -455,7 +461,10 @@ public final class WindowLibrary {
         store.finalizeAllPendingCloses()
         store.dropLaunchPanes(store.workspaces.flatMap(\.sessions))
         for workspace in store.workspaces {
-            for session in workspace.sessions { store.emitSessionClosed(session, workspace: workspace.id) }
+            for session in workspace.sessions {
+                session.cancelPendingAsk()
+                store.emitSessionClosed(session, workspace: workspace.id)
+            }
         }
         store.scheduleTreeChanged()
         stores[id] = nil
@@ -495,7 +504,10 @@ public final class WindowLibrary {
         if let store = stores[id] {
             store.dropLaunchPanes(store.workspaces.flatMap(\.sessions))
             for workspace in store.workspaces {
-                for session in workspace.sessions { store.emitSessionClosed(session, workspace: workspace.id) }
+                for session in workspace.sessions {
+                    session.cancelPendingAsk()
+                    store.emitSessionClosed(session, workspace: workspace.id)
+                }
             }
         }
         scheduleTreeChanged(for: id)

@@ -88,7 +88,8 @@ extension ControlServer: ControlActions {
             guard store.resizeOverlay(id, sizePercent: sizePercent) else {
                 return ControlResponse(ok: false, error: "no overlay")
             }
-            if hud, let session, !self.writeHudBody(session, pane: self.paneMetrics(for: session)) {
+            if hud, let session,
+               !self.writeHudBody(session, pane: self.paneMetrics(for: session, pane: session.hudTargetPane)) {
                 store.resizeOverlay(id, sizePercent: previousSize)
                 return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
@@ -695,8 +696,8 @@ extension ControlServer: ControlActions {
             }
             let want = mode.desiredValue(current: controller.target == resolved.target)
             if want, controller.target != resolved.target,
-               PickRegistry.shared.controller(for: resolved.windowID)?.pending != nil {
-                return ControlResponse(ok: false, error: "pick pending")
+               let error = PickRegistry.shared.controller(for: resolved.windowID)?.pendingModalError {
+                return ControlResponse(ok: false, error: error)
             }
             // `hide` is idempotent: skip the availability check for `.off`, since the surface may have
             // vanished (an exited overlay auto-clears the zoom) while the end state holds; `set(.off, …)`
@@ -720,8 +721,8 @@ extension ControlServer: ControlActions {
                 return ControlResponse(ok: false, error: "window not open — window.select it first")
             }
             if controller.target == nil, mode != .off,
-               PickRegistry.shared.controller(for: windowID)?.pending != nil {
-                return ControlResponse(ok: false, error: "pick pending")
+               let error = PickRegistry.shared.controller(for: windowID)?.pendingModalError {
+                return ControlResponse(ok: false, error: error)
             }
             // this arm only picks the effective target (the current zoom when one is up, so on/off/toggle
             // act on it, else the resolved active surface) and shapes the response; mode-vs-state semantics

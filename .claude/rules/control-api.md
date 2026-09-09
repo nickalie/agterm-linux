@@ -137,7 +137,10 @@ paths:
   no `CodingKeys`, so a server that predates a field drops it and runs the command without it, answering ok:
   there is no "unknown field" error and no way to ask. A new field that only narrows or decorates is fine
   that way. One that changes WHERE a mutation lands is not: give it a read-back so a caller can see what the
-  server did, rather than leaving the two outcomes indistinguishable. Since `agtermctl` ships inside the
+  server did, rather than leaving the two outcomes indistinguishable. A read-back is any observable read, not
+  necessarily a response field: `session.paste --pane` is covered by `session.text --pane`, its documented
+  read-back command, as `session.type` and `font.*` are, and `result.pane` is carried by `session.restore`,
+  for the token reason below, and by `ask.open` for its resolved pane anchor. Since `agtermctl` ships inside the
   bundle, the CLI that sends a field and the app that reads it are the same build, so the exposure is a
   stale RUNNING process across an upgrade, not a mismatched install. Only an app predating `result.pane`
   omits it from a successful `session.restore`; treat absence as UNKNOWN, never as the default pane.
@@ -164,7 +167,8 @@ renumbering. Do not reintroduce a count anywhere.
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
   `.overlay.result`, `.overlay.copy`, `.overlay.text`, `.hud.open`, `.hud.update`, `.hud.close`
-- `surface.zoom`, `surface.cursor`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`
+- `surface.zoom`, `surface.cursor`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`,
+  `ask.open`, `ask.result`, `ask.cancel`
 - `quick`, `quick.type`, `quick.text`
 - `sidebar`, `sidebar.mode`, `sidebar.expand`, `sidebar.collapse`, `sidebar.width`, `notify`
 - `font.inc`, `font.dec`, `font.reset`
@@ -240,6 +244,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `--grow-left|right|primary|split|top|bottom` delta, defaulting an unset ratio to 0.5. Require a split,
   clamp through store limits, persist, then post the object-scoped live-divider notification. Hidden split
   stores for next show. Return clamped ratio as `%.3f`; read `splitRatio`.
+  The fraction is of the pane area BELOW the titlebar band, not the full split height, so an even ratio
+  renders even in every toolbar mode. Only a drag captures the live divider; `session.resize`, the
+  double-click reset and the first-layout seed set the value directly. A shown split therefore always
+  reports a ratio, so absence means no split or one never shown, never "at the default".
 - `session.go --to next|prev|first|last|next-attention|prev-attention` operates on current selection in
   the placement store, wraps within filtered scope, and returns selected ID. It has no target.
 - `notify` requires body, defaults title and session, skips OSC focus suppression, increments unseen, and
@@ -272,7 +280,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 - `session.type --pane` accepts `primary|left|top`, `split|right|bottom`, or `scratch`; omission defaults
   to primary for compatibility, not focused/on-screen. Read-back and the stable invalid-value error use
-  canonical `left|right|scratch` names.
+  canonical `left|right|scratch` names. The spelling is parsed ONCE, in the dispatcher, and the host takes
+  a `StatusPane`: `session.type`, `session.text` and `font.*` go through `parseSurfacePane`, so the aliases
+  resolve for a raw socket client too, and they keep their own `invalid pane: <value>` rejection while
+  `session.status`/`.restore` keep the pinned one. Never match a pane spelling in the app target.
   Hidden live scratch is addressable; missing panes error. Main alone bounded-polls (12 × 30ms) a newly
   unrealized session, with or without `select`, so `session.new --no-select` plus an immediate type does
   not race the mount+layout gap (#349). The probe precedes every sleep, so a realized session pays nothing
@@ -308,7 +319,11 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   and an unrealized pane is `session not realized` — `readSelection` cannot tell the two apart, and copy is
   select-all's read-back, so both name that state the same way. It stays on the PANE while an overlay covers
   it, so a selection made inside one is `session.overlay.copy`'s, not this command's.
-  `session.paste` and `.selectall` run Ghostty bindings on main. They use
+  `session.paste` and `.selectall` run Ghostty bindings through one arm. `session.paste` takes `--pane`
+  so its `session.text` read-back can name the same pane; the dispatcher parses it into `StatusPane`
+  (`session.status`'s `parsePane`, so the role and position aliases resolve and a raw client gets the same
+  pinned rejection) and the arm takes the parsed value, never a spelling. `.selectall` stays on main, its
+  `session.copy` read-back having no pane either. Omitted, and for select-all always, the pane is
   `Session.addressableSurface = surface ?? splitSurface`, never focus-aware `activeSurface`, so select-all
   and copy share one pane. Read paste through text and select-all through copy.
 - Keep standard SwiftUI Edit routing. `GhosttySurfaceView` implements Copy/Paste/Select All and validation;
@@ -345,7 +360,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   read failure, and no open window. Hidden previously shown quick remains addressable (#170).
   Text is type's read-back.
 
-## Overlay, zoom, dashboard, and picker
+## Overlay, zoom, dashboard, pick, and ask
 
 - Overlay open runs one shell-wrapped program in a nonpersisted per-session surface. Size nil is full;
   1...100 is floating; values outside that range are refused. Optional color uses shared validated
@@ -358,8 +373,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   Promotion moves the right pane's overlay into the left slot without rebuilding its surface, so that
   surface's callbacks resolve their pane through `Session.paneOverlayRole(of:)`, never a captured one.
   Read back `paneOverlays`, ordered left-then-right.
-- Both full and floating use one always-present `overlayPanel` at z3. Gate content inside its
-  `GeometryReader`; never change the `sessionDetail`/HSplitView shape or pane modifiers on overlay state.
+- Both full and floating use one always-present `overlayPanel` in `sessionDetail`'s overlay preference
+  layer. Gate content inside its `GeometryReader`; never change the `sessionDetail`/HSplitView shape or
+  pane modifiers on overlay state.
   Full is translucent/chromeless and hides panes; floating is opaque/framed over visible panes with an
   internal click catcher. Value-only resizing must not reparent the Metal surface.
 - Handle `GHOSTTY_ACTION_SHOW_CHILD_EXITED`. Return true for immediate close, false for wait; process-exit
@@ -406,6 +422,13 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   and session close tear a HUD down. `overlay.result` refuses with `OverlayHudError.noResult` because
   `overlayActive` alone would answer the misleading "overlay still running", and `overlay.resize` takes a
   percent but refuses `--full` (`OverlayHudError.fullResize`), which would cover the session it describes.
+- `hud.open` and `hud.update` accept `--pane` plus `--pane-id` with `session.restore`'s resolution rule: a
+  live stable token wins over the role fallback, while an unknown token without a fallback errors. The
+  resolved pane identity is stored, so swap and promotion move the HUD with its shell. A hidden target keeps
+  the HUD alive but unmounted; destroying the target closes it. Open refuses a pane the deck does not render.
+  Omission keeps the existing session-detail coordinate space. This is still one last-writer-wins HUD.
+  `ControlActions` retains the original session-wide methods and defaults the placement-carrying overloads
+  to them, so an `agterm-linux` conformer owes no source change until it adopts pane placement.
 - Zoom narrows on the same predicate: `isActive`'s shared `uncovered` and its `.scratch`/`.overlay` arms,
   `isAvailable`'s `.overlay` arm, `isVisible`, and `paneVisible`. Widen `uncovered` and narrow the `.overlay`
   arm together or no case is active and the documented-unreachable `?? .primary` fallback runs. The explicit
@@ -413,7 +436,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - A HUD sizes each axis separately, through `HudLayout.panelSize` into one `HudPanelSize` that travels
   store-to-deck: width from the box's columns, height from its rows. One percent across both made every
   panel as tall as it was wide, which is a square box around two lines of text, so `OverlayPanelStyle`
-  carries `widthFraction`/`heightFraction` and only a PROGRAM overlay sets them equal.
+  carries `widthFraction`/`heightFraction` and only a PROGRAM overlay sets them equal. A pane-scoped HUD
+  takes both dimensions, its anchor offsets, and the edge margin from the deck pane host's live bounds.
+  The pane hosts publish those bounds in the session detail coordinate space. Never derive them from
+  `splitRatio` or the terminal surface frame: the ratio is observation-ignored and the surface moves on zoom.
 - `--size-percent` reaches the WIDTH alone, on open and on `overlay.resize` — the text wraps at
   `HudLayout.maxColumns`, not at the panel, so a resize changes no rows — and the height takes no caller
   override at all. Every HUD WIDTH passes `HudLayout.clampSizePercent` (10...80), the caller's included, so
@@ -454,7 +480,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   foreground, and tracking the LATEST update unlike `backgroundColor`);
   `position` and `spinner` always report the effective value, defaults included — `spinner` names the STYLE
   and spells a static panel `HudSpinner.noneName`, which the dispatcher accepts back as "no spinner" so a
-  caller can round-trip what `tree` gave it. HUD state is poll-only.
+  caller can round-trip what `tree` gave it. `pane` names the targeted identity's current role and is omitted
+  for session-wide placement. HUD state is poll-only.
   `openOverlay`/`closeOverlay` emit no `scheduleTreeChanged()` and neither does a HUD, so document no event.
 - The panel is a pty running bundled `Resources/hud/hud.sh`, spawned `autoFocus: false` with
   `AGTERM_HUD_FILE` as its only HUD-SPECIFIC variable (the surface still inherits the session environment
@@ -564,8 +591,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   without `allowCustom` returns `pick.open requires at least one item`.
   Optional subtitle/prompt/query/custom/follow; `query` prefills the field so the picker opens filtered.
   Reject duplicate IDs and control characters host-free; `prompt` and `query` stay unvalidated free text.
-  One picker may be pending per window. Background remains background unless follow raises and publishes
-  frontmost.
+  Picks share the window modal slot with GUI asks. Terminal asks use separate session slots.
+  A background window is raised only when `follow` is set.
 - Caller-supplied rows match on their label only. Subtitles are displayed but never searched, so
   consequence text cannot filter a safe row out and leave a destructive one preselected. An empty query
   preserves caller item order; a prefilled `query` re-ranks and drops that order. The palette trims
@@ -575,11 +602,75 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   Results are pending, picked with ID/label/index, custom with query, or cancelled. Cancel is idempotent
   after terminal state. Tree exposes `pickPending`.
 - Selection/custom/Esc/Command-W/window close resolve. App termination may race polling. Retain eight
-  terminal results per controller; on unregister move them into a 32-entry app-wide oldest-first store so
+  finished pick results per controller; on unregister move them into a 32-entry app-wide oldest-first store so
   deletion does not lose a pending poll.
 - CLI reads JSON array when stdin begins `[`, otherwise nonblank lines become ID=label. Blocking poll is
   100ms for one second, then 500ms; print bare result JSON; exit 0 picked/custom, 2 cancelled, 1 failure.
   `--no-block` prints picker ID JSON; result/cancel are one-shot commands.
+
+- `ask.open` accepts a nonblank `title`, optional `message`, and 1...6 `buttons` with unique ids and
+  nonempty labels. Title, message, and labels reject control characters. Optional button `hotkey` is
+  one ASCII letter, unique case-insensitively and stored lowercase.
+- `defaultButton` and `destructiveButton` name supplied ids and cannot name the same button.
+  Default seeds the highlight; otherwise the first non-destructive button is selected, or the first
+  button if it is the only choice. Tab/Right/Down move forward, Shift-Tab/Left/Up move back, and wrap.
+  Return chooses the highlight; a letter hotkey chooses directly. Outside clicks leave the dialog open.
+- Optional `style` is `terminal` (default) or `gui`; invalid values return `unknown style`.
+  Style selects ownership, default placement, and appearance. It has no separate read-back field.
+- Optional `align` is `left`, `center`, or `right` (default). It aligns the whole button block, including
+  the vertical fallback, in both styles. Invalid values return `unknown align`; it has no read-back.
+- Both styles fit their content, capped at 90 percent of the anchor width and 72 cells.
+  Narrow layouts wrap labels and use the vertical button fallback.
+- Optional `width` fixes the panel width to an integer percentage of the anchor, 10...100, in either
+  style. It replaces automatic sizing and has no read-back. Invalid values return `width must be 10 to 100`.
+- Terminal buttons use padded labels and a dim fill from the theme foreground at low opacity.
+  The active button uses solid foreground fill with background-colored text. Colors come from the theme.
+- GUI style uses the picker's material, corner radius, and appearance handling, with system fonts,
+  a headline title, secondary message, and native push buttons in a row. The active button is
+  prominent in the accent color; destructive is tinted red and becomes prominent red when active. System colors only, so light and dark follow the picker.
+- A terminal ask occupies `Session.askPending`, one per session, independently of the HUD/program
+  overlay slot. A second terminal ask in that session returns `ask already pending`.
+  A GUI ask occupies `PickController.pendingAsk`, sharing the window modal slot with pick. Terminal
+  asks can coexist with GUI asks and picks. GUI asks participate in the shared window modal gates.
+- Without `target`, terminal style uses the selected session in the requested window. An explicit
+  unselected session is accepted without changing selection; its ask is hidden and pending.
+  Terminal `pane`/`paneID` selectors can omit `target`. GUI style without `target` centers over the
+  window's terminal area, excluding the sidebar. An explicit GUI target must be selected in its window;
+  GUI pane selectors require it. Zoom/dashboard reject anchored GUI opens.
+- A pane must be laid out by its session at open, independently of session selection. A live pane token
+  overrides the role; an unknown token uses the supplied role or errors without one. `follow` raises
+  the owning window without selecting another session. `ask.open` echoes the resolved role in `result.pane`.
+- A terminal ask covers only its session or pane. It takes keys when that region is laid out, its
+  session and covered pane are selected, and its window can receive input. GUI asks, picks, palettes,
+  sidebar rename, and the quick terminal take priority. Active text editors retain input until they resign;
+  palette dismissal ends editing before focus restoration. Clicking the covered region focuses its dialog;
+  answering an unfocused ask does not pull focus.
+- Terminal asks draw above program overlays, pane overlays, and the HUD within their region.
+  A session-wide ask draws above the scratch; a pane ask hides under it. Zoom and dashboard hide terminal
+  asks without resolving them. Deselecting a session or hiding its pane also keeps the ask pending.
+  Hidden asks own no input and return when their region is displayed. Geometry follows resize and the
+  captured pane identity through swaps and survivor promotion.
+- Terminal asks cancel synchronously before session close (hard or soft, single or batch), workspace
+  removal (hard or soft), destruction of their exact target pane, window close/removal, or app termination.
+  Undo restores the session without its ask. A session-wide ask survives a sibling pane closing while
+  the session remains. GUI asks cancel on window teardown or anchor loss, including session deselection
+  or loss of the anchored pane's identity or rendered role.
+- Esc and Command-W dismiss the ask that owns input with `escaped`. `ask.cancel` and owner teardown
+  return `cancelled`. Result/cancel use the exact global ask id; an explicit window must match its owner,
+  including for retained results. Cancelling a retained finished result is a successful no-op.
+- `AskRegistry` indexes both live owner types. Open the owner's slot before registering the id, and retain
+  the result before clearing the slot. Pending requests are never evicted. Finished results keep their
+  owning window in one 32-entry cache across both styles, ordered by resolution. `PickRegistry` retains
+  pick results separately.
+- Blocking CLI output is `{"result":"answered","id":"yes","label":"Yes","index":0}`,
+  `{"result":"escaped"}`, or `{"result":"cancelled"}`; index follows caller order.
+  Exit 0 means answered, including a No button; exit 3 means escaped, exit 2 means cancelled,
+  and exit 1 means failure. `--no-block` prints `{"id":"…"}`.
+  One-shot `ask result` also prints `pending` and exits 1 for it.
+- A session node exposes its terminal ask as `ask: {id, pane?}`; `pane` is the current left/right role
+  and is omitted for session-wide placement. Top-level `askPending` identifies the pending GUI ask.
+  Each field is omitted when its slot is empty. App shutdown can interrupt polling.
+  Ask emits no events; result and tree polling are its explicit event exemption.
 
 ## Status, notifications, and flags
 
@@ -741,7 +832,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   qualifies. The capture (`.command`) stays leader-only, because a non-nil capture sets `hadForeground`,
   which preempts `initialCommand` in `restorePlan` and would drop the exec path.
 - Top-level tree includes idle/auto-follow, live sidebar visibility/mode/width, workspace filter, quick
-  visibility, zoom, dashboard, and picker state. Prefer live tree sidebar state over cached window list.
+  visibility, zoom, dashboard, pick, and GUI ask state. Prefer live tree sidebar state over cached window list.
   `sidebarWidth` is tree-only: nothing needs width discovery across windows, which is all the cached
   `window.list` copy would add.
   `quickVisible` and a `quick` `zoomedSurface` are APP-level, so every projected window reports the same

@@ -756,7 +756,7 @@
               The building block is the <strong style="color: #e6e1d7">control API</strong>. Overlays are one entry in a much
               larger catalog: the same
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #e6e1d7">agtermctl</span> creates and renames
-              sessions, splits panes, moves windows, opens the native picker, reads a session's text back, and posts
+              sessions, splits panes, moves windows, opens the native picker or a question dialog, reads a session's text back, and posts
               notifications. Every state it sets it also reads back, which is what lets a script build a whole layout rather than
               fire a single action.
             </p>
@@ -1380,9 +1380,9 @@
               Accessibility
             </h2>
             <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0">
-              Voice dictation tools that probe for a focused text field — the system Dictation, MacWhisper, and similar
-              assistive apps — engage over the terminal: the on-screen pane advertises itself to the accessibility system as
-              an editable text area, so a hold-to-dictate widget anchors to it and dictated text lands at the prompt. Text
+              Voice dictation tools that probe for a focused text field — MacWhisper and similar assistive apps — engage
+              over the terminal: the on-screen pane advertises itself to the accessibility system as an editable text area,
+              so a hold-to-dictate widget anchors to it and dictated text lands at the prompt. Text
               arrives at the cursor the same way typing does, and an insert carrying a newline, a tab, or any other control
               character goes in as a bracketed paste, so a program that accepts bracketed paste takes it as literal text
               instead of running the line or completing the word. That last part is the same caveat &#8984;V carries: at a raw
@@ -1395,6 +1395,10 @@
               read back, a dictation tool that re-sends its whole transcription on every revision (rather than only the new
               words) will concatenate its drafts at the prompt; tools that insert incrementally, MacWhisper among them, are
               unaffected.
+            </p>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 16px 0 0">
+              System Dictation inserts text through macOS text input, the same path used by the keyboard and input
+              methods.
             </p>
           </section>
 
@@ -1990,6 +1994,35 @@
                 margin: 24px 0 12px;
               "
             >
+              Question dialogs
+            </h3>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">agtermctl ask "Continue?" --button yes=Yes --button no=No --default no</span>
+              opens a question in the selected session and waits for a bare JSON answer. Inspect its id before acting: Yes and No both exit 0.
+              The default terminal style uses the session's theme and allows one pending question per session.
+              Add <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane right</span> to cover only that pane;
+              the left pane and the rest of the window stay usable. An explicit
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--target</span> can name an unselected session,
+              where the question waits hidden until the session is selected.
+            </p>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--style gui</span> uses native buttons and a window modal
+              shared with pick. Terminal questions can coexist with it. Tab and arrows move the highlight; Return answers
+              the interactive question. Esc and Command-W dismiss it with
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">escaped</span> and exit 3; cancellation exits 2.
+              See the <a href="/commands#ask" style="color: #6d82f3">ask reference</a> for placement, sizing,
+              input priority, result polling, and cancellation rules.
+            </p>
+
+            <h3
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 600;
+                font-size: 16px;
+                color: #5ea1f2;
+                margin: 24px 0 12px;
+              "
+            >
               Sessions &amp; workspaces
             </h3>
             <div
@@ -2276,7 +2309,11 @@
               <span style="color: #f2b45c">"$AGTERM_SESSION_ID"</span><br /><br /><span style="color: #6b727a"
                 ># anchor it and set its width by hand instead of measuring the message</span
               ><br />agtermctl session hud <span style="color: #f2b45c">"deploying"</span> --position top-right --size-percent
-              30<br /><br /><span style="color: #6b727a"># color both halves of the panel</span
+              30<br /><br /><span style="color: #6b727a"># keep the HUD inside the calling pane, even after its role changes</span
+              ><br />agtermctl session hud <span style="color: #f2b45c">"working"</span> --pane
+              <span style="color: #f2b45c">"$AGTERM_PANE"</span> --pane-id
+              <span style="color: #f2b45c">"$AGTERM_PANE_ID"</span> --target
+              <span style="color: #f2b45c">"$AGTERM_SESSION_ID"</span><br /><br /><span style="color: #6b727a"># color both halves of the panel</span
               ><br />agtermctl session hud <span style="color: #f2b45c">"deploying"</span> --text-color
               <span style="color: #f2b45c">"#7ec07e"</span> --background-color
               <span style="color: #f2b45c">"#202020"</span><br /><br />agtermctl session hud close --target <span style="color: #f2b45c">"$AGTERM_SESSION_ID"</span>
@@ -2308,6 +2345,13 @@
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">bottom</span> this took before are
               still accepted for the middle column. The panel comes from the message on both axes — width from the longest line, height
               from the number of them, so a title and a subtitle give a wide, short panel rather than a square one.
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane</span> uses one pane as the
+              bounds for sizing, anchors, and margins.
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane-id "$AGTERM_PANE_ID"</span>
+              follows the same shell through pane swaps and promotion, with
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane "$AGTERM_PANE"</span> as
+              the fallback. Open refuses a pane that is not rendered. Hiding that pane hides the panel without stopping it;
+              showing the pane restores it, and closing the pane closes its HUD.
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--size-percent</span> overrides the
               width only, bounded to at most 80% of the pane, so a message never covers the session it is about.
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--text-color</span> sets the text's
@@ -2317,7 +2361,9 @@
               An update replaces the whole message, so
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--detail</span>,
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--spinner</span> and
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--text-color</span> have to be repeated
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--text-color</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane</span>, and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane-id</span> have to be repeated
               to survive it. The spinner takes a style —
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--spinner-style bar|braille|circle|blocks|dot|none</span>,
               which turns it on by itself, with
@@ -2343,6 +2389,8 @@
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl tree --json</span> reports
               the panel as the session node's
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">hud</span> object, with
+              a pane-scoped HUD's current role in
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">hud.pane</span> and
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">overlay</span> reading false beside it;
               there is no event, so a script that needs the state polls the tree.
             </p>
@@ -3000,9 +3048,11 @@
               Six Codex lifecycle events run a dedicated adapter.
               A permission request is only a candidate because it fires before Auto Review; the adapter keeps automatic decisions
               active and changes the row to blocked only after a real approval or structured question appears in that pane.
-              On Stop, a final assistant message containing
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">?</span> reports blocked;
-              every other final message reports completed and auto-resets.
+              On Stop, a final assistant message that ends a sentence with
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">?</span> reports blocked.
+              The check is a heuristic: it ignores single-backtick spans and triple-backtick blocks, and a mark
+              that stands alone or sits inside a word, as in a URL query string, does not count.
+              Every other final message reports completed and auto-resets.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               <strong style="color: #e6e1d7"
@@ -3205,8 +3255,9 @@ command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' stop"
                 Reattach restores usable text, TUI state, and normal colors, but its synthesized screen does not retain inline images,
                 earlier OSC 133 prompt markers, program-changed palette entries, or hyperlink metadata already attached to cells.
                 New output after reattach behaves normally. In live mode,
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session new --command</span> types the
-                command into the persistent shell only when the pane is first created. The session stays open when that command exits,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session new --command</span> passes the
+                command as a create-only zmx payload, which bypasses the 1,024-byte PTY input cap. A surviving daemon ignores the payload;
+                a new daemon runs it, then starts the persistent shell. The session stays open when that command exits,
                 so <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--wait</span> adds no hold prompt. After
                 a clean quit, a missing daemon replays the captured running command inside a new persistent shell; the exclusions above
                 start a fresh shell.

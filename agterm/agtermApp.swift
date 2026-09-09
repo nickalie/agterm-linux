@@ -150,7 +150,7 @@ struct agtermApp: App {
                         return Self.makeScratchSurface(for: session, store: store,
                                                        env: surfaceEnv(for: session, pane: .scratch),
                                                        suppressAutoFocus: session.programOverlayActive || qtVisible,
-                                                       library: library)
+                                                       actions: actions)
                     },
                     captureOnExit: captureOnExit,
                     actions: actions,
@@ -326,13 +326,14 @@ struct agtermApp: App {
     /// App-owned services every pane factory wires into the view it builds.
     struct SurfaceServices {
         let library: WindowLibrary
+        let actions: AppActions
         let zmxForegroundResolver: ZmxForegroundResolver?
         let spawnRegistry: SpawnRegistry?
         let launchContext: LaunchSpawnContext
     }
 
     private var surfaceServices: SurfaceServices {
-        SurfaceServices(library: library, zmxForegroundResolver: zmxForegroundResolver, spawnRegistry: spawnRegistry,
+        SurfaceServices(library: library, actions: actions, zmxForegroundResolver: zmxForegroundResolver, spawnRegistry: spawnRegistry,
                         launchContext: launchContext)
     }
 
@@ -388,7 +389,7 @@ struct agtermApp: App {
         view.onFontSizeChange = { [weak view] size in
             Self.persistFontSize(size, from: view, store: store, sessionID: sessionID)
         }
-        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, library: services.library)
+        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, actions: services.actions)
         return view
     }
 
@@ -445,7 +446,7 @@ struct agtermApp: App {
     /// GUI and control pin the owner alike.
     @MainActor
     private static func wireSearchCallbacks(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID,
-                                            library: WindowLibrary) {
+                                            actions: AppActions) {
         view.isSearchable = true
         view.onSearchStart = { [weak view] needle in
             guard let session = store.session(withID: sessionID) else { return }
@@ -472,15 +473,16 @@ struct agtermApp: App {
             // the in-deck overlay/scratch (overlay > scratch > active pane) but not the quick-terminal panel,
             // so bail while that is up — it refocuses on hide; the retry outlasts the SwiftUI teardown.
             guard store.selectedSessionID == sessionID else { return }
-            let windowID = library.windowID(forSession: sessionID)
+            let windowID = actions.library.windowID(forSession: sessionID)
             guard !QuickTerminalController.shared.holdsKey else { return }
             // terminal zoom owns focus above the deck and zoom-enter ends an open search; this END lands a tick
             // later, so refocusing would steal first responder back from the zoomed terminal.
             guard windowID.flatMap({ TerminalZoomRegistry.shared.controller(for: $0) })?.target == nil else { return }
             // a control picker is the topmost modal: `session.search --to close` stays valid cleanup while one
             // is pending, but its async END must not return focus behind it.
-            guard PickRegistry.shared.controller(for: windowID)?.pending == nil else { return }
-            (session.topmostSurface as? GhosttySurfaceView)?.focusAfterReparent()
+            guard PickRegistry.shared.controller(for: windowID)?.modalPending != true else { return }
+            actions.resignDismissedFieldEditor(for: windowID)
+            if let surface = session.topmostSurface as? GhosttySurfaceView, !surface.deferFocusToAsk() { surface.focusAfterReparent() }
         }
         view.onSearchTotal = { total in store.session(withID: sessionID)?.searchTotal = total }
         view.onSearchSelected = { selected in store.session(withID: sessionID)?.searchSelected = selected }
@@ -552,7 +554,7 @@ struct agtermApp: App {
         view.onFontSizeChange = { [weak view] size in
             Self.persistFontSize(size, from: view, store: store, sessionID: sessionID)
         }
-        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, library: services.library)
+        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, actions: services.actions)
         return view
     }
 
@@ -651,7 +653,7 @@ struct agtermApp: App {
     /// shell's `exit` runs `closeScratch`, hiding + tearing down so the next show is fresh.
     @MainActor
     private static func makeScratchSurface(for session: Session, store: AppStore, env: [String: String],
-                                           suppressAutoFocus: Bool, library: WindowLibrary) -> GhosttySurfaceView {
+                                           suppressAutoFocus: Bool, actions: AppActions) -> GhosttySurfaceView {
         // re-shows are focused via the `scratchActive` onChange (which also defers to those covers).
         // scratchCommand is run-once: read it for this spawn, then clear so a post-exit respawn is a shell.
         let command = session.scratchCommand
@@ -668,7 +670,7 @@ struct agtermApp: App {
         view.onUserInput = { store.noteUserActivity() }
         // the scratch is searchable (⌘F), pinned to the same session as the panes: unlike the overlay/quick
         // terminal it stays alive across hides, so a bar over it is safe.
-        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, library: library)
+        Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, actions: actions)
         return view
     }
 
@@ -727,14 +729,14 @@ struct agtermApp: App {
         // selection behind the panel while the user types (mirrors the overlay/scratch).
         controller.onUserInput = { [weak library] in library?.activeStore?.noteUserActivity() }
         controller.focusAllowed = { [weak library] in
-            PickRegistry.shared.controller(for: library?.activeWindowID)?.pending == nil
+            PickRegistry.shared.controller(for: library?.activeWindowID)?.modalPending != true
         }
         // the global hotkey reaches the controller directly, with none of the `uiActionsEnabled` gating every
         // in-app path has, so the pick term belongs here. Only that term: refusing a system-wide summon
         // because some BACKGROUND window has a dashboard open would defeat the point of the chord.
         controller.canShow = { [weak library] in
             guard let library, !library.openIDs().isEmpty else { return false }
-            return PickRegistry.shared.controller(for: library.activeWindowID)?.pending == nil
+            return PickRegistry.shared.controller(for: library.activeWindowID)?.modalPending != true
         }
         controller.terminalColorProvider = { WindowContentView.resolvedTerminalColor() }
     }

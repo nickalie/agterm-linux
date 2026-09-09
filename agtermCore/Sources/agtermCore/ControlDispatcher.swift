@@ -63,7 +63,7 @@ public protocol ControlActions {
     func readSurfaceCursor(_ target: String?, window: String?) -> ControlResponse
     func setDashboard(targets: [String], window: String?, close: Bool,
                       fontMode: DashboardFontMode, mru: Bool) -> ControlResponse
-    func font(_ target: String?, window: String?, pane: String?, action: String) -> ControlResponse
+    func font(_ target: String?, window: String?, pane: StatusPane?, action: String) -> ControlResponse
     func reloadKeymap() -> ControlResponse
     func listKeymap() -> ControlResponse
     func appIdentity() -> ControlResponse
@@ -81,7 +81,7 @@ public protocol ControlActions {
     func readQuickText(all: Bool, lines: Int?) async -> ControlResponse
     func typeSession(_ target: String?, window: String?, options: ControlSessionTypeOptions) async -> ControlResponse
     func copySessionSelection(_ target: String?, window: String?) -> ControlResponse
-    func pasteSession(_ target: String?, window: String?) -> ControlResponse
+    func pasteSession(_ target: String?, window: String?, pane: StatusPane?) -> ControlResponse
     func selectAllSession(_ target: String?, window: String?) -> ControlResponse
     func searchSession(_ target: String?, window: String?,
                        text: String?, to: String?) async -> ControlResponse
@@ -102,9 +102,13 @@ public protocol ControlActions {
     /// dispatcher validated the text, color, percent, and position; the host measures the terminal font,
     /// renders the message to a file, and drives the store.
     func openHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse
+    func openHud(_ target: String?, window: String?, spec: HudSpec,
+                 placement: ControlHudPlacement) -> ControlResponse
     /// Replace a live panel's text in place — same surface, no respawn. `spec.backgroundColor` cannot change
     /// here, the surface having read it once at creation.
     func updateHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse
+    func updateHud(_ target: String?, window: String?, spec: HudSpec,
+                   placement: ControlHudPlacement) -> ControlResponse
     func closeHud(_ target: String?, window: String?) -> ControlResponse
     func setSessionBackground(_ target: String?, window: String?,
                               options: ControlSessionBackgroundOptions) -> ControlResponse
@@ -126,6 +130,13 @@ public protocol ControlActions {
     func pickResult(_ target: String, window: String?) -> ControlResponse
     /// Cancel a native picker. The host owns window resolution, registry lookup, and dismissal.
     func cancelPick(_ target: String, window: String?) -> ControlResponse
+    /// openAsk lets the host resolve a validated dialog's window and session or pane anchor.
+    func openAsk(_ ask: PendingAsk, target: String?, window: String?,
+                 placement: ControlAskPlacement, follow: Bool) -> ControlResponse
+    /// askResult reads the current or retained outcome by globally unique dialog id.
+    func askResult(_ target: String, window: String?) -> ControlResponse
+    /// cancelAsk administratively cancels a dialog without answering a named button.
+    func cancelAsk(_ target: String, window: String?) -> ControlResponse
     func clearRestoreCommands() -> ControlResponse
     /// Capture every open pane's foreground command now, the same read `applicationWillTerminate` does. The
     /// host owns the `sysctl` read, the save, and the count it reports back.
@@ -198,6 +209,8 @@ public struct ControlDispatcher {
             return nil
         case .pickOpen, .pickResult, .pickCancel:
             return dispatchPickCommand(request)
+        case .askOpen, .askResult, .askCancel:
+            return dispatchAskCommand(request)
         case .sessionHudOpen, .sessionHudUpdate, .sessionHudClose:
             return dispatchHudCommand(request)
         }
@@ -445,42 +458,11 @@ public struct ControlDispatcher {
         return actions.setSessionContext(request.target, window: args?.window, context: context)
     }
 
-    /// The outcome of parsing a `--pane` selector: the pane (nil when the selector was absent), or the
-    /// rejection response the arm returns as-is. Generic over the pane type, so the role selector and the
-    /// overlay selector differ only in which enum they parse into and which rejection they carry.
-    private enum PaneSelection<Pane> {
-        case pane(Pane?)
-        case rejected(ControlResponse)
-    }
-
     /// Non-nil when `text` carries a NUL: libghostty's key-text field is NUL-terminated and slices at the
     /// first zero, dropping the run's tail while the Return after it still submits the shortened line (#455).
     private func nulRejection(_ text: String) -> ControlResponse? {
         guard text.unicodeScalars.contains(where: { $0.value == 0 }) else { return nil }
         return ControlResponse(ok: false, error: "text must not contain a NUL byte")
-    }
-
-    /// The shared `--pane` selector: nil when absent, the parsed pane when `parse` accepts it, and `error`
-    /// as the pinned rejection otherwise. No live session needed either way.
-    private func parsePane<Pane>(_ raw: String?, error: String,
-                                 parse: (String) -> Pane?) -> PaneSelection<Pane> {
-        guard let raw else { return .pane(nil) }
-        guard let parsed = parse(raw) else { return .rejected(ControlResponse(ok: false, error: error)) }
-        return .pane(parsed)
-    }
-
-    /// The role selector (`session.status`, `session.restore`). It accepts role and position aliases; the
-    /// stable rejection names the canonical `left|right|scratch` read-back values.
-    private func parsePane(_ raw: String?) -> PaneSelection<StatusPane> {
-        parsePane(raw, error: "--pane must be left, right, or scratch") { StatusPane(controlName: $0) }
-    }
-
-    /// The `session.overlay.*` selector (`.open`/`.close`/`.result`/`.copy`/`.text`): absent keeps the
-    /// session-wide overlay,
-    /// `left`/`right` (and their `primary`/`split` aliases) scope to one pane, `scratch` is rejected — there
-    /// being no scratch pane to cover.
-    private func parseOverlayPane(_ raw: String?) -> PaneSelection<OverlayPane> {
-        parsePane(raw, error: PaneOverlayError.invalidPane) { OverlayPane(controlName: $0) }
     }
 
     private func dispatchSessionMove(targets: [String], window: String?, move: ControlSessionMove) -> ControlResponse {
@@ -592,16 +574,25 @@ public struct ControlDispatcher {
                 return ControlResponse(ok: false, error: "session.type requires text")
             }
             if let rejection = nulRejection(text) { return rejection }
+            let pane: StatusPane?
+            switch parseSurfacePane(request.args?.pane) {
+            case .pane(let parsed): pane = parsed
+            case .rejected(let rejection): return rejection
+            }
             return await actions.typeSession(request.target, window: request.args?.window,
                                              options: ControlSessionTypeOptions(
                                                 text: text,
                                                 select: request.args?.select ?? false,
-                                                pane: request.args?.pane
+                                                pane: pane
                                              ))
         case .sessionCopy:
             return actions.copySessionSelection(request.target, window: request.args?.window)
         case .sessionPaste:
-            return actions.pasteSession(request.target, window: request.args?.window)
+            switch parsePane(request.args?.pane) {
+            case .pane(let parsed):
+                return actions.pasteSession(request.target, window: request.args?.window, pane: parsed)
+            case .rejected(let rejection): return rejection
+            }
         case .sessionSelectAll:
             return actions.selectAllSession(request.target, window: request.args?.window)
         case .sessionSearch:
@@ -685,14 +676,11 @@ public struct ControlDispatcher {
     private func dispatchAppCommand(_ request: ControlRequest) -> ControlResponse {
         switch request.cmd {
         case .fontInc:
-            return actions.font(request.target, window: request.args?.window,
-                                pane: request.args?.pane, action: "increase_font_size:1")
+            return dispatchFont(request, action: "increase_font_size:1")
         case .fontDec:
-            return actions.font(request.target, window: request.args?.window,
-                                pane: request.args?.pane, action: "decrease_font_size:1")
+            return dispatchFont(request, action: "decrease_font_size:1")
         case .fontReset:
-            return actions.font(request.target, window: request.args?.window,
-                                pane: request.args?.pane, action: "reset_font_size")
+            return dispatchFont(request, action: "reset_font_size")
         case .quick:
             return actions.setQuickTerminal(mode: request.args?.mode)
         case .keymapReload:
@@ -847,15 +835,29 @@ public struct ControlDispatcher {
         return .extent(all: all, lines: lines)
     }
 
+    /// The three `font.*` arms share one parse, so their pane vocabulary cannot drift apart.
+    private func dispatchFont(_ request: ControlRequest, action: String) -> ControlResponse {
+        switch parseSurfacePane(request.args?.pane) {
+        case .pane(let pane):
+            return actions.font(request.target, window: request.args?.window, pane: pane, action: action)
+        case .rejected(let rejection): return rejection
+        }
+    }
+
     private func dispatchSessionText(_ request: ControlRequest) -> ControlResponse {
         switch parseBufferExtent(request.args) {
         case .rejected(let response): return response
         case .extent(let all, let lines):
-            return actions.readSessionText(request.target, window: request.args?.window,
-                                           options: ControlSessionTextOptions(pane: request.args?.pane,
-                                                                              paneID: request.args?.paneID,
-                                                                              all: all,
-                                                                              lines: lines))
+            // the extent is checked first, so an `--all --lines` caller still gets that error before a pane one.
+            switch parseSurfacePane(request.args?.pane) {
+            case .rejected(let rejection): return rejection
+            case .pane(let pane):
+                return actions.readSessionText(request.target, window: request.args?.window,
+                                               options: ControlSessionTextOptions(pane: pane,
+                                                                                  paneID: request.args?.paneID,
+                                                                                  all: all,
+                                                                                  lines: lines))
+            }
         }
     }
 

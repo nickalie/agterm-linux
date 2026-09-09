@@ -613,6 +613,15 @@ printf 'deploy staging' | pbcopy
 agtermctl session paste --target "$other"   # lands at the prompt, not submitted
 ```
 
+`--pane` picks which pane it lands in, so multi-line text can reach a split or the scratch terminal
+without `session type` submitting it line by line:
+
+```bash
+pbcopy < notes.md
+agtermctl session paste --pane right --target "$other"
+agtermctl session text --pane right --target "$other" --json | jq -r '.result.text' | tail -3
+```
+
 ## Read a session's buffer as text
 
 `session text` returns the terminal buffer as plain text in `result.text` — the visible screen by
@@ -929,6 +938,30 @@ agtermctl pick cancel "$pick_id" --window "$AGTERM_WINDOW_ID"
 Add `--follow` to raise a background target window when the picker opens. Without it, the picker waits in
 that window without stealing focus.
 
+## Require a yes/no answer in a cleanup hook
+
+A shell cleanup hook can require approval before removing `./build`. This example runs inside
+agterm and requires `jq`. Only an `answered` result with id `yes` reaches the removal:
+
+```bash
+#!/usr/bin/env bash
+answer=$(agtermctl ask "Remove ./build?" \
+  --message "Delete $PWD/build." \
+  --button yes=Delete --button no=Keep --default no --destructive yes \
+  --window "${AGTERM_WINDOW_ID:?run this hook inside agterm}" --follow \
+  --socket "${AGTERM_SOCKET:?run this hook inside agterm}") || exit 1
+
+printf '%s\n' "$answer" |
+  jq -e '.result == "answered" and .id == "yes"' >/dev/null || exit 1
+rm -rf -- ./build
+```
+
+Choosing Keep returns an answer with exit 0, so the id check is required. Esc and Command-W return
+`escaped` with exit 3; cancellation returns `cancelled` with exit 2. Both stop the hook.
+`ask` leaves the hook's stdin untouched. Omit `--target` to keep the question centered over its window's terminal area
+even when the hook's session is not selected. The default `--style terminal` uses the terminal theme;
+add `--style gui` for the picker's material appearance and native buttons. The hook's behavior is the same.
+
 ## Say what you are doing while the user waits
 
 `session hud` posts a passive panel over a session. The session keeps focus and stays typable under it, so
@@ -947,8 +980,19 @@ choice=$(printf '%s\n' "$branches" | agtermctl pick --prompt "Check out which br
 agtermctl session hud close --target "$me"
 ```
 
+In a split, keep the panel inside the calling agent's pane and follow that shell if pane roles change:
+
+```bash
+agtermctl session hud "gathering options…" --spinner --position bottom-right \
+  --pane "$AGTERM_PANE" --pane-id "$AGTERM_PANE_ID" --target "$AGTERM_SESSION_ID"
+```
+
+The stable pane ID wins when it resolves. `--pane` is the fallback for older or unknown IDs. The selected
+pane supplies the size, 80% cap, anchor, and 10% edge margin. A hidden pane keeps its HUD and shows it again
+when restored; closing the pane closes its HUD.
+
 `session hud update` repaints in place, no re-spawn and no blink, and it replaces the whole spec: `--detail`,
-the spinner and `--text-color` are dropped unless repeated. `--spinner-style bar|braille|circle|blocks|dot` picks the look and
+the spinner, `--text-color`, `--pane`, and `--pane-id` are dropped unless repeated. `--spinner-style bar|braille|circle|blocks|dot` picks the look and
 turns the spinner on by itself (`dot` blinks instead of animating, for a panel up for minutes), and an
 update may switch style mid-flight; `--spinner-style none` stops it, which is also what a read-back's
 `none` echoes back to. `--position` anchors the panel to any of the nine

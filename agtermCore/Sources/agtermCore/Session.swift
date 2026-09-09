@@ -177,9 +177,10 @@ public final class Session: Identifiable {
     /// inactive one. Meaningless when not split.
     public var splitFocused: Bool = false
 
-    /// The split divider's primary-pane fraction, captured from the live `NSSplitView` and persisted, so it
-    /// survives a hide/show and a relaunch. Within `AppStore.splitRatioMin...splitRatioMax` (~0.05...0.95):
-    /// capture skips degenerate extremes, restore clamps and seeds. nil = even; never read by a SwiftUI view.
+    /// The split divider's primary-pane fraction of the pane area below the titlebar band, captured from the
+    /// live `NSSplitView` on a divider drag and persisted, so it survives a hide/show and a relaunch. Within
+    /// `AppStore.splitRatioMin...splitRatioMax` (~0.05...0.95): capture skips degenerate extremes, restore
+    /// clamps and seeds. nil = even; never read by a SwiftUI view.
     @ObservationIgnored public var splitRatio: Double?
 
     /// The second pane's surface, created lazily on first split and, like `surface`, surviving view churn —
@@ -332,6 +333,66 @@ public final class Session: Identifiable {
     /// a HUD is a message about work in flight and means nothing after a relaunch.
     public var hudSpec: HudSpec?
 
+    /// Stable identity of the pane whose bounds scope the HUD, nil for the session detail bounds. The identity
+    /// follows its shell through pane swaps and split-survivor promotion.
+    public var hudPaneIdentity: UUID?
+
+    /// The session's pending terminal ask, independent of the HUD/program overlay slot.
+    public private(set) var askPending: PendingAsk?
+    /// Stable identity of the covered pane; nil covers the whole session.
+    public private(set) var askPaneIdentity: UUID?
+
+    /// The anchored pane's current role, nil for session-wide placement or a destroyed pane.
+    public var askTargetPane: OverlayPane? {
+        askPaneIdentity.flatMap(paneRole(forIdentity:))
+    }
+
+    /// Reserves the session ask slot and its placement, refusing replacement of a pending ask.
+    @discardableResult
+    public func openAsk(_ ask: PendingAsk, paneIdentity: UUID? = nil) -> Bool {
+        guard askPending == nil else { return false }
+        askPaneIdentity = paneIdentity
+        askPending = ask
+        return true
+    }
+
+    /// Retains a registered ask's terminal outcome before clearing its slot; stale ids are ignored.
+    @discardableResult
+    public func resolveAsk(id: String, _ result: ControlAskResult) -> Bool {
+        guard askPending?.id == id, result.result != .pending else { return false }
+        if case let .session(sessionID, windowID) = AskRegistry.shared.owner(for: id), sessionID == self.id {
+            AskRegistry.shared.retain(id: id, result: result, window: windowID)
+        }
+        askPending = nil
+        askPaneIdentity = nil
+        return true
+    }
+
+    /// Cancels the current ask only when its id matches.
+    @discardableResult
+    public func cancelAsk(id: String) -> Bool {
+        resolveAsk(id: id, ControlAskResult(result: .cancelled))
+    }
+
+    /// Cancels the session's pending ask, if any.
+    public func cancelPendingAsk() { if let ask = askPending { cancelAsk(id: ask.id) } }
+
+    /// Last live bounds emitted by each deck pane host. Ignored by observation because the drawing path takes
+    /// the current preference value directly; control commands use this cache only for message measurement.
+    @ObservationIgnored public var hudPaneFrames = HudPaneFrames()
+
+    /// The target identity's current role, nil for session-wide placement or a destroyed target.
+    public var hudTargetPane: OverlayPane? {
+        hudPaneIdentity.flatMap(paneRole(forIdentity:))
+    }
+
+    /// paneRole resolves a captured pane identity to its current role, following a promotion.
+    public func paneRole(forIdentity identity: UUID) -> OverlayPane? {
+        if paneIdentity == identity { return .left }
+        if splitPaneIdentity == identity { return .right }
+        return nil
+    }
+
     /// Path to the rendered-message file the HUD helper re-reads each tick (`AGTERM_HUD_FILE`); `discardHudBody`
     /// deletes it. Per SESSION, so an update rewrites the path the running helper already opened.
     /// `@ObservationIgnored`: the surface factory, the HUD commands and `overlay close` read it, and none of
@@ -346,6 +407,7 @@ public final class Session: Identifiable {
     public func discardHudBody() {
         if let hudFile { try? FileManager.default.removeItem(atPath: hudFile) }
         hudSpec = nil
+        hudPaneIdentity = nil
         hudFile = nil
         hudHeightPercent = nil
     }

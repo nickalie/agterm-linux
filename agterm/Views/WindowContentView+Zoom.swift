@@ -6,6 +6,7 @@ extension WindowContentView {
     /// Restore keyboard ownership to whichever full-window cover was already present below a picker.
     /// The ordinary session focus helper intentionally refuses to cross these modal layers.
     func restoreFocusAfterPick() {
+        actions.resignDismissedFieldEditor(for: windowID)
         if dashboard.isOpen {
             dashboard.requestFocus()
             return
@@ -174,7 +175,7 @@ extension WindowContentView {
     /// machinery. The outer retry here only waits for a surface the zoom layer's `TerminalView` hasn't
     /// realized yet (e.g. zooming a never-shown scratch), and dies as soon as the zoom target changes.
     func focusZoomedSessionSurface(session: Session, surface: TerminalZoomSurface, attempt: Int = 0) {
-        guard pick.pending == nil else { return }
+        guard !pick.modalPending else { return }
         let expectedTarget = TerminalZoomTarget.session(session.id, surface)
         guard terminalZoom.target == expectedTarget else { return }
         if let view = surface.surface(in: session) as? GhosttySurfaceView {

@@ -325,9 +325,9 @@ final class ControlServerSessionActionsTests: XCTestCase {
         let queued = queuePane(in: target, split: true)
         let (_, bare) = try addSession()
 
-        let shown = await server.injectText("ls\n", into: target.id, store: store, select: false, pane: "right")
+        let shown = await server.injectText("ls\n", into: target.id, store: store, select: false, pane: .right)
         let started = Date()
-        let absent = await server.injectText("ls\n", into: bare.id, store: store, select: false, pane: "right")
+        let absent = await server.injectText("ls\n", into: bare.id, store: store, select: false, pane: .right)
 
         XCTAssertEqual(shown.error, "session not realized")
         XCTAssertTrue(queued.granted)
@@ -347,10 +347,10 @@ final class ControlServerSessionActionsTests: XCTestCase {
 
     func testSynchronousMutatorsExpediteAQueuedPane() throws {
         let cases: [(name: String, split: Bool, run: (Session) -> ControlResponse)] = [
-            ("session.paste", false, { self.server.pasteSession($0.id.uuidString, window: nil) }),
+            ("session.paste", false, { self.server.pasteSession($0.id.uuidString, window: nil, pane: nil) }),
             ("session.selectall", false, { self.server.selectAllSession($0.id.uuidString, window: nil) }),
             ("font.inc left", false, { self.server.font($0.id.uuidString, window: nil, pane: nil, action: "increase_font_size:1") }),
-            ("font.inc right", true, { self.server.font($0.id.uuidString, window: nil, pane: "right", action: "increase_font_size:1") }),
+            ("font.inc right", true, { self.server.font($0.id.uuidString, window: nil, pane: .right, action: "increase_font_size:1") }),
         ]
         for testCase in cases {
             let (store, target) = try addSession()
@@ -391,10 +391,10 @@ final class ControlServerSessionActionsTests: XCTestCase {
                                                   env: ["AGTERM_PANE_ID": "right-token"])
         session.hasSplit = true
 
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: "left", paneID: "right-token"),
-                       "right")
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: "scratch", paneID: "unknown"),
-                       "scratch", "an unknown token falls back to the explicit role")
+        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .left, paneID: "right-token"),
+                       .right)
+        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .scratch, paneID: "unknown"),
+                       .scratch, "an unknown token falls back to the explicit role")
     }
 
     func testTextPaneIDFollowsItsSurfaceAfterSwap() throws {
@@ -409,8 +409,8 @@ final class ControlServerSessionActionsTests: XCTestCase {
 
         XCTAssertNil(store.swapPanes(session.id))
 
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: "left", paneID: "moving-token"),
-                       "right")
+        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .left, paneID: "moving-token"),
+                       .right)
     }
 
     // the same parked pane, one command over: `surfaceBindingAction`'s cast proves only that the SLOT is
@@ -424,13 +424,44 @@ final class ControlServerSessionActionsTests: XCTestCase {
         target.surface = parked
         XCTAssertFalse(parked.isRealized, "a detached view never runs createSurface, which is the point here")
 
-        let paste = server.pasteSession(target.id.uuidString, window: nil)
+        let paste = server.pasteSession(target.id.uuidString, window: nil, pane: nil)
         XCTAssertFalse(paste.ok, "session.paste pasted nothing and must not report a false ok")
         XCTAssertEqual(paste.error, "session not realized")
 
         let selectAll = server.selectAllSession(target.id.uuidString, window: nil)
         XCTAssertFalse(selectAll.ok, "session.selectall selected nothing and must not report a false ok")
         XCTAssertEqual(selectAll.error, "session not realized")
+    }
+
+    // the pane has to reach the SURFACE, not just the action. `addressableSurface` is `surface ?? splitSurface`,
+    // so a fixture with only the split slot filled grants the same permit either way: main has to be filled
+    // too before granting the split's permit proves anything.
+    func testPasteIntoTheSplitExpeditesTheSplitPane() throws {
+        let (store, target) = try addSession()
+        store.setSplitVisibility(target.id, shown: true)
+        target.surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        let queued = queuePane(in: target, split: true)
+
+        let response = server.pasteSession(target.id.uuidString, window: nil, pane: .right)
+
+        XCTAssertEqual(response.error, "session not realized")
+        XCTAssertTrue(queued.granted, "session.paste --pane right must grant the SPLIT pane, not the main one")
+    }
+
+    // a pane that parses but is not laid out is refused in the same words `session.type` uses, so a caller
+    // scripting one pane gets one answer whichever command it reaches for. An unknown SPELLING cannot get
+    // here: the dispatcher parses `--pane` into `StatusPane` and rejects the rest.
+    func testPasteRejectsPanesTheSessionDoesNotHave() throws {
+        let (store, target) = try addSession()
+        let id = target.id.uuidString
+
+        XCTAssertEqual(server.pasteSession(id, window: nil, pane: .right).error, "session has no split pane")
+        XCTAssertEqual(server.pasteSession(id, window: nil, pane: .scratch).error,
+                       "session has no scratch terminal")
+        // with the split shown, `right` is a pane again: the refusal above was about the layout.
+        store.setSplitVisibility(target.id, shown: true)
+        _ = queuePane(in: target, split: true)
+        XCTAssertEqual(server.pasteSession(id, window: nil, pane: .right).error, "session not realized")
     }
 
     // `session.copy` is `session.selectall`'s documented read-back, so the pair has to name this state the
@@ -601,6 +632,144 @@ final class ControlServerSessionActionsTests: XCTestCase {
         let sized = HudSpec(message: "working", sizePercent: 25)
         XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: sized).ok)
         XCTAssertEqual(session.overlaySizePercent, 25)
+    }
+
+    func testHudPaneIDOverridesTheRoleAndUsesThePaneHostMetrics() throws {
+        let (store, session) = try makeHudSession()
+        let rightIdentity = UUID()
+        session.splitPaneIdentity = rightIdentity
+        session.hasSplit = true
+        session.isSplit = true
+        session.surface = SessionRestoreTestSurface(paneToken: "left-token")
+        session.splitSurface = SessionRestoreTestSurface(paneToken: "right-token")
+        session.hudPaneFrames = HudPaneFrames(
+            left: HudPaneFrame(x: 0, y: 0, width: 100, height: 600),
+            right: HudPaneFrame(x: 104, y: 0, width: 1_000, height: 600)
+        )
+        let spec = HudSpec(message: String(repeating: "x", count: 60))
+
+        let response = server.openHud(session.id.uuidString, window: nil, spec: spec,
+                                      placement: ControlHudPlacement(pane: .left, paneID: "right-token"))
+
+        XCTAssertTrue(response.ok, response.error ?? "")
+        XCTAssertEqual(session.hudPaneIdentity, rightIdentity)
+        XCTAssertEqual(store.controlTree().workspaces[0].sessions.last?.hud?.pane, "right")
+        let rightSize = HudLayout.panelSize(for: spec, pane: server.paneMetrics(for: session, pane: .right))
+        let leftSize = HudLayout.panelSize(for: spec, pane: server.paneMetrics(for: session, pane: .left))
+        XCTAssertEqual(session.overlaySizePercent, rightSize.widthPercent)
+        XCTAssertNotEqual(rightSize.widthPercent, leftSize.widthPercent)
+    }
+
+    func testHudPaneMetricsFallBackToADeckHostedSurfaceBeforeTheFrameCacheFills() throws {
+        let (_, session) = try makeHudSession()
+        let surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 640, height: 480),
+                              styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = surface
+        session.surface = surface
+        session.hudPaneFrames = HudPaneFrames()
+        addTeardownBlock { window.orderOut(nil) }
+
+        let metrics = server.paneMetrics(for: session, pane: .left)
+
+        XCTAssertEqual(metrics.paneWidth, 640, accuracy: 0.001)
+        XCTAssertEqual(metrics.paneHeight, 480, accuracy: 0.001)
+    }
+
+    func testHudPaneMetricsDoNotUseAZoomOrDashboardHostedSurface() throws {
+        let (_, session) = try makeHudSession()
+        let surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 640, height: 480),
+                              styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = surface
+        surface.suppressFocusChange = true
+        session.surface = surface
+        session.hudPaneFrames = HudPaneFrames()
+        addTeardownBlock { window.orderOut(nil) }
+
+        let metrics = server.paneMetrics(for: session, pane: .left)
+
+        XCTAssertEqual(metrics.paneWidth, 0)
+        XCTAssertEqual(metrics.paneHeight, 0)
+    }
+
+    func testHudPaneOpenRejectionsAndMissingSplitUpdate() throws {
+        let (_, session) = try makeHudSession()
+        session.hasSplit = true
+        session.isSplit = false
+        session.splitPaneIdentity = UUID()
+
+        let hidden = server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "working"),
+                                    placement: ControlHudPlacement(pane: .right))
+        XCTAssertEqual(hidden.error, PaneOverlayError.paneNotVisible)
+        XCTAssertFalse(session.hudActive)
+
+        let unknown = server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "working"),
+                                     placement: ControlHudPlacement(paneID: "missing-token"))
+        XCTAssertEqual(unknown.error, "unknown pane id: missing-token")
+        XCTAssertFalse(session.hudActive)
+
+        session.hasSplit = false
+        session.splitPaneIdentity = nil
+        XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "open")).ok)
+        let noSplit = server.updateHud(session.id.uuidString, window: nil, spec: HudSpec(message: "update"),
+                                       placement: ControlHudPlacement(pane: .right))
+        XCTAssertEqual(noSplit.error, "session has no split")
+    }
+
+    func testHiddenPaneHudCanUpdateAndReturnsWhenThePaneIsShown() throws {
+        let (store, session) = try makeHudSession()
+        let rightIdentity = UUID()
+        session.splitPaneIdentity = rightIdentity
+        session.hasSplit = true
+        session.isSplit = true
+
+        XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "first"),
+                                     placement: ControlHudPlacement(pane: .right)).ok)
+        store.toggleSplit(session.id)
+        XCTAssertFalse(session.rendersPane(.right))
+
+        let updated = server.updateHud(session.id.uuidString, window: nil, spec: HudSpec(message: "second"),
+                                       placement: ControlHudPlacement(pane: .right))
+        XCTAssertTrue(updated.ok, updated.error ?? "")
+        XCTAssertTrue(session.hudActive)
+        XCTAssertEqual(session.hudPaneIdentity, rightIdentity)
+
+        store.toggleSplit(session.id)
+        XCTAssertTrue(session.rendersPane(.right))
+        XCTAssertEqual(store.controlTree().workspaces[0].sessions.last?.hud?.pane, "right")
+    }
+
+    func testHudUpdateReplacesPaneScopeAndUnknownIDUsesTheRoleFallback() throws {
+        let (_, session) = try makeHudSession()
+        let rightIdentity = UUID()
+        session.splitPaneIdentity = rightIdentity
+        session.hasSplit = true
+        session.isSplit = true
+
+        XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "first"),
+                                     placement: ControlHudPlacement(pane: .right)).ok)
+        let fallback = server.updateHud(session.id.uuidString, window: nil, spec: HudSpec(message: "second"),
+                                        placement: ControlHudPlacement(pane: .right, paneID: "unknown"))
+        XCTAssertTrue(fallback.ok, fallback.error ?? "")
+        XCTAssertEqual(session.hudPaneIdentity, rightIdentity)
+
+        let sessionWide = server.updateHud(session.id.uuidString, window: nil, spec: HudSpec(message: "third"))
+        XCTAssertTrue(sessionWide.ok, sessionWide.error ?? "")
+        XCTAssertNil(session.hudPaneIdentity)
+    }
+
+    func testScratchPaneIDCannotAnchorAHud() throws {
+        let (_, session) = try makeHudSession()
+        session.scratchSurface = SessionRestoreTestSurface(paneToken: "scratch-token")
+
+        let response = server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "working"),
+                                      placement: ControlHudPlacement(paneID: "scratch-token"))
+
+        XCTAssertEqual(response.error, "hud pane must be left or right")
+        XCTAssertFalse(session.hudActive)
     }
 
     // a hud must never cover the session it is about, which is why `overlay resize --full` is refused; a

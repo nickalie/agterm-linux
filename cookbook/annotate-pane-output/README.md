@@ -6,7 +6,7 @@ The sibling [annotate-claude-replies](../annotate-claude-replies/) recipe does t
 
 ## What it does
 
-One chord takes the text in front of you, opens it in revdiff inside an overlay on that session, and waits. You put a note on any line you want to ask about. On quit the notes are pasted at that session's prompt, unsent — or left on the clipboard when the chord came from a split's right pane or the scratch, which `session paste` cannot address.
+One chord takes the text in front of you, opens it in revdiff inside an overlay on that session, and waits. You put a note on any line you want to ask about. On quit the notes are pasted at that session's prompt, unsent — or left on the clipboard when the chord came from a split's right pane or the scratch, which this recipe's `session paste` call does not address.
 
 What gets captured is whatever you selected, or the pane's last 50 lines when nothing is selected. So it works on an agent's answer, but equally on a stack trace, a failing test run, a `terraform plan`, or a config someone just `cat`-ed.
 
@@ -74,7 +74,7 @@ The text goes to a scratch file and revdiff opens on it with `--only`, which is 
 
 The reply goes through the **clipboard**, saved and restored around the paste. That is not a shortcut. `session type` sends real keystrokes, so a multi-line reply submits itself one line at a time — the first line goes as a command and the rest land wherever that left you. `session paste` is the only bracketed-paste path the control API exposes, and it reads the system clipboard. Against a pty with DECSET 2004 on, `type` produced bare lines and `paste` produced one `^[[200~…^[[201~` block. So the reply arrives whole and unsent — with the caveat in *Limits*. The plain text that was on the clipboard is put back afterwards.
 
-`session paste` takes no `--pane`. It runs on the session's main surface, so a chord fired from a split's right pane or from the scratch would drop the notes at a different prompt than the one you annotated. Those two panes get the notes on the clipboard and a banner saying so, for a manual ⌘V. The capture side has no such limit: `session text` does take `--pane`, so what you annotate is always the pane you pressed in.
+The script calls `session paste` without `--pane`, so it runs on the session's main surface and a chord fired from a split's right pane or from the scratch would drop the notes at a different prompt than the one you annotated. Those two panes get the notes on the clipboard and a banner saying so, for a manual ⌘V. The capture side has no such limit: `session text` does take `--pane`, so what you annotate is always the pane you pressed in.
 
 A nonzero exit from the overlay call is ambiguous — agtermctl can refuse before revdiff ever starts — so the script carries agtermctl's own sentence out rather than reporting the status as revdiff's.
 

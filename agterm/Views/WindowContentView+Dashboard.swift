@@ -42,12 +42,10 @@ extension WindowContentView {
     }
 
     /// "Dashboard", plus "— <window name>" for a custom window name (auto "window N" omitted, like the
-    /// normal `windowTitle`). No cwd subtitle — the grid has no single active session to source one from.
+    /// `WindowTitleSync`). No cwd subtitle — the grid has no single active session to source one from.
     private var dashboardWindowTitle: String {
-        guard let info = library.windows.first(where: { $0.id == windowID }), info.hasCustomName else {
-            return "Dashboard"
-        }
-        return "Dashboard — \(info.name)"
+        guard let name = library.customWindowName(for: windowID) else { return "Dashboard" }
+        return "Dashboard — \(name)"
     }
 
     /// The stripped chrome above the OPEN grid, the counterpart of `zoomTitlebar`: in hidden-toolbar mode
@@ -109,7 +107,7 @@ extension WindowContentView {
                 captionBackground: terminalColor,
                 pillColor: dashboardPillColor,
                 pillTextColor: dashboardPillTextColor,
-                focusAllowed: pick.pending == nil,
+                focusAllowed: !pick.modalPending,
                 showsTopHairline: toolbarMode != .hidden,
                 onClick: { clickDashboardMember($0) },
                 onSelect: { selectDashboardMember($0) },

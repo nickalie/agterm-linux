@@ -270,6 +270,7 @@ public final class AppStore {
                             quickVisible: () -> Bool? = { nil },
                             zoomedSurface: () -> String? = { nil },
                             pickPending: () -> String? = { nil },
+                            askPending: () -> String? = { nil },
                             dashboardMembers: () -> [String]? = { nil },
                             dashboardHighlighted: () -> String? = { nil },
                             dashboardFontSize: () -> Double? = { nil },
@@ -305,6 +306,7 @@ public final class AppStore {
                                           overlaySizePercent: session.programOverlayActive
                                               ? session.overlaySizePercent : nil,
                                           paneOverlays: paneOverlays(session), hud: hudNode(session),
+                                          ask: session.askPending.map { ControlSessionAsk(id: $0.id, pane: session.askTargetPane?.rawValue) },
                                           scratch: session.scratchActive, flagged: session.flagged,
                                           commandWait: (session.initialCommand != nil && session.commandWait) ? true : nil,
                                           splitCommandWait: (session.splitInitialCommand != nil && session.splitCommandWait)
@@ -346,7 +348,7 @@ public final class AppStore {
                            dashboardHighlighted: dashboardHighlighted(),
                            dashboardFontSize: dashboardFontSize(),
                            dashboardFontMode: dashboardFontMode(),
-                           pickPending: pickPending(), app: app)
+                           pickPending: pickPending(), askPending: askPending(), app: app)
     }
 
     /// The tree's `paneOverlays`: the panes covered by their own overlay, omitted when neither is.
@@ -363,7 +365,8 @@ public final class AppStore {
                               spinner: spec.spinner?.rawValue ?? HudSpinner.noneName,
                               backgroundColor: spec.backgroundColor, textColor: spec.textColor,
                               sizePercent: session.overlaySizePercent,
-                              heightPercent: session.hudHeightPercent, position: spec.position.rawValue)
+                              heightPercent: session.hudHeightPercent, position: spec.position.rawValue,
+                              pane: session.hudTargetPane?.rawValue)
     }
 
     /// Creates a workspace and appends it. With `revealNewWorkspace` (the default) and the filter ON, the new
@@ -492,7 +495,9 @@ public final class AppStore {
         guard let location = location(ofSession: sessionID) else { return }
         let wasActive = selectedSessionID == sessionID
         let workspace = workspaces[location.workspaceIndex]
-        let removed = workspaces[location.workspaceIndex].sessions.remove(at: location.sessionIndex)
+        let removed = workspace.sessions[location.sessionIndex]
+        removed.cancelPendingAsk()
+        workspaces[location.workspaceIndex].sessions.remove(at: location.sessionIndex)
         emitSessionClosed(removed, workspace: workspace.id)
         dropLaunchPanes([removed])
         recordRecentClosedSession(removed, workspaceID: workspace.id, workspaceName: workspace.name,
@@ -531,7 +536,10 @@ public final class AppStore {
         // record the membership BEFORE `dropFocusMember` below prunes it, so Reopen Closed Item can re-mark it
         recordRecentClosedWorkspace(workspace, selectedSessionID: removingActive ? selectedSessionID : nil,
                                     focusMember: focusedWorkspaceIDs.contains(workspaceID))
-        for session in workspace.sessions { emitSessionClosed(session, workspace: workspace.id) }
+        for session in workspace.sessions {
+            session.cancelPendingAsk()
+            emitSessionClosed(session, workspace: workspace.id)
+        }
         if workspace.sessions.isEmpty { scheduleTreeChanged() }
         finalizePaneIdentities(workspace.sessions)
         dropLaunchPanes(workspace.sessions)

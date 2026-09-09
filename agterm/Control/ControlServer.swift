@@ -160,6 +160,12 @@ final class ControlServer {
         self.identity = identity
         self.resolver = ControlTargetResolver(library: library)
         self.socketPath = socketPath ?? ControlServer.defaultSocketPath()
+        AskRegistry.shared.resolveOwner = { [weak library] owner in
+            switch owner {
+            case .window(let id): PickRegistry.shared.controller(for: id)?.pendingAsk
+            case .session(let id, let window): library?.store(for: window)?.session(withID: id)?.askPending
+            }
+        }
         // ownership is decided HERE, not in `start()`. The launch window's surfaces are built during the
         // initial render pass and SNAPSHOT `AGTERM_SOCKET` into the pty environment (`GhosttySurfaceView.env`
         // is a `let` read at spawn), while `start()` runs from the scene's `.task` afterwards. Deciding late
@@ -509,6 +515,8 @@ final class ControlServer {
             return setDebugAppearance(args: request.args)
         case .pickOpen, .pickResult, .pickCancel:
             preconditionFailure("pick command returned nil from ControlDispatcher")
+        case .askOpen, .askResult, .askCancel:
+            preconditionFailure("ask command returned nil from ControlDispatcher")
         case .sessionHudOpen, .sessionHudUpdate, .sessionHudClose:
             preconditionFailure("hud command returned nil from ControlDispatcher")
         }
@@ -643,8 +651,8 @@ final class ControlServer {
                 controller.close()
                 return ControlResponse(ok: true)
             }
-            if PickRegistry.shared.controller(for: windowID)?.pending != nil {
-                return ControlResponse(ok: false, error: "pick pending")
+            if let error = PickRegistry.shared.controller(for: windowID)?.pendingModalError {
+                return ControlResponse(ok: false, error: error)
             }
             var resolvedTargets: [ResolvedDashboardTarget] = []
             var unresolved: [String] = []
@@ -745,6 +753,7 @@ final class ControlServer {
             // resolved through the projected window's registry entry on every tree build, and tree-only:
             // window.list is cache-backed, so mirroring a GUI-resolved pick there would go stale.
             pickPending: { windowID.flatMap { PickRegistry.shared.controller(for: $0)?.pending?.id } },
+            askPending: { windowID.flatMap { PickRegistry.shared.controller(for: $0)?.pendingAsk?.id } }, // GUI asks only
             dashboardMembers: {
                 guard let dashboard, dashboard.isOpen else { return nil }
                 return dashboard.members.map(\.controlRef)
