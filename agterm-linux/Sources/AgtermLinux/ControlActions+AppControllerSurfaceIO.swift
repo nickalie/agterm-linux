@@ -95,10 +95,9 @@ extension AppController {
             let surface: GhosttySurface?
             switch options.pane {
             case nil: surface = onScreenSurface(for: id)
-            case "left": surface = surfaces[id]
-            case "right": surface = splitSurfaces[id]
-            case "scratch": surface = scratchSurfaces[id]
-            default: surface = nil
+            case .left: surface = surfaces[id]
+            case .right: surface = splitSurfaces[id]
+            case .scratch: surface = scratchSurfaces[id]
             }
             guard let text = surface?.readScreenText(all: options.all, lines: options.lines) else {
                 return err("session not realized")

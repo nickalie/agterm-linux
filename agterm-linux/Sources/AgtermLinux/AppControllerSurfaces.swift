@@ -596,6 +596,9 @@ extension AppController {
             gtk_widget_set_child_visible(W(stack), presentation.childVisible ? 1 : 0)
         }
         updateFloatingOverlayVisibility(activeID: active?.id)
+        syncSessionAsks()
+        // a visible session dialog owns its region's keyboard, so the deck must not grab the pane back
+        if focus, let active, sessionAskWantsFocus(active.id) { updateToggleIcons(); return }
         if focus, let active {
             if active.programOverlayActive {
                 overlaySurfaces[active.id]?.grabFocus()
@@ -619,7 +622,11 @@ extension AppController {
     /// panel leaves room for it, and centers on that axis when it does not, so a panel can never overhang.
     func applyFloatingOverlayGeometry(_ frame: OpaquePointer?, session s: Session) {
         guard let frame, let overlay = deckOverlay, let pct = s.overlaySizePercent else { return }
-        let dw = gtk_widget_get_width(W(overlay)), dh = gtk_widget_get_height(W(overlay))
+        let deck = (width: gtk_widget_get_width(W(overlay)), height: gtk_widget_get_height(W(overlay)))
+        // a pane-scoped HUD measures and places against that pane's live bounds; the whole deck otherwise
+        let bounds = s.hudTargetPane.flatMap { paneBoundsInDeck(session: s.id, pane: $0) }
+        let dw = bounds.map { Int32($0.width) } ?? deck.width
+        let dh = bounds.map { Int32($0.height) } ?? deck.height
         guard let heightPercent = s.hudHeightPercent else {
             centerFloatingOverlay(frame)
             gtk_widget_set_size_request(W(frame), max(Int32(240), dw * Int32(pct) / 100),
@@ -632,12 +639,17 @@ extension AppController {
                                                   band: position.verticalBand)
         let horizontal = Self.floatingOverlayAnchor(extent: dw, sizePercent: pct,
                                                     band: position.horizontalBand)
-        gtk_widget_set_valign(W(frame), vertical.align(start: GTK_ALIGN_START, end: GTK_ALIGN_END))
-        gtk_widget_set_margin_top(W(frame), vertical.leadingMargin)
-        gtk_widget_set_margin_bottom(W(frame), vertical.trailingMargin)
-        gtk_widget_set_halign(W(frame), horizontal.align(start: GTK_ALIGN_START, end: GTK_ALIGN_END))
-        gtk_widget_set_margin_start(W(frame), horizontal.leadingMargin)
-        gtk_widget_set_margin_end(W(frame), horizontal.trailingMargin)
+        // GtkOverlay measures a child's margins from the DECK's edges, so a pane-scoped panel carries the
+        // pane's own offset in the margin. Aligning to one edge on each axis is what makes both offsets
+        // expressible: the leading margin then reads as an absolute position rather than a gap.
+        let inset = bounds.map { (x: Int32($0.x), y: Int32($0.y)) } ?? (x: 0, y: 0)
+        let panelWidth = dw * Int32(pct) / 100, panelHeight = dh * Int32(heightPercent) / 100
+        gtk_widget_set_valign(W(frame), GTK_ALIGN_START)
+        gtk_widget_set_margin_top(W(frame), inset.y + vertical.offset(extent: dh, panel: panelHeight))
+        gtk_widget_set_margin_bottom(W(frame), 0)
+        gtk_widget_set_halign(W(frame), GTK_ALIGN_START)
+        gtk_widget_set_margin_start(W(frame), inset.x + horizontal.offset(extent: dw, panel: panelWidth))
+        gtk_widget_set_margin_end(W(frame), 0)
     }
 
     /// One axis' resolved placement. GTK reaches macOS' offset-from-center through alignment plus the edge
@@ -646,14 +658,13 @@ extension AppController {
         let band: HudPosition.Band
         let margin: Int32
 
-        var leadingMargin: Int32 { band == .leading ? margin : 0 }
-        var trailingMargin: Int32 { band == .trailing ? margin : 0 }
-
-        func align(start: GtkAlign, end: GtkAlign) -> GtkAlign {
+        /// The panel's leading edge within `extent`, so a caller can express the placement as one absolute
+        /// offset and add the pane's own inset to it.
+        func offset(extent: Int32, panel: Int32) -> Int32 {
             switch band {
-            case .leading: return start
-            case .middle: return GTK_ALIGN_CENTER
-            case .trailing: return end
+            case .leading: return margin
+            case .middle: return max(0, (extent - panel) / 2)
+            case .trailing: return max(0, extent - panel - margin)
             }
         }
     }

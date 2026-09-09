@@ -87,6 +87,8 @@ extension AppController: ControlActions {
             scratchFontSize: { [weak self] in self?.scratchSurfaces[$0.id]?.currentFontSize() },
             quickVisible: { [weak self] in self?.quickVisible ?? false },
             zoomedSurface: { [weak self] in self?.terminalZoom.target?.controlID },
+            pickPending: { [weak self] in self?.pickController.pending?.id },
+            askPending: { [weak self] in self?.pickController.pendingAsk?.id },   // GUI asks only
             dashboardMembers: { [weak self] in self?.dashboard.isOpen == true
                 ? self?.dashboard.members.map(\.controlRef) : nil },
             dashboardHighlighted: { [weak self] in self?.dashboard.highlighted?.controlRef },
@@ -578,28 +580,16 @@ extension AppController: ControlActions {
             result: ControlResult(text: notes.joined(separator: "; ")))
     }
 
-    func font(_ target: String?, window: String?, pane: String?, action: String) -> ControlResponse {
+    func font(_ target: String?, window: String?, pane: StatusPane?, action: String) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            let surface: GhosttySurface?
-            switch pane {
-            case nil, "left": surface = surfaces[id]
-            case "right":
-                guard let split = splitSurfaces[id] else {
-                    return err("session has no split pane")
-                }
-                surface = split
-            case "scratch":
-                guard let scratch = scratchSurfaces[id] else {
-                    return err("session has no scratch terminal")
-                }
-                surface = scratch
-            case .some(let value): return err("invalid pane: \(value)")
+            switch paneSurface(id, pane: pane) {
+            case .failure(let response): return response
+            case .success(let surface):
+                surface.performBindingAction(action)
+                return ok(id)
             }
-            guard let surface else { return err("session not realized") }
-            surface.performBindingAction(action)
-            return ok(id)
         }
     }
 
@@ -781,10 +771,9 @@ extension AppController: ControlActions {
             for _ in 0..<12 {
                 while g_main_context_iteration(nil, 0) != 0 {}
                 let surface: GhosttySurface? = switch options.pane {
-                case nil, "left": surfaces[id]
-                case "right": splitSurfaces[id]
-                case "scratch": scratchSurfaces[id]
-                case .some: nil
+                case nil, .left: surfaces[id]
+                case .right: splitSurfaces[id]
+                case .scratch: scratchSurfaces[id]
                 }
                 if let surface {
                     surface.inject(text: options.text)
@@ -812,24 +801,44 @@ extension AppController: ControlActions {
         }
     }
 
-    func pasteSession(_ target: String?, window: String?) -> ControlResponse {
-        performSessionBinding(target, action: "paste_from_clipboard")
+    func pasteSession(_ target: String?, window: String?, pane: StatusPane?) -> ControlResponse {
+        performSessionBinding(target, pane: pane, action: "paste_from_clipboard")
     }
 
     func selectAllSession(_ target: String?, window: String?) -> ControlResponse {
-        performSessionBinding(target, action: "select_all")
+        performSessionBinding(target, pane: nil, action: "select_all")
     }
 
-    private func performSessionBinding(_ target: String?, action: String) -> ControlResponse {
+    private func performSessionBinding(_ target: String?, pane: StatusPane?, action: String) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
-            guard let surface = focusedSurface(for: id), surface.isRealized else {
-                return err("session not realized")
+            switch paneSurface(id, pane: pane) {
+            case .failure(let response): return response
+            case .success(let surface):
+                guard surface.isRealized else { return err("session not realized") }
+                surface.performBindingAction(action)
+                return ok(id)
             }
-            surface.performBindingAction(action)
-            return ok(id)
         }
+    }
+
+    /// The surface a pane-addressed command acts on. An omitted pane keeps each command's own default: the
+    /// focused pane, which is what a user pressing the same binding would reach.
+    func paneSurface(_ id: UUID, pane: StatusPane?) -> ResolveResponse<GhosttySurface> {
+        let surface: GhosttySurface?
+        switch pane {
+        case nil: surface = focusedSurface(for: id)
+        case .left: surface = surfaces[id]
+        case .right:
+            guard let split = splitSurfaces[id] else { return .failure(err("session has no split pane")) }
+            surface = split
+        case .scratch:
+            guard let scratch = scratchSurfaces[id] else { return .failure(err("session has no scratch terminal")) }
+            surface = scratch
+        }
+        guard let surface else { return .failure(err("session not realized")) }
+        return .success(surface)
     }
 
     func searchSession(_ target: String?, window: String?,

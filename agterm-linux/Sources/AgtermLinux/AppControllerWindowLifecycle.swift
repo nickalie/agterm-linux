@@ -54,6 +54,12 @@ extension AppController {
         commitBackgroundOpacity()
         dismissSessionPicker()
         dismissControlPick(retainResultThroughRegistry: true)
+        // an id poll must read `cancelled` the moment the owner leaves, not block on a dialog nobody can
+        // answer any more; the store cancels a session ask on close, the window's own sessions need this.
+        cancelGuiAsk()
+        for workspace in store.workspaces {
+            for session in workspace.sessions { session.cancelPendingAsk() }
+        }
         // EVERY dialog this window owns is dismissed here, or it outlives the widget tree and keeps the
         // controller alive with it — a bare toplevel (the theme picker, the palette) is not destroyed with
         // its transient parent under GTK4, and a hosted AdwDialog holds the same `passRetained` on "closed".

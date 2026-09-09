@@ -17,10 +17,14 @@ extension AppController {
             guard let text = req.args?.text else {
                 return ControlResponse(ok: false, error: "session.type requires text")
             }
-            return typeSessionSync(req.target, window: req.args?.window,
-                                   options: ControlSessionTypeOptions(text: text,
-                                                                      select: req.args?.select ?? false,
-                                                                      pane: req.args?.pane))
+            switch LinuxControlDispatcher.parseSurfacePane(req.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return typeSessionSync(req.target, window: req.args?.window,
+                                       options: ControlSessionTypeOptions(text: text,
+                                                                          select: req.args?.select ?? false,
+                                                                          pane: pane))
+            }
         case .sessionSearch:
             guard let id = resolveSession(req.target) else { return sessionResolveError(req.target) }
             if req.args?.to == "close" {

@@ -10,11 +10,7 @@ import agtermCore
 /// Linux-driven API surface to `agtermCore`.
 @MainActor
 struct LinuxControlDispatcher {
-    private let actions: AppController
-
-    init(actions: AppController) {
-        self.actions = actions
-    }
+    let actions: AppController
 
     func dispatch(_ request: ControlRequest) -> ControlResponse? {
         switch request.cmd {
@@ -60,6 +56,10 @@ struct LinuxControlDispatcher {
             return dispatchWindowCommand(request)
         case .pickOpen, .pickResult, .pickCancel:
             return dispatchPickCommand(request)
+        case .sessionHudOpen, .sessionHudUpdate, .sessionHudClose:
+            return dispatchHudCommand(request)
+        case .askOpen, .askResult, .askCancel:
+            return dispatchAskCommand(request)
         case .dashboard:
             return dispatchDashboard(request)
         default:
@@ -222,7 +222,7 @@ struct LinuxControlDispatcher {
         }
     }
 
-    private func containsControlCharacters(_ text: String) -> Bool {
+    func containsControlCharacters(_ text: String) -> Bool {
         text.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
     }
 
@@ -331,12 +331,10 @@ struct LinuxControlDispatcher {
             if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
                 return ControlResponse(ok: false, error: "invalid color (expected #rrggbb)")
             }
-            var pane: StatusPane?
-            if let rawPane = request.args?.pane {
-                guard let parsed = StatusPane(rawValue: rawPane) else {
-                    return ControlResponse(ok: false, error: "--pane must be left, right, or scratch")
-                }
-                pane = parsed
+            let pane: StatusPane?
+            switch parseStatusPane(request.args?.pane) {
+            case .pane(let parsed): pane = parsed
+            case .rejected(let response): return response
             }
             let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
                                                     autoReset: request.args?.autoReset,
@@ -375,13 +373,9 @@ struct LinuxControlDispatcher {
                                    error: "invalid restore mode: \(args?.mode ?? "") (set|none|clear)")
         }
         let pane: StatusPane?
-        if let rawPane = args?.pane {
-            guard let parsed = StatusPane(rawValue: rawPane) else {
-                return ControlResponse(ok: false, error: "--pane must be left, right, or scratch")
-            }
-            pane = parsed
-        } else {
-            pane = nil
+        switch parseStatusPane(args?.pane) {
+        case .pane(let parsed): pane = parsed
+        case .rejected(let response): return response
         }
         return actions.setSessionRestore(request.target, window: args?.window,
                                          update: ControlSessionRestoreUpdate(
@@ -472,7 +466,11 @@ struct LinuxControlDispatcher {
         case .sessionCopy:
             return actions.copySessionSelection(request.target, window: request.args?.window)
         case .sessionPaste:
-            return actions.pasteSession(request.target, window: request.args?.window)
+            switch parseStatusPane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return actions.pasteSession(request.target, window: request.args?.window, pane: pane)
+            }
         case .sessionSelectAll:
             return actions.selectAllSession(request.target, window: request.args?.window)
         case .surfaceZoom:
@@ -556,17 +554,23 @@ struct LinuxControlDispatcher {
         }
     }
 
+    private func dispatchFontCommand(_ request: ControlRequest) -> ControlResponse {
+        let action = switch request.cmd {
+        case .fontInc: FontBindingAction.increase
+        case .fontDec: FontBindingAction.decrease
+        default: FontBindingAction.reset
+        }
+        switch Self.parseSurfacePane(request.args?.pane) {
+        case .rejected(let response): return response
+        case .pane(let pane):
+            return actions.font(request.target, window: request.args?.window, pane: pane, action: action)
+        }
+    }
+
     private func dispatchAppCommand(_ request: ControlRequest) -> ControlResponse {
         switch request.cmd {
-        case .fontInc:
-            return actions.font(request.target, window: request.args?.window, pane: request.args?.pane,
-                                action: FontBindingAction.increase)
-        case .fontDec:
-            return actions.font(request.target, window: request.args?.window, pane: request.args?.pane,
-                                action: FontBindingAction.decrease)
-        case .fontReset:
-            return actions.font(request.target, window: request.args?.window, pane: request.args?.pane,
-                                action: FontBindingAction.reset)
+        case .fontInc, .fontDec, .fontReset:
+            return dispatchFontCommand(request)
         case .keymapReload:
             return actions.reloadKeymap()
         case .keymapList:
@@ -684,10 +688,13 @@ struct LinuxControlDispatcher {
         switch parseBufferExtent(request.args) {
         case .rejected(let response): return response
         case .extent(let all, let lines):
-            return actions.readSessionText(request.target, window: request.args?.window,
-                                           options: ControlSessionTextOptions(pane: request.args?.pane,
-                                                                              all: all,
-                                                                              lines: lines))
+            switch Self.parseSurfacePane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane):
+                return actions.readSessionText(request.target, window: request.args?.window,
+                                               options: ControlSessionTextOptions(pane: pane, all: all,
+                                                                                  lines: lines))
+            }
         }
     }
 
@@ -789,18 +796,37 @@ struct LinuxControlDispatcher {
                                     fontMode: mode, mru: false)
     }
 
-    private enum OverlayPaneSelection {
-        case pane(OverlayPane?)
+    /// The outcome of parsing a `--pane` selector: the pane, nil when absent, or the rejection the arm
+    /// returns as-is. Mirrors the upstream dispatcher's `PaneSelection`.
+    enum PaneSelection<Pane> {
+        case pane(Pane?)
         case rejected(ControlResponse)
     }
 
-    /// The `session.overlay` `--pane` selector: nil when absent, the parsed pane when the spelling is
-    /// accepted, and the pinned rejection otherwise. Mirrors the upstream dispatcher's `parseOverlayPane`.
-    private func parseOverlayPane(_ raw: String?) -> OverlayPaneSelection {
+    func parsePane<Pane>(_ raw: String?, error: String,
+                         parse: (String) -> Pane?) -> PaneSelection<Pane> {
         guard let raw else { return .pane(nil) }
-        guard let parsed = OverlayPane(controlName: raw) else {
-            return .rejected(ControlResponse(ok: false, error: PaneOverlayError.invalidPane))
+        guard let parsed = parse(raw) else { return .rejected(ControlResponse(ok: false, error: error)) }
+        return .pane(parsed)
+    }
+
+    /// The role selector (`session.status`, `session.restore`, `session.paste`). Parses through
+    /// `controlName`, so the documented `primary`/`split`/`top`/`bottom` aliases resolve.
+    private func parseStatusPane(_ raw: String?) -> PaneSelection<StatusPane> {
+        parsePane(raw, error: "--pane must be left, right, or scratch") { StatusPane(controlName: $0) }
+    }
+
+    /// The surface I/O selector (`session.type`, `session.text`, `font.*`), which keeps its own rejection.
+    static func parseSurfacePane(_ raw: String?) -> PaneSelection<StatusPane> {
+        guard let raw else { return .pane(nil) }
+        guard let parsed = StatusPane(controlName: raw) else {
+            return .rejected(ControlResponse(ok: false, error: "invalid pane: \(raw)"))
         }
         return .pane(parsed)
+    }
+
+    /// The `session.overlay` `--pane` selector: `scratch` is rejected, there being no scratch pane to cover.
+    private func parseOverlayPane(_ raw: String?) -> PaneSelection<OverlayPane> {
+        parsePane(raw, error: PaneOverlayError.invalidPane) { OverlayPane(controlName: $0) }
     }
 }

@@ -8,6 +8,15 @@ import agtermCore
 /// helper reads. Mirrors `agterm/Control/ControlServer+Hud.swift`.
 extension AppController {
     func openHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse {
+        openHud(target, window: window, spec: spec, placement: ControlHudPlacement())
+    }
+
+    func updateHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse {
+        updateHud(target, window: window, spec: spec, placement: ControlHudPlacement())
+    }
+
+    func openHud(_ target: String?, window: String?, spec: HudSpec,
+                 placement: ControlHudPlacement) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
@@ -15,13 +24,22 @@ extension AppController {
             guard let command = Self.hudHelperCommand() else {
                 return err("hud helper is not bundled in this build")
             }
+            let paneIdentity: UUID?
+            let pane: OverlayPane?
+            switch LinuxPanePlacement.resolve(placement.pane, paneID: placement.paneID, in: session,
+                                              requireVisible: true,
+                                              invalidPaneError: "hud pane must be left or right") {
+            case .resolved(let identity, let target): (paneIdentity, pane) = (identity, target)
+            case .rejected(let response): return response
+            }
             let file = Self.hudBodyFile(for: id)
             // measured ONCE and threaded through, so the sizing and the header describe the same panel.
-            let metrics = hudPaneMetrics()
+            let metrics = hudPaneMetrics(for: session, pane: pane)
             // open FIRST, write second: replacing a live HUD tears its surface down, and that teardown
             // deletes the body file at this same per-session path.
             guard store.openHud(id, command: command, spec: spec, file: file,
-                                size: HudLayout.panelSize(for: spec, pane: metrics)) else {
+                                size: HudLayout.panelSize(for: spec, pane: metrics),
+                                paneIdentity: paneIdentity) else {
                 return err("overlay already open")
             }
             guard writeHudBody(session, pane: metrics) else {
@@ -35,7 +53,8 @@ extension AppController {
 
     /// Rewrites the live HUD's body and re-sizes the panel in place, repainting with no re-spawn. A failed
     /// write rolls the store back: the panel still paints the old message, and `tree` must not claim the new.
-    func updateHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse {
+    func updateHud(_ target: String?, window: String?, spec: HudSpec,
+                   placement: ControlHudPlacement) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
@@ -44,11 +63,22 @@ extension AppController {
                   let previousHeight = session.hudHeightPercent else {
                 return err(OverlayHudError.noHud)
             }
-            let metrics = hudPaneMetrics()
-            store.updateHud(id, spec: spec, size: HudLayout.panelSize(for: spec, pane: metrics))
+            let paneIdentity: UUID?
+            let pane: OverlayPane?
+            switch LinuxPanePlacement.resolve(placement.pane, paneID: placement.paneID, in: session,
+                                              requireVisible: false,
+                                              invalidPaneError: "hud pane must be left or right") {
+            case .resolved(let identity, let target): (paneIdentity, pane) = (identity, target)
+            case .rejected(let response): return response
+            }
+            let previousPaneIdentity = session.hudPaneIdentity
+            let metrics = hudPaneMetrics(for: session, pane: pane)
+            store.updateHud(id, spec: spec, size: HudLayout.panelSize(for: spec, pane: metrics),
+                            paneIdentity: paneIdentity)
             guard writeHudBody(session, pane: metrics) else {
                 store.updateHud(id, spec: previous,
-                                size: HudPanelSize(widthPercent: previousSize, heightPercent: previousHeight))
+                                size: HudPanelSize(widthPercent: previousSize, heightPercent: previousHeight),
+                                paneIdentity: previousPaneIdentity)
                 return err(OverlayHudError.writeFailed)
             }
             resizeFloatingOverlayFrame(for: id)
@@ -66,25 +96,38 @@ extension AppController {
         }
     }
 
-    /// The pane the panel is laid out over: the deck overlay, which is also what sizes the floating frame,
-    /// so the percentage the store resolved and the widget's own size cannot disagree.
+    /// The area the panel is laid out over: one pane's live bounds when the caller scoped the HUD, else the
+    /// deck overlay, which is also what sizes the floating frame, so the percentage the store resolved and
+    /// the widget's own size cannot disagree.
     ///
     /// Padding is reported as ZERO rather than guessed. macOS reads its bundled `window-padding-x/y`;
     /// Linux ships neither, so the value is libghostty's own default and this layer does not know it.
     /// `PaneMetrics` documents zero as the honest answer, and the grid it yields is a column or two wide —
     /// inside the divergence the estimated cell already carries.
-    func hudPaneMetrics() -> PaneMetrics {
+    func hudPaneMetrics(for session: Session? = nil, pane: OverlayPane? = nil) -> PaneMetrics {
         let cell = Self.hudCellSize(family: linuxSettingsStore().load().fontFamily,
                                     size: hudBaseFontSize(),
                                     context: gtk_widget_get_pango_context(W(window)))
-        var paneWidth = 0.0
-        var paneHeight = 0.0
-        if let overlay = deckOverlay {
-            paneWidth = Double(gtk_widget_get_width(W(overlay)))
-            paneHeight = Double(gtk_widget_get_height(W(overlay)))
+        var area = (width: 0.0, height: 0.0)
+        if let session, let pane, let bounds = paneBoundsInDeck(session: session.id, pane: pane) {
+            area = (bounds.width, bounds.height)
+        } else if let overlay = deckOverlay {
+            area = (Double(gtk_widget_get_width(W(overlay))), Double(gtk_widget_get_height(W(overlay))))
         }
         return PaneMetrics(cellWidth: cell.width, cellHeight: cell.height,
-                           paneWidth: paneWidth, paneHeight: paneHeight)
+                           paneWidth: area.width, paneHeight: area.height)
+    }
+
+    /// A pane's allocation in the deck overlay's own coordinates, which is what `GtkOverlay` margins are
+    /// measured in. Nil until the widget has been laid out, where the caller falls back to the whole deck.
+    func paneBoundsInDeck(session id: UUID, pane: OverlayPane) -> HudPaneFrame? {
+        guard let overlay = deckOverlay else { return nil }
+        guard let surface = pane == .left ? surfaces[id] : splitSurfaces[id] else { return nil }
+        var rect = graphene_rect_t()
+        guard gtk_widget_compute_bounds(W(surface.glArea), W(overlay), &rect) != 0 else { return nil }
+        guard rect.size.width > 0, rect.size.height > 0 else { return nil }
+        return HudPaneFrame(x: Double(rect.origin.x), y: Double(rect.origin.y),
+                            width: Double(rect.size.width), height: Double(rect.size.height))
     }
 
     private func hudBaseFontSize() -> Double {

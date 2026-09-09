@@ -101,6 +101,7 @@ final class AppController {
     var scratchSurfaces: [UUID: GhosttySurface] = [:] // full-overlay scratch shell
     var overlaySurfaces: [UUID: GhosttySurface] = [:]  // ephemeral overlay terminal (runs a command)
     var floatingOverlayFrames: [UUID: OpaquePointer] = [:]  // overlay rendered as a floating sized panel
+    var askWidgets = LinuxAskWidgets()                        // the ask dialogs' widgets and keyboard selection
     // Pane-scoped overlays: an ephemeral terminal covering ONE split pane while its sibling stays live.
     // Each pane's glArea lives in a GtkOverlay host for its whole lifetime, so the pane overlay is added
     // and removed as an overlay child WITHOUT ever unparenting the pane's own (GL-context-bound) widget.
@@ -303,7 +304,7 @@ final class AppController {
         }
         TerminalZoomRegistry.shared.register(windowID, controller: terminalZoom)
         DashboardControllerRegistry.shared.register(windowID, controller: dashboard)
-        PickRegistry.shared.register(windowID, controller: pickController)
+        registerModalSlots()
 
         // Become frontmost on activation (routes global shortcuts + control to this window);
         // tear down + deregister when the window closes.

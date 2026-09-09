@@ -190,7 +190,8 @@ final class ControlServer: @unchecked Sendable {
              .windowNew, .windowList, .windowSelect, .windowClose, .windowRename, .windowDelete,
              .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
              .keymapReload, .keymapList, .configReload, .themeSet, .themeList,
-             .pickOpen, .pickResult, .pickCancel, .restoreClear, .restoreCapture, .restoreMode,
+             .pickOpen, .pickResult, .pickCancel, .askOpen, .askResult, .askCancel,
+             .restoreClear, .restoreCapture, .restoreMode,
              .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach, .version, .debugAppearance:
             return .controller(gController)
         }
