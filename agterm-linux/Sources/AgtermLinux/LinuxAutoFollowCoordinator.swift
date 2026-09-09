@@ -163,6 +163,10 @@ extension AppController {
         autoFollowCoordinator.resume()
     }
 
+    /// Replaces `autoFollowMs` with this window's own timeout, carrying every other field through.
+    /// `ControlTree` is a `let` struct, so the copy is exhaustive by hand and each field defaults to nil —
+    /// an omission is silent, which is how `sidebarWidth`, `workspaceFilter`, `pickPending`, `askPending`
+    /// and `app` were once erased from every Linux tree read. `LinuxTreeProjectionTests` pins the set.
     func projectingLinuxAutoFollow(_ tree: ControlTree) -> ControlTree {
         ControlTree(
             workspaces: tree.workspaces,
@@ -170,12 +174,17 @@ extension AppController {
             autoFollowMs: autoFollowCoordinator.timeoutMs,
             sidebarVisible: tree.sidebarVisible,
             sidebarMode: tree.sidebarMode,
+            sidebarWidth: tree.sidebarWidth,
+            workspaceFilter: tree.workspaceFilter,
             quickVisible: tree.quickVisible,
             zoomedSurface: tree.zoomedSurface,
             dashboardMembers: tree.dashboardMembers,
             dashboardHighlighted: tree.dashboardHighlighted,
             dashboardFontSize: tree.dashboardFontSize,
-            dashboardFontMode: tree.dashboardFontMode
+            dashboardFontMode: tree.dashboardFontMode,
+            pickPending: tree.pickPending,
+            askPending: tree.askPending,
+            app: tree.app
         )
     }
 
@@ -192,7 +201,8 @@ extension AppController {
                 sidebarVisible: node.sidebarVisible,
                 geometry: node.geometry,
                 fullscreen: node.fullscreen,
-                zoomed: node.zoomed
+                zoomed: node.zoomed,
+                minimized: node.minimized
             )
         }
     }
