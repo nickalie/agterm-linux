@@ -954,6 +954,85 @@ def verify_v024_control_parity(env):
         stop(process)
 
 
+def verify_v027_control_parity(env):
+    """Round-trip the upstream v0.27 additions: pane-addressed commands, the HUD, and the ask dialog."""
+    process, app = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        def session_node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        # the aliases the shared CLI documents, which the Linux host used to match by raw spelling
+        for alias in ("primary", "top", "left"):
+            response = control_json(env, "session", "text", "--pane", alias, "--target", session_id,
+                                    "--window", window_id, "--json")
+            assert response["ok"], f"session.text --pane {alias} failed: {response}"
+        rejected = raw_control_json(env, {"cmd": "session.text", "target": session_id,
+                                          "args": {"window": window_id, "pane": "sideways"}})
+        assert not rejected["ok"] and rejected["error"] == "invalid pane: sideways", (
+            f"an unknown pane spelling answered {rejected}"
+        )
+
+        paste = control_json(env, "session", "paste", "--pane", "primary", "--target", session_id,
+                             "--window", window_id, "--json")
+        assert paste["ok"], f"session.paste --pane failed: {paste}"
+
+        # the HUD reached no dispatcher at all before, answering "not yet supported on Linux"
+        opened = control_json(env, "session", "hud", "deploying", "--position", "top-right",
+                              "--target", session_id, "--window", window_id, "--json")
+        assert opened["ok"], f"session.hud open failed: {opened}"
+        posted = wait_for(lambda: session_node().get("hud"), "the tree never reported the HUD")
+        assert posted["message"] == "deploying" and posted["position"] == "top-right", posted
+        # the panel is a helper process in the session's overlay slot, so a panel that exits on its own
+        # is not a live HUD however briefly the tree reported one
+        time.sleep(1.0)
+        assert session_node().get("hud"), "the HUD closed itself"
+        control_json(env, "session", "hud", "update", "ready", "--target", session_id,
+                     "--window", window_id, "--json")
+        wait_for(lambda: (session_node().get("hud") or {}).get("message") == "ready",
+                 "session.hud update did not repaint the panel")
+        control_json(env, "session", "hud", "close", "--target", session_id,
+                     "--window", window_id, "--json")
+        wait_for(lambda: session_node().get("hud") is None, "session.hud close left the slot filled")
+
+        # `ask open --no-block` and `ask result` print the bare payload, not the response envelope
+        ask_id = control_json(env, "ask", "open", "Deploy?", "--button", "yes=Deploy", "--button", "no=Wait",
+                              "--default", "no", "--no-block", "--target", session_id,
+                              "--window", window_id, "--json")["id"]
+        wait_for(lambda: (session_node().get("ask") or {}).get("id") == ask_id,
+                 "the session node never reported its pending ask")
+        # read the socket rather than the CLI: an unanswered dialog exits non-zero by design
+        def ask_result(dialog_id):
+            response = raw_control_json(env, {"cmd": "ask.result", "target": dialog_id,
+                                              "args": {"window": window_id}})
+            assert response["ok"], f"ask.result failed: {response}"
+            return response["result"]["ask"]["result"]
+
+        assert ask_result(ask_id) == "pending", ask_result(ask_id)
+        control_json(env, "ask", "cancel", ask_id, "--window", window_id, "--json")
+        wait_for(lambda: session_node().get("ask") is None, "ask.cancel left the session slot filled")
+        assert ask_result(ask_id) == "cancelled", ask_result(ask_id)
+
+        # a GUI ask takes the window's modal slot, which pick shares
+        gui_id = control_json(env, "ask", "open", "Proceed?", "--button", "ok=OK", "--style", "gui",
+                              "--no-block", "--window", window_id, "--json")["id"]
+        wait_for(lambda: window_tree(env, window_id).get("askPending") == gui_id,
+                 "the tree never reported the pending GUI ask")
+        busy = raw_control_json(env, {"cmd": "ask.open",
+                                      "args": {"window": window_id, "title": "Again?", "style": "gui",
+                                               "buttons": [{"id": "ok", "label": "OK"}]}})
+        assert not busy["ok"] and busy["error"] == "ask already pending", (
+            f"a second gui ask was accepted: {busy}"
+        )
+        control_json(env, "ask", "cancel", gui_id, "--window", window_id, "--json")
+        wait_for(lambda: window_tree(env, window_id).get("askPending") is None,
+                 "ask.cancel left the window slot filled")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2203,7 +2282,8 @@ def main():
     scenario = os.environ.get("AGTERM_ATSPI_SCENARIO")
     if scenario is None:
         for child_scenario in (
-            "normal", "upstream-controls", "v024-controls", "dashboard-modal", "context-menu",
+            "normal", "upstream-controls", "v024-controls", "v027-controls",
+            "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -2248,6 +2328,8 @@ def main():
             verify_upstream_control_parity(env)
         elif scenario == "v024-controls":
             verify_v024_control_parity(env)
+        elif scenario == "v027-controls":
+            verify_v027_control_parity(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
