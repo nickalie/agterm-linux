@@ -62,27 +62,29 @@ enum LinuxZmxLaunch {
         ZmxSupport.launchDisposition(requested: requested, active: active, configuration: configuration)
     }
 
-    /// What a wrapped pane spawns with. The attach client is the command; a replayed or created program
-    /// rides inside it, and only a FRESH primary pane types its creation command as input.
+    /// What a wrapped pane spawns with. The attach client is the command, and a replayed or created program
+    /// rides inside it as a create-only payload.
+    ///
+    /// Never through `initial_input`: the attach client forwards that into its outer pty before switching
+    /// the pty to raw mode, and the line discipline keeps only the first 1024 bytes, so a longer command
+    /// arrived truncated and without the newline that would have run it. Going through zmx also gives a
+    /// FRESH split pane the command that previously never ran at all.
     @MainActor
     static func surfaceSeed(disposition: Disposition, session: Session, pane: StatusPane,
                             denylist: Set<String>) -> SurfaceSeed? {
         guard case .wrapped(let configuration) = disposition else { return nil }
         let replay = session.takePendingForegroundCommand(pane: pane)
-        let creationCommand: String? = if session.wasRestored, replay == nil {
+        let creationCommand: String? = if replay == nil {
             switch pane {
             case .left: session.initialCommand
             case .right: session.splitInitialCommand
             case .scratch: nil
             }
         } else { nil }
-        let initialInput = pane == .left && !session.wasRestored
-            ? session.initialCommand.map { $0 + "\n" }
-            : nil
         return SurfaceSeed(
             command: ZmxSupport.attachCommand(configuration, replaying: replay,
                                               creationCommand: creationCommand, denylist: denylist),
-            initialInput: initialInput
+            initialInput: nil
         )
     }
 

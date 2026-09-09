@@ -1,9 +1,9 @@
 import Foundation
 import agtermCore
 
-/// What a primary or split pane spawns with. `command` and `initialInput` are mutually exclusive except on
-/// a zmx-backed pane, whose command is the attach client and whose input is a fresh session's creation
-/// command.
+/// What a primary or split pane spawns with. `command` and `initialInput` are mutually exclusive: a
+/// command REPLACES the login shell, and a zmx-backed pane, whose command is the attach client, carries
+/// its program inside that command rather than as input.
 struct LinuxPaneLaunch {
     let command: String?
     let initialInput: String?
