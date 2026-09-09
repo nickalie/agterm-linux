@@ -189,6 +189,9 @@ extension AppController {
                 var ovlEnv = sessionEnv(for: s)
                 ovlEnv[OverlayCapture.cmdEnvKey] = cmd
                 ovlEnv[OverlayCapture.codeEnvKey] = codePath
+                // the HUD painter re-reads this file every tick and exits at once without it, so a panel
+                // spawned with no `AGTERM_HUD_FILE` closes itself the moment it starts
+                if let hudFile = s.hudActive ? s.hudFile : nil { ovlEnv[HudLayout.fileEnvKey] = hudFile }
                 let ov = GhosttySurface(sessionID: s.id, cwd: s.overlayCwd ?? s.effectiveCwd,
                                         command: "sh -c " + Self.singleQuoted(OverlayCapture.shellLine),
                                         env: ovlEnv, controller: self, waitAfterCommand: s.overlayWait,
