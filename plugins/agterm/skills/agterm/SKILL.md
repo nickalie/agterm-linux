@@ -536,12 +536,14 @@ an answer. The default `--style terminal` uses the selected session, with one pe
 `--pane` or `--pane-id` narrows it to a pane without requiring `--target`. An explicit unselected session
 is accepted and keeps its ask hidden and pending. A terminal ask leaves the rest of the window usable.
 `--style gui` uses the window modal slot shared with pick; GUI pane placement requires a selected
-`--target`. Without a target, GUI style centers over the window's terminal area, excluding the sidebar.
+`--target`. Without a target, GUI style centers over the window's terminal area, excluding the sidebar;
+on the GTK Linux frontend it is a transient modal window with native buttons, centered by the compositor.
 `--window` selects the window; `--follow` raises it without changing session selection.
 `--default ID` seeds the highlight, `--hotkey ID=LETTER` adds a shortcut, and `--destructive ID` marks a
 button that cannot be the default. `--align left|center|right` aligns the buttons; `--width N` fixes the
 panel width to 10...100 percent of its region. Exit 0 means answered, including No: inspect `.id`.
-Esc/Command-W on the interactive ask return `escaped` with exit 3; cancellation returns `cancelled`
+Esc, the macOS Command-W, or closing a GUI dialog's window return `escaped` with exit 3; cancellation
+returns `cancelled`
 with exit 2. `--no-block` returns an id for `ask result ID` or `ask cancel ID`; explicit `--window` must
 match its owner. Tree exposes terminal asks on session nodes as `ask: {id, pane?}` and GUI asks as
 top-level `askPending`. See [reference.md](reference.md#ask) for result formats and command details.

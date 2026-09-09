@@ -1080,7 +1080,8 @@ session. `--target` can name an unselected session without selecting it; its ask
 `--pane left|right` and `--pane-id TOKEN` narrow placement without requiring a target. A live token takes
 precedence over the role, and the pane must be laid out by its session at open.
 `--style gui` uses the window modal slot shared with pick. Without a target, it centers over the
-terminal area, excluding the sidebar. An explicit GUI target must be selected in its window;
+terminal area, excluding the sidebar; the GTK Linux frontend draws it as a transient modal window with
+native buttons, which the compositor centers over its parent. An explicit GUI target must be selected in its window;
 GUI pane selectors require it. Terminal asks can coexist with GUI asks and picks.
 `--window W` selects the window; `--follow` raises it without changing session selection.
 
@@ -1102,7 +1103,8 @@ The blocking call prints one bare result:
 ```
 
 Index follows caller order. An answer exits 0, including a named No button; inspect `id` before acting.
-Esc/Command-W on the interactive ask return `escaped` with exit 3. Cancellation exits 2; failure exits 1.
+Esc, the macOS Command-W, or closing a GUI dialog's window return `escaped` with exit 3. Cancellation
+exits 2; failure exits 1.
 `--no-block` prints `{"id":"<ask-id>"}`. `ask result ID [--window W]` prints the current or finished result,
 including `{"result":"pending"}` with exit 1. `ask cancel ID [--window W]` cancels a pending question and
 returns `ok`; cancelling a retained finished result is a successful no-op. Both commands use the exact
