@@ -400,6 +400,8 @@ extension AppController {
         case .toggleWorkspaceFilter: toggleWorkspaceFilter()
         case .previousWorkspace: navigateWorkspace(.previous)
         case .nextWorkspace: navigateWorkspace(.next)
+        case .previousWindow: navigateWindow(.previous)
+        case .nextWindow: navigateWindow(.next)
         case .toggleWorkspaceCollapse: toggleCurrentWorkspaceCollapse()
         case .focusLeftPane: focusPane(left: true)
         case .focusRightPane: focusPane(left: false)

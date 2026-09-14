@@ -52,7 +52,8 @@ struct LinuxControlDispatcher {
             return actions.setSidebarWidth(points, window: request.args?.window)
         case .restoreMode, .zmxList, .zmxPrune, .zmxKill:
             return dispatchZmxCommand(request)
-        case .windowRename, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize:
+        case .windowRename, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
+                .windowGo:
             return dispatchWindowCommand(request)
         case .pickOpen, .pickResult, .pickCancel:
             return dispatchPickCommand(request)
@@ -737,6 +738,11 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "window.move requires x and y")
             }
             return actions.windowMove(request.target, x: x, y: y, display: request.args?.display)
+        case .windowGo:
+            guard let direction = (request.args?.to).flatMap(WorkspaceNavigation.init(wire:)) else {
+                return ControlResponse(ok: false, error: "window.go requires --to next|prev")
+            }
+            return actions.windowGo(direction: direction)
         case .windowZoom:
             return actions.windowZoom(request.target)
         case .windowFullscreen:

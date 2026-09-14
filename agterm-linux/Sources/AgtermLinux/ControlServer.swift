@@ -187,12 +187,12 @@ final class ControlServer: @unchecked Sendable {
         case .tree, .eventsRead, .workspaceNew, .workspaceGo, .quick, .quickType, .quickText,
              .surfaceZoom, .surfaceCursor, .dashboard,
              .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sidebarWidth, .workspaceFilter,
-             .windowNew, .windowList, .windowSelect, .windowClose, .windowRename, .windowDelete,
+             .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename, .windowDelete,
              .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
              .keymapReload, .keymapList, .configReload, .themeSet, .themeList,
              .pickOpen, .pickResult, .pickCancel, .askOpen, .askResult, .askCancel,
              .restoreClear, .restoreCapture, .restoreMode,
-             .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach, .version, .debugAppearance:
+             .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .version, .debugAppearance:
             return .controller(gController)
         }
     }

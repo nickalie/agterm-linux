@@ -405,6 +405,15 @@ final class AppController {
         return step.workspaceID
     }
 
+    /// Step to the next/previous OPEN window and raise it, through the shared `library.navigateWindow` the
+    /// palette, the keymap builtin and `window.go` all call. A single open window has nowhere to go.
+    @discardableResult
+    func navigateWindow(_ direction: WorkspaceNavigation) -> UUID? {
+        guard let target = library.navigateWindow(direction) else { return nil }
+        openWindow(target)
+        return target
+    }
+
     /// The window-level work a workspace step owes once core has moved the selection itself — the half
     /// `selectSession` would have run. An EMPTY destination selects nothing, and then none of it applies.
     /// Reconciles rather than only re-selecting: such a destination reveals itself through

@@ -48,6 +48,17 @@ extension AppController {
         }
     }
 
+    /// Step to the next/previous OPEN window in library order and raise it, through the shared
+    /// `library.navigateWindow` the menu and the palette also call. Only open windows are stops, so a
+    /// closed one is skipped on the way round; with fewer than two there is nowhere to go.
+    func windowGo(direction: WorkspaceNavigation) -> ControlResponse {
+        guard let target = library.navigateWindow(direction) else {
+            return ControlResponse(ok: false, error: "no other open window")
+        }
+        openWindow(target)
+        return ok(target)
+    }
+
     func windowClose(_ target: String?) async -> ControlResponse {
         windowCloseSync(target)
     }
