@@ -112,8 +112,14 @@ extension AppController {
         case .failure(let response): return response
         case .success(let id):
             guard let ctl = gWindows[id] else { return err("window not open — window.select it first") }
-            gtk_window_set_default_size(WIN(ctl.windowPointer), Int32(width), Int32(height))
-            return ok(id)
+            let applied = LinuxWindowGeometryStore.clamped(
+                WindowGeometry.Size(width: Double(width), height: Double(height)))
+            gtk_window_set_default_size(WIN(ctl.windowPointer),
+                                        Int32(applied.width.rounded()), Int32(applied.height.rounded()))
+            return ControlResponse(ok: true,
+                                   result: ControlResult(id: id.uuidString,
+                                                         width: Int(applied.width.rounded()),
+                                                         height: Int(applied.height.rounded())))
         }
     }
 

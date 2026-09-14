@@ -15,7 +15,7 @@ enum LinuxRemoteSessions {
     static let treeDeadline: TimeInterval = 20
 
     static func tree(host: String?) -> ControlResponse {
-        guard let host = host?.linuxTrimmedOrNil else { return onMain { $0.localAttachableSessions() } }
+        guard let host = host?.linuxTrimmedOrNil else { return onMain(window: nil) { $0.localAttachableSessions() } }
         let argv: [String]
         do {
             argv = try RemoteSession.treeCommand(host: host)
@@ -51,7 +51,7 @@ enum LinuxRemoteSessions {
     /// The remote is resolved AGAIN here rather than trusted from whatever the caller last saw: a picker's
     /// answer can be minutes old, and a daemon that has gone since would otherwise be CREATED by the
     /// attach, handing back a fresh shell wearing the session's name.
-    static func attach(host: String, session: String) -> ControlResponse {
+    static func attach(host: String, session: String, window: String?) -> ControlResponse {
         let discovery = tree(host: host)
         guard discovery.ok, let remoteTree = discovery.result?.remote else { return discovery }
         // by id only: remote session names are mutable and deliberately non-unique across workspaces
@@ -79,29 +79,54 @@ enum LinuxRemoteSessions {
         }
         // everything that can fail is checked before the model is touched, so a refusal leaves no
         // half-built row behind; ssh itself starts after insertion, as an ordinary pane on the held path
-        return onMain { controller in
+        return onMain(window: window) { controller in
             controller.insertRemoteSession(host: host, name: remote.name, primary: primary, split: split,
                                            axis: remote.splitAxis.flatMap(SplitAxis.init(rawValue:)))
         }
     }
 
     /// Runs `body` on the GTK thread and blocks until it answers, the same hop the control server uses.
-    private static func onMain(_ body: @escaping @MainActor (AppController) -> ControlResponse)
+    private static func onMain(window: String?,
+                               _ body: @escaping @MainActor (AppController) -> ControlResponse)
         -> ControlResponse {
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResponseBox()
         runOnMain {
             MainActor.assumeIsolated {
-                if let controller = gLibrary?.frontmostWindowID.flatMap({ gWindows[$0] }) ?? gWindows.values.first {
-                    box.value = body(controller)
-                } else {
-                    box.value = ControlResponse(ok: false, error: "no window to attach into")
+                switch resolveTargetWindow(window) {
+                case .failure(let response): box.value = response
+                case .success(let controller): box.value = body(controller)
                 }
                 semaphore.signal()
             }
         }
         semaphore.wait()
         return box.value
+    }
+
+    /// The window an attach lands in. A named target that is unknown or closed FAILS rather than falling
+    /// back to the frontmost one, so a script placing a session in a background window cannot silently
+    /// place it under the user's hands instead.
+    @MainActor private static func resolveTargetWindow(_ window: String?)
+        -> AppController.ResolveResponse<AppController> {
+        let frontmost = gLibrary?.frontmostWindowID.flatMap { gWindows[$0] } ?? gWindows.values.first
+        guard let window = window?.linuxTrimmedOrNil else {
+            guard let frontmost else {
+                return .failure(ControlResponse(ok: false, error: "no window to attach into"))
+            }
+            return .success(frontmost)
+        }
+        guard let anyController = frontmost else {
+            return .failure(ControlResponse(ok: false, error: "no window to attach into"))
+        }
+        switch anyController.resolveWindowResponse(window) {
+        case .failure(let response): return .failure(response)
+        case .success(let id):
+            guard let controller = gWindows[id] else {
+                return .failure(ControlResponse(ok: false, error: "window not open — window.select it first"))
+            }
+            return .success(controller)
+        }
     }
 }
 

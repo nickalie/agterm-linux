@@ -860,6 +860,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   Closed live fields are omitted. Geometry is top-left display-relative y-down and round-trips move/resize.
 - Window list is cached. Refresh after commands and frontmost/sidebar/attachment/move/resize/fullscreen/
   minimize changes. Ignore `Notification` payloads rather than carrying non-Sendable values into main actor.
+  **Linux adapter:** GTK applies a size on the next layout and the compositor has the final say, so
+  `window.resize` echoes the REQUESTED size clamped by the same window minimum and largest-display bound
+  `LinuxWindowGeometryStore` restores through, not a measured frame. It is what this machine will show,
+  not a report that it already did.
   Minimized is live-only; restoration always reopens unminimized.
 - Exact window behavior, readiness, cache ordering, and GUI interaction are owned by [[windows]].
 

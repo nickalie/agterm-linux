@@ -17,7 +17,7 @@ private struct LinuxSavedWindowSize: Codable {
 }
 
 @MainActor
-private enum LinuxWindowGeometryStore {
+enum LinuxWindowGeometryStore {
     static var url: URL { linuxStateDirectory().appendingPathComponent("window-sizes.json") }
 
     static func size(for id: UUID) -> WindowGeometry.Size? {
@@ -39,6 +39,16 @@ private enum LinuxWindowGeometryStore {
         saved[id.uuidString] = LinuxSavedWindowSize(width: size.width, height: size.height)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(saved) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// The requested size as this machine can actually show it: never below the window minimum, never
+    /// past the largest connected display. What `window.resize` echoes, since the compositor owns the
+    /// final say and a caller otherwise has to read `window list` back to find out.
+    static func clamped(_ requested: WindowGeometry.Size) -> WindowGeometry.Size {
+        guard let maximum = connectedDisplayMaximumSize() else { return requested }
+        return WindowGeometry.clampSize(requested,
+                                        min: WindowGeometry.Size(width: 480, height: 320),
+                                        max: maximum)
     }
 
     private static func connectedDisplayMaximumSize() -> WindowGeometry.Size? {

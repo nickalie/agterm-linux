@@ -110,7 +110,7 @@ final class ControlServer: @unchecked Sendable {
             guard RemoteSession.isPlain(session) else {
                 return ControlResponse(ok: false, error: "invalid remote session")
             }
-            return LinuxRemoteSessions.attach(host: host, session: session)
+            return LinuxRemoteSessions.attach(host: host, session: session, window: req.args?.window)
         }
     }
 
