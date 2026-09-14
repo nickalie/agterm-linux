@@ -38,16 +38,17 @@ extension GhosttySurfaceView {
         return true
     }
 
-    /// `inject` plus the pane-scoped status transition `keyDown` fires, for `session.type`: the input a
-    /// blocked agent was waiting for has arrived, so the block must not outlive it. `isInterrupt` is false like the AX
-    /// insert's — injected text is not the Escape/Ctrl-C keystroke that clears an ACTIVE glyph. It deliberately
+    /// `inject` plus the pane-scoped status transition `keyDown` fires, for `session.type`: the input a blocked
+    /// agent was waiting for has arrived, so the block must not outlive it. The text classifies as a submit
+    /// when it carries a newline and plain typing otherwise, never as the Escape/Ctrl-C interrupt that clears
+    /// an ACTIVE glyph, like the AX insert. It deliberately
     /// does NOT fire `onUserInput`, unlike dictation: that stamps the user as present and holds off auto-follow,
     /// which a script typing into a background pane must not do. Empty text queues no keystrokes yet still
     /// returns true, so it clears nothing.
     @discardableResult
     func injectAsUserInput(text: String) -> Bool {
         guard inject(text: text) else { return false }
-        if !text.isEmpty { onUserInputStatusKeystroke?(false) }
+        if !text.isEmpty { onUserInputStatusKeystroke?(InterruptKeystroke.classify(text: text)) }
         return true
     }
 

@@ -21,6 +21,7 @@ final class ControlServer {
     let library: WindowLibrary
     let actions: AppActions
     let settingsModel: SettingsModel
+    let statusSoundPlayer: StatusSoundPlayer
     let launchRestoreMode: RestoreMode
     let zmxForegroundResolver: ZmxForegroundResolver?
     private let socketPath: String
@@ -136,6 +137,7 @@ final class ControlServer {
     /// detached daemons are left over. Nil only in hosted tests, where the commands answer that the
     /// backend is unavailable rather than pretending an empty listing.
     let zmxClient: ZmxClient?
+    let liveAttributionProbe: LiveAttributionProbe
 
     /// Runs the ssh invocations behind the remote commands. Injectable so hosted tests drive them against
     /// a fake instead of a second Mac.
@@ -145,18 +147,34 @@ final class ControlServer {
     /// handshake, so this is what covers a remote agterm that never answers.
     static let remoteTreeDeadline: TimeInterval = 10
 
+    /// Writes one reply frame and reports whether all of it went out. Injectable so a hosted test can hold
+    /// or fail the `zmx.reset` reply and watch what the quit does.
+    typealias ResponseWriter = @Sendable (Int32, ControlResponse) -> Bool
+    nonisolated let responseWriter: ResponseWriter
+
+    /// The Live sessions reset's confirm path; nil refuses `zmx.reset` as unsupported.
+    var liveReset: LiveResetCoordinator?
+    /// The last launch's reset outcome for the read-back; injectable so a hosted test stages one.
+    var liveResetOutcome: () -> LiveReset.Outcome? = { GhosttyApp.shared.liveResetOutcome }
+
     init(library: WindowLibrary, actions: AppActions, settingsModel: SettingsModel, identity: AppIdentity,
          launchRestoreMode: RestoreMode = GhosttyApp.shared.launchRestoreMode,
          zmxForegroundResolver: ZmxForegroundResolver? = nil, zmxClient: ZmxClient? = nil,
+         liveAttributionProbe: LiveAttributionProbe = LiveAttributionProbe(),
          remoteRunner: (any RemoteCommandRunner)? = nil,
-         socketPath: String? = nil) {
+         statusSoundPlayer: StatusSoundPlayer = .shared,
+         socketPath: String? = nil,
+         responseWriter: @escaping ResponseWriter = ControlServer.writeResponse) {
+        self.responseWriter = responseWriter
         self.remoteRunner = remoteRunner ?? RemoteCommandProcessRunner()
         self.library = library
         self.actions = actions
         self.settingsModel = settingsModel
+        self.statusSoundPlayer = statusSoundPlayer
         self.launchRestoreMode = launchRestoreMode
         self.zmxForegroundResolver = zmxForegroundResolver
         self.zmxClient = zmxClient
+        self.liveAttributionProbe = liveAttributionProbe
         self.identity = identity
         self.resolver = ControlTargetResolver(library: library)
         self.socketPath = socketPath ?? ControlServer.defaultSocketPath()
@@ -371,7 +389,7 @@ final class ControlServer {
         setsockopt(conn, SOL_SOCKET, SO_SNDTIMEO, &writeTimeout, socklen_t(MemoryLayout<timeval>.size))
 
         guard let line = readLine(conn) else {
-            writeResponse(conn, ControlResponse(ok: false, error: "request too large or read failed"))
+            _ = server.responseWriter(conn, ControlResponse(ok: false, error: "request too large or read failed"))
             return
         }
 
@@ -383,14 +401,14 @@ final class ControlServer {
             // the context names the rejected `cmd`, telling a caller its agterm is older than its agtermctl,
             // and only for a command added after THIS code shipped, since an older server returns the generic.
             let detail = (error as? DecodingError).map(Self.decodeDetail) ?? error.localizedDescription
-            writeResponse(conn, ControlResponse(ok: false, error: "invalid request: \(detail)"))
+            _ = server.responseWriter(conn, ControlResponse(ok: false, error: "invalid request: \(detail)"))
             return
         }
 
         // answer read-only window queries from the cache without a main-actor hop: a window close briefly
         // stalls the main thread (surface teardown / re-render), wedging the accept loop against polls.
         if let cached = server.fastPathResponse(for: request) {
-            writeResponse(conn, cached)
+            _ = server.responseWriter(conn, cached)
             return
         }
 
@@ -400,7 +418,7 @@ final class ControlServer {
             handedOff = true
             let worker = Thread {
                 defer { close(conn) }
-                writeResponse(conn, runBlocking { await server.dispatch(request) })
+                _ = server.responseWriter(conn, runBlocking { await server.dispatch(request) })
             }
             worker.name = "com.umputun.agterm.control.remote"
             worker.start()
@@ -410,7 +428,17 @@ final class ControlServer {
         // hop to the main actor, blocking this background thread. dispatch refreshes the window cache in that
         // same execution, so the fast path sees this command's mutations without a second, stallable hop.
         let response = runBlocking { await server.dispatch(request) }
-        writeResponse(conn, response)
+        let written = server.responseWriter(conn, response)
+        // the quit after a confirmed reset waits for THIS reply to be on the wire, decided from this request
+        // and this response so a remote worker finishing another reply in parallel can never trigger it
+        guard request.cmd == .zmxReset, response.ok else { return }
+        guard written else {
+            logger.error("zmx.reset reply was not written; the reset stays pending for a later quit")
+            return
+        }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { server.liveReset?.terminateIfPending() }
+        }
     }
 
     /// Commands whose dispatch awaits an ssh round trip. `zmx.attach` re-resolves the remote first, so it
@@ -440,23 +468,24 @@ final class ControlServer {
     }
 
     /// Encode `response` and write it back as a single newline-terminated line.
-    nonisolated private static func writeResponse(_ conn: Int32, _ response: ControlResponse) {
-        guard var data = try? JSONEncoder().encode(response) else { return }
+    nonisolated static func writeResponse(_ conn: Int32, _ response: ControlResponse) -> Bool {
+        guard var data = try? JSONEncoder().encode(response) else { return false }
         data.append(UInt8(ascii: "\n"))
-        data.withUnsafeBytes { raw in
+        return data.withUnsafeBytes { raw in
             var offset = 0
             let base = raw.bindMemory(to: UInt8.self).baseAddress!
             let deadline = DispatchTime.now() + .seconds(writeDeadlineSeconds)
             while offset < data.count {
-                if DispatchTime.now() > deadline { return }
+                if DispatchTime.now() > deadline { return false }
                 let n = write(conn, base + offset, data.count - offset)
                 if n < 0 {
                     if errno == EINTR { continue } // retry an interrupted write
-                    return
+                    return false
                 }
-                if n == 0 { return }
+                if n == 0 { return false }
                 offset += n
             }
+            return true
         }
     }
 
@@ -505,10 +534,10 @@ final class ControlServer {
                 .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize,
                 .sessionOverlayResult, .sessionOverlayCopy, .sessionOverlayText,
                 .sessionBackground, .sessionText, .quick, .quickType, .quickText,
-                .windowNew, .windowList, .windowSelect,
+                .windowNew, .windowList, .windowSelect, .windowGo,
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
                 .windowFullscreen, .windowMinimize,
-                .restoreClear, .restoreCapture, .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree,
+                .restoreClear, .restoreCapture, .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree,
                 .zmxAttach, .dashboard, .version:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
         case .debugAppearance:
@@ -718,9 +747,16 @@ final class ControlServer {
     func buildTree(in store: AppStore) -> ControlTree {
         let shellBasename = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
         let sessions = store.workspaces.flatMap(\.sessions)
-        if ZmxForegroundRefreshPolicy.hasWrappedPane(in: sessions) {
-            zmxForegroundResolver?.refreshIfNeeded()
+        var leaders: [String: pid_t]?
+        if ZmxForegroundRefreshPolicy.hasWrappedPane(in: sessions.filter { $0.remoteHost == nil }) {
+            if let zmxClient {
+                leaders = zmxClient.sessionLeaderPIDs()
+                zmxForegroundResolver?.acceptLeaderSnapshot(leaders)
+            } else {
+                zmxForegroundResolver?.refreshIfNeeded()
+            }
         }
+        let attributions = liveAttributions(in: sessions, leaders: leaders)
         // the projected window owns its quick terminal; find its id by store identity to read the live
         // QuickTerminalController.isVisible (a nil controller — never opened, or tearing down — reads false).
         let windowID = library.windowID(for: store)
@@ -740,6 +776,7 @@ final class ControlServer {
                                               zmxResolver: zmxForegroundResolver)
                 }
             },
+            liveAttribution: { attributions[$0] },
             fontSize: { ($0.addressableSurface as? GhosttySurfaceView)?.currentFontSize() },
             splitFontSize: { ($0.splitSurface as? GhosttySurfaceView)?.currentFontSize() },
             scratchFontSize: { ($0.scratchSurface as? GhosttySurfaceView)?.currentFontSize() },
@@ -774,7 +811,8 @@ final class ControlServer {
                 case .untouched: return "untouched"
                 }
             },
-            app: identity
+            app: identity,
+            liveReset: liveResetReadback()
         )
     }
 

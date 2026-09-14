@@ -139,6 +139,20 @@ extension AppActions {
         }
     }
 
+    /// Front and focus the window a recent-closed reopen restored into. The id is published here rather
+    /// than left to the key-window report, which `focusActiveSession` would otherwise outrun; publishing it
+    /// also has to save and post, because `WindowAccessor.reportFrontmost` gates both on the id having
+    /// changed and this assignment already made it equal.
+    func revealRestoredWindow(_ id: WindowInfo.ID) {
+        if library.frontmostWindowID != id {
+            library.frontmostWindowID = id
+            library.saveIndex()
+            NotificationCenter.default.post(name: .agtermWindowFrontmostChanged, object: nil)
+        }
+        _ = WindowRegistry.shared.raise(id)
+        focusActiveSession()
+    }
+
     /// Move first responder back to the active session's topmost surface (after the quick terminal or a
     /// palette/rename field closes). Targets `topmostSurface` (overlay > scratch > active pane), so a close
     /// re-focuses whatever is actually visible and never a pane hidden under a cover, and re-asserts briefly

@@ -2,11 +2,102 @@ import AppKit
 import XCTest
 @testable import agterm
 import agtermCore
+import AgtermResponsibility
 
 /// Hosted coverage for the zmx group's app arms: the join against the live claim walk, and the refusals
 /// that must not read as an empty inventory.
 @MainActor
 final class ControlServerZmxTests: XCTestCase {
+    func testEveryTreeSharesOneLeaderSnapshotAndProbesEachUniqueLeaderOnce() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.workspaces.first)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        session.surface = GhosttySurfaceView(workingDirectory: "/tmp", backedByZmx: true)
+        session.hasSplit = true
+        session.splitPaneIdentity = UUID()
+        session.splitSurface = GhosttySurfaceView(workingDirectory: "/tmp", backedByZmx: true)
+        let names = [session.paneIdentity, try XCTUnwrap(session.splitPaneIdentity)].map(ZmxSupport.daemonName)
+        var lists = 0
+        var foregroundLists = 0
+        var lookups: [Int32: Int] = [:]
+        var root: Int32 = 100
+        var failedList = false
+        let client = ZmxClient(executablePath: "/tmp/zmx", socketDirectory: "/tmp/zmx-dir", runner: { _ in
+            lists += 1
+            if failedList { throw ZmxClient.CommandError.timedOut }
+            return names.map { "name=\($0)\tpid=200\tclients=0" }.joined(separator: "\n")
+        })
+        let resolver = ZmxForegroundResolver(leaderProvider: { _ in foregroundLists += 1; return [:] }, leaderProbe: { .foreground($0) })
+        let probe = LiveAttributionProbe(responsible: { pid in
+            lookups[pid, default: 0] += 1
+            return .live(pid == 100 ? 100 : root)
+        }, hostPID: { _ in 100 }, appPID: 300)
+        let server = ControlServer(library: library, actions: AppActions(library: library), settingsModel: settingsModel,
+                                   identity: AppIdentity(version: "test", commit: "test"), zmxForegroundResolver: resolver, zmxClient: client,
+                                   liveAttributionProbe: probe, socketPath: stateDir.appendingPathComponent("tree.sock").path)
+        let first = server.controlTree(window: nil)
+        let node = try XCTUnwrap(first.result?.tree?.workspaces.flatMap(\.sessions).first { $0.id == session.id.uuidString })
+        XCTAssertEqual(node.liveAttribution, "supervisor")
+        XCTAssertEqual(node.splitLiveAttribution, "supervisor")
+        XCTAssertEqual(lists, 1)
+        XCTAssertEqual(foregroundLists, 0)
+        XCTAssertEqual(lookups, [100: 1, 200: 1])
+        XCTAssertEqual(resolver.foregroundPID(sessionName: names[0]), 200)
+        root = 200
+        let next = server.controlTree(window: nil)
+        XCTAssertEqual(next.result?.tree?.workspaces.flatMap(\.sessions).first { $0.id == session.id.uuidString }?.liveAttribution, "orphaned")
+        XCTAssertEqual(lists, 2)
+        XCTAssertEqual(lookups, [100: 2, 200: 2])
+        failedList = true
+        let unknown = server.controlTree(window: nil)
+        XCTAssertEqual(unknown.result?.tree?.workspaces.flatMap(\.sessions).first { $0.id == session.id.uuidString }?.liveAttribution, "unknown")
+        XCTAssertNil(resolver.foregroundPID(sessionName: names[0]))
+        XCTAssertEqual(lists, 3)
+        XCTAssertEqual(foregroundLists, 0)
+        XCTAssertEqual(lookups, [100: 2, 200: 2])
+    }
+
+    func testRealClientPaneChangesFromSupervisorToOrphanedWhileBarePaneReadsApp() throws {
+        try XCTSkipUnless(Responsibility.system.isAvailable, "Required responsibility symbols are absent")
+        let fixture = try SessionHostClientTests.Fixture()
+        defer { fixture.cleanup() }
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.workspaces.first)
+        let supervised = try XCTUnwrap(store.addSession(toWorkspace: workspace.id, cwd: fixture.directory.path))
+        let bare = try XCTUnwrap(store.addSession(toWorkspace: workspace.id, cwd: fixture.directory.path))
+        supervised.paneIdentity = try XCTUnwrap(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        bare.paneIdentity = try XCTUnwrap(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+        for session in [supervised, bare] { session.surface = GhosttySurfaceView(workingDirectory: fixture.directory.path, backedByZmx: true) }
+        try fixture.startClient(name: fixture.names[0], terminal: true)
+        try fixture.startClient(name: fixture.names[1], terminal: true, mediated: false)
+        _ = try fixture.waitForLeaders(count: 2)
+        let host = try fixture.hostPID()
+        let baseline = try XCTUnwrap(Responsibility.system.responsibleProcess(of: getpid()))
+        let client = ZmxClient(executablePath: fixture.zmx.path, socketDirectory: try XCTUnwrap(fixture.environment["ZMX_DIR"]))
+        let probe = LiveAttributionProbe(appPID: baseline)
+        XCTAssertEqual(probe.hostPID(client.endpoint), host)
+        do {
+            defer { try? String(host).write(toFile: fixture.paths.pidfile, atomically: false, encoding: .utf8) }
+            try String(getpid()).write(toFile: fixture.paths.pidfile, atomically: false, encoding: .utf8)
+            XCTAssertNil(probe.hostPID(client.endpoint))
+        }
+        let server = ControlServer(library: library, actions: AppActions(library: library), settingsModel: settingsModel,
+                                   identity: AppIdentity(version: "test", commit: "test"), zmxClient: client,
+                                   liveAttributionProbe: probe, socketPath: stateDir.appendingPathComponent("real-tree.sock").path)
+        var nodes = server.buildTree(in: store).workspaces.flatMap(\.sessions)
+        XCTAssertEqual(nodes.first { $0.id == supervised.id.uuidString }?.liveAttribution, "supervisor")
+        XCTAssertEqual(nodes.first { $0.id == bare.id.uuidString }?.liveAttribution, "app")
+        XCTAssertEqual(kill(host, SIGKILL), 0)
+        let deadline = Date().addingTimeInterval(3)
+        repeat {
+            nodes = server.buildTree(in: store).workspaces.flatMap(\.sessions)
+            if nodes.first(where: { $0.id == supervised.id.uuidString })?.liveAttribution == "orphaned" { break }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        } while Date() < deadline
+        XCTAssertEqual(nodes.first { $0.id == supervised.id.uuidString }?.liveAttribution, "orphaned")
+        XCTAssertEqual(nodes.first { $0.id == bare.id.uuidString }?.liveAttribution, "app")
+    }
+
     private var stateDir: URL!
     private var library: WindowLibrary!
     private var settingsModel: SettingsModel!
@@ -117,6 +208,98 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertFalse(response.error?.contains("\n") ?? true)
         XCTAssertFalse(response.error?.contains("\u{1B}") ?? true)
         XCTAssertFalse(response.error?.contains("rm -rf") ?? true)
+    }
+
+    func testAttachTargetsABackgroundWindowWithoutChangingTheActiveWindow() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let frontStore = try XCTUnwrap(library.activeStore)
+        let destination = library.newWindow(name: "other").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        library.frontmostWindowID = front
+        let originalCount = frontStore.workspaces.flatMap(\.sessions).count
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.splitProjection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: String(destination.uuidString.prefix(8)))))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertTrue(response.ok)
+        let id = try XCTUnwrap(response.result?.id)
+        let tree = try XCTUnwrap(server.controlTree(window: destination.uuidString).result?.tree)
+        let node = try XCTUnwrap(tree.workspaces.flatMap(\.sessions).first { $0.id == id })
+        XCTAssertEqual(node.remoteHost, "buildbox")
+        XCTAssertEqual(node.hasSplit, true)
+        XCTAssertEqual(destinationStore.selectedSessionID?.uuidString, id)
+        XCTAssertEqual(frontStore.workspaces.flatMap(\.sessions).count, originalCount)
+        XCTAssertEqual(library.activeWindowID, front)
+    }
+
+    func testAttachRefusesAClosedOrUnknownDestination() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let destination = library.newWindow(name: "closed").id
+        _ = library.loadStore(for: destination)
+        library.frontmostWindowID = front
+        library.closeWindow(destination)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        for target in [destination.uuidString, "missing-window"] {
+            let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+                args: ControlArgs(host: "buildbox", window: target)))
+            let response = try XCTUnwrap(dispatched)
+            XCTAssertFalse(response.ok)
+            XCTAssertNil(library.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        }
+    }
+
+    func testAttachRefusesADestinationClosedDuringDiscovery() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let destination = library.newWindow(name: "closing").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        library.frontmostWindowID = front
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""), beforeReturn: {
+            self.library.closeWindow(destination)
+        })
+        let server = makeServer(list: "", remoteRunner: runner)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: destination.uuidString)))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertFalse(response.ok)
+        XCTAssertNil(destinationStore.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        XCTAssertNil(library.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+    }
+
+    func testAttachRefusesAnAmbiguousWindowPrefix() async throws {
+        let directory = stateDir.appendingPathComponent("ambiguous")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let first = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000001"))
+        let second = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000002"))
+        let index = WindowsIndex(frontmost: first, windows: [
+            WindowEntry(id: first, name: "one", isOpen: true), WindowEntry(id: second, name: "two", isOpen: true),
+        ])
+        try JSONEncoder().encode(index).write(to: directory.appendingPathComponent("windows.json"))
+        let windows = WindowLibrary(directory: directory)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = ControlServer(library: windows, actions: AppActions(library: windows),
+            settingsModel: SettingsModel(library: windows, settingsStore: SettingsStore(directory: directory)),
+            identity: AppIdentity(version: "test", commit: "test"), remoteRunner: runner,
+            socketPath: directory.appendingPathComponent("control.sock").path)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: "AAAAAAAA")))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertFalse(response.ok)
+        XCTAssertTrue(response.error?.contains("ambiguous") == true)
+        XCTAssertNil(windows.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+    }
+
+    func testUntargetedAttachUsesTheActiveWindowAfterDiscovery() async throws {
+        let destination = library.newWindow(name: "selected during discovery").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""), beforeReturn: {
+            self.library.frontmostWindowID = destination
+        })
+        let server = makeServer(list: "", remoteRunner: runner)
+        let response = await server.attachRemoteSession(host: "buildbox", session: "s1")
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(destinationStore.activeSession?.remoteHost, "buildbox")
     }
 
     func testAttachCreatesARemoteSessionWithAHoldingSshPane() async throws {
@@ -797,15 +980,18 @@ private final class FakeRemoteRunner: RemoteCommandRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[String]] = []
     private let result: RemoteCommandResult
+    private let beforeReturn: (@MainActor @Sendable () -> Void)?
 
     var invocations: [[String]] { lock.withLock { recorded } }
 
-    init(result: RemoteCommandResult) {
+    init(result: RemoteCommandResult, beforeReturn: (@MainActor @Sendable () -> Void)? = nil) {
+        self.beforeReturn = beforeReturn
         self.result = result
     }
 
     func run(_ argv: [String], deadline _: TimeInterval) async -> RemoteCommandResult {
         lock.withLock { recorded.append(argv) }
+        await beforeReturn?()
         return result
     }
 }

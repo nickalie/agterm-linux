@@ -66,6 +66,7 @@ public enum Command: String, Codable, Sendable {
     case windowNew = "window.new"
     case windowList = "window.list"
     case windowSelect = "window.select"
+    case windowGo = "window.go"
     case windowClose = "window.close"
     case windowRename = "window.rename"
     case windowDelete = "window.delete"
@@ -92,6 +93,7 @@ public enum Command: String, Codable, Sendable {
     case zmxList = "zmx.list"
     case zmxPrune = "zmx.prune"
     case zmxKill = "zmx.kill"
+    case zmxReset = "zmx.reset"
     case zmxTree = "zmx.tree"
     case zmxAttach = "zmx.attach"
     /// UI-TEST-ONLY: forces the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
@@ -464,6 +466,9 @@ public struct ControlRequest: Codable, Sendable, Equatable {
 /// for `session.copy`. All optional.
 public struct ControlResult: Codable, Sendable, Equatable {
     public var id: String?
+    /// Applied window frame dimensions in integer points, echoed by `window.resize`.
+    public var width: Int?
+    public var height: Int?
     public var tree: ControlTree?
     public var text: String?
     public var windows: [ControlWindowNode]?
@@ -518,6 +523,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var zmx: ControlZmxInventory?
     /// Another machine's attachable sessions, for `zmx tree`.
     public var remote: ControlRemoteTree?
+    /// What `zmx.reset` confirmed: the sessions and panes it will reset at the next launch.
+    public var liveReset: ControlLiveResetStatus?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
@@ -528,10 +535,15 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 events: ControlEventBatch? = nil, keymap: ControlKeymap? = nil,
                 pick: ControlPickResult? = nil, ask: ControlAskResult? = nil, cursor: ControlCursor? = nil,
                 app: AppIdentity? = nil, restore: ControlRestoreStatus? = nil,
-                zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil) {
+                zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil,
+                liveReset: ControlLiveResetStatus? = nil,
+                width: Int? = nil, height: Int? = nil) {
+        self.width = width
+        self.height = height
         self.restore = restore
         self.zmx = zmx
         self.remote = remote
+        self.liveReset = liveReset
         self.id = id
         self.tree = tree
         self.text = text

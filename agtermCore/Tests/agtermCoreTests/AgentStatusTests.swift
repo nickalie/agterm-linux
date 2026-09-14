@@ -26,17 +26,35 @@ struct AgentStatusTests {
         #expect(!AgentStatus.active.needsAttention)
     }
 
-    @Test func afterKeystrokeAnswersBlockedIntoActiveAndClearsTheRest() {
-        // an ordinary key on blocked is the ANSWER: the approved tool then runs with no hook until PostToolUse
-        #expect(AgentStatus.blocked.afterKeystroke(isInterrupt: false) == .active)
-        #expect(AgentStatus.blocked.afterKeystroke(isInterrupt: true) == .idle)
-        #expect(AgentStatus.completed.afterKeystroke(isInterrupt: false) == .idle)
-        #expect(AgentStatus.completed.afterKeystroke(isInterrupt: true) == .idle)
-        // isInterrupt = Esc or Ctrl-C; ordinary typing leaves the glyph
-        #expect(AgentStatus.active.afterKeystroke(isInterrupt: false) == nil)
-        #expect(AgentStatus.active.afterKeystroke(isInterrupt: true) == .idle)
-        #expect(AgentStatus.idle.afterKeystroke(isInterrupt: false) == nil)
-        #expect(AgentStatus.idle.afterKeystroke(isInterrupt: true) == nil)
+    @Test(arguments: [
+        // (status, keystroke, reset, next) — an answered block lands on active, not idle
+        (AgentStatus.blocked, StatusKeystroke.other, StatusReset.firstKey, AgentStatus.active),
+        (AgentStatus.blocked, StatusKeystroke.submit, StatusReset.firstKey, AgentStatus.active),
+        (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.firstKey, AgentStatus.idle),
+        (AgentStatus.blocked, StatusKeystroke.other, StatusReset.enter, nil),
+        (AgentStatus.blocked, StatusKeystroke.submit, StatusReset.enter, AgentStatus.active),
+        (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.enter, nil),
+        (AgentStatus.blocked, StatusKeystroke.other, StatusReset.never, nil),
+        (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.never, nil),
+        (AgentStatus.completed, StatusKeystroke.other, StatusReset.firstKey, AgentStatus.idle),
+        (AgentStatus.completed, StatusKeystroke.interrupt, StatusReset.firstKey, AgentStatus.idle),
+        (AgentStatus.completed, StatusKeystroke.other, StatusReset.enter, nil),
+        (AgentStatus.completed, StatusKeystroke.submit, StatusReset.enter, AgentStatus.idle),
+        (AgentStatus.completed, StatusKeystroke.interrupt, StatusReset.enter, nil),
+        (AgentStatus.completed, StatusKeystroke.submit, StatusReset.never, nil),
+        // active ignores the reset mode and drops on an interrupt alone
+        (AgentStatus.active, StatusKeystroke.other, StatusReset.firstKey, nil),
+        (AgentStatus.active, StatusKeystroke.submit, StatusReset.firstKey, nil),
+        (AgentStatus.active, StatusKeystroke.interrupt, StatusReset.firstKey, AgentStatus.idle),
+        (AgentStatus.active, StatusKeystroke.interrupt, StatusReset.enter, AgentStatus.idle),
+        (AgentStatus.active, StatusKeystroke.interrupt, StatusReset.never, AgentStatus.idle),
+        (AgentStatus.idle, StatusKeystroke.interrupt, StatusReset.firstKey, nil),
+        (AgentStatus.idle, StatusKeystroke.submit, StatusReset.enter, nil),
+    ])
+    func afterKeystrokeFollowsTheResetModeAndAnswersBlockedIntoActive(
+        status: AgentStatus, keystroke: StatusKeystroke, reset: StatusReset, next: AgentStatus?
+    ) {
+        #expect(status.afterKeystroke(keystroke: keystroke, reset: reset) == next)
     }
 
     @Test func indicatorDefaults() {
@@ -89,37 +107,45 @@ struct AgentStatusTests {
     }
 
     @Test func afterKeystrokeMatchingPaneFollowsTheStatusTable() {
-        #expect(AgentIndicator(status: .blocked, statusPane: .right).afterKeystroke(pane: .right, isInterrupt: true)
-            == AgentIndicator())
-        #expect(AgentIndicator(status: .completed, statusPane: .scratch).afterKeystroke(pane: .scratch, isInterrupt: false)
-            == AgentIndicator())
-        #expect(AgentIndicator(status: .active, statusPane: .right).afterKeystroke(pane: .right, isInterrupt: false) == nil)
-        #expect(AgentIndicator(status: .active, statusPane: .right).afterKeystroke(pane: .right, isInterrupt: true)
-            == AgentIndicator())
-        #expect(AgentIndicator(status: .idle, statusPane: .right).afterKeystroke(pane: .right, isInterrupt: true) == nil)
+        let right = AgentIndicator(status: .blocked, statusPane: .right)
+        #expect(right.afterKeystroke(pane: .right, keystroke: .interrupt, reset: .firstKey) == AgentIndicator())
+        #expect(right.afterKeystroke(pane: .right, keystroke: .other, reset: .enter) == nil)
+        #expect(right.afterKeystroke(pane: .right, keystroke: .submit, reset: .never) == nil)
+        #expect(AgentIndicator(status: .completed, statusPane: .scratch)
+            .afterKeystroke(pane: .scratch, keystroke: .other, reset: .firstKey) == AgentIndicator())
+        #expect(AgentIndicator(status: .active, statusPane: .right)
+            .afterKeystroke(pane: .right, keystroke: .other, reset: .firstKey) == nil)
+        #expect(AgentIndicator(status: .active, statusPane: .right)
+            .afterKeystroke(pane: .right, keystroke: .interrupt, reset: .never) == AgentIndicator())
+        #expect(AgentIndicator(status: .idle, statusPane: .right)
+            .afterKeystroke(pane: .right, keystroke: .interrupt, reset: .firstKey) == nil)
     }
 
     @Test func afterKeystrokeAnsweredBlockPromotesToBlinkingActiveOnItsOwnPane() {
         let answered = AgentIndicator(status: .blocked, blink: true, color: "#ff0000", shape: .star, statusPane: .right)
-            .afterKeystroke(pane: .right, isInterrupt: false)
+            .afterKeystroke(pane: .right, keystroke: .other, reset: .firstKey)
         // the per-call overrides described the block, so the promotion drops them for the hook's plain look
         #expect(answered == AgentIndicator(status: .active, blink: true, statusPane: .right))
     }
 
     @Test func afterKeystrokeNonMatchingPaneNeverTransitions() {
-        #expect(AgentIndicator(status: .blocked, statusPane: .right).afterKeystroke(pane: .left, isInterrupt: false) == nil)
-        #expect(AgentIndicator(status: .blocked, statusPane: .right).afterKeystroke(pane: .left, isInterrupt: true) == nil)
-        #expect(AgentIndicator(status: .blocked, statusPane: .scratch).afterKeystroke(pane: .left, isInterrupt: false) == nil)
-        #expect(AgentIndicator(status: .active, statusPane: .scratch).afterKeystroke(pane: .right, isInterrupt: true) == nil)
+        let right = AgentIndicator(status: .blocked, statusPane: .right)
+        #expect(right.afterKeystroke(pane: .left, keystroke: .other, reset: .firstKey) == nil)
+        #expect(right.afterKeystroke(pane: .left, keystroke: .interrupt, reset: .firstKey) == nil)
+        #expect(AgentIndicator(status: .blocked, statusPane: .scratch)
+            .afterKeystroke(pane: .left, keystroke: .other, reset: .firstKey) == nil)
+        #expect(AgentIndicator(status: .active, statusPane: .scratch)
+            .afterKeystroke(pane: .right, keystroke: .interrupt, reset: .firstKey) == nil)
     }
 
     @Test func afterKeystrokeNilStatusPaneTreatedAsLeft() {
-        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .left, isInterrupt: false)
+        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .left, keystroke: .other, reset: .firstKey)
             == AgentIndicator(status: .active, blink: true, statusPane: .left))
-        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .right, isInterrupt: false) == nil)
-        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .scratch, isInterrupt: true) == nil)
-        #expect(AgentIndicator(status: .active).afterKeystroke(pane: .left, isInterrupt: true) == AgentIndicator())
-        #expect(AgentIndicator(status: .active).afterKeystroke(pane: .left, isInterrupt: false) == nil)
+        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .right, keystroke: .other, reset: .firstKey) == nil)
+        #expect(AgentIndicator(status: .blocked).afterKeystroke(pane: .scratch, keystroke: .interrupt, reset: .firstKey) == nil)
+        #expect(AgentIndicator(status: .active).afterKeystroke(pane: .left, keystroke: .interrupt, reset: .firstKey)
+            == AgentIndicator())
+        #expect(AgentIndicator(status: .active).afterKeystroke(pane: .left, keystroke: .other, reset: .firstKey) == nil)
     }
 
     @Test func indicatorEquatableEqual() {

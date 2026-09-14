@@ -102,14 +102,17 @@ SIGTERM use normal process behavior.
   tree to act on; default is the frontmost. With `--window` set, that window must be open. Without it,
   an id/prefix session target is matched across all open windows.
 - `window.*` commands take the window selector as a positional argument, default `active` (frontmost).
+  `window go` is the exception: it is relative to the active window and takes no selector.
 - A window need not be open to be a `window.*` target (e.g. `window select` opens a closed one).
 
 ## tree
 
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
-`id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
-when none reported; distinct from `name`, the derived sidebar label, which ignores the title unless the
-user turned on "Name sessions after the terminal title"), `active` (selected),
+`id`, `name`, `cwd`, `splitCwd` (the split pane's last reported directory, falling back to its restored
+directory, then the primary cwd; omitted without a split or on older servers), `title` (the raw OSC terminal
+title — e.g. a remote host over SSH — omitted when none reported; distinct from `name`, the derived sidebar
+label, which ignores the title unless the user turned on "Name sessions after the terminal title"),
+`active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
 `realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned and a
 `--command` has not run. `session text` then answers `session not realized` without realizing anything;
@@ -123,6 +126,11 @@ nothing here. Poll this after creating a session unattended; `agtermctl tree` al
 `(not realized)`),
 `backedByZmx` (true only when every existing primary/split pane is currently zmx-backed; older servers omit
 it),
+`liveAttribution` and `splitLiveAttribution` (primary and split pane attribution: `supervisor` identifies
+the bundled persistent host, `app` the running agterm, `orphaned` a self-responsible pane or a confirmed
+dead responsible process, and `unknown` an unavailable reading or an unrelated live responsible process;
+omitted for non-Live and remote panes; the split field includes hidden splits and is omitted without a
+split; these describe attribution, not permission grants),
 `remoteHost` (the machine an attached session came from — the read side of `zmx attach`; omitted for a
 local session, and never present after a relaunch because a remote session is never written to disk),
 `hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
@@ -394,7 +402,9 @@ buys nothing. A caller with no tree uses `version`.
   OSC 7 cwd the sidebar row shows and `session reveal` opens); selects + focuses the new session and
   returns its id. There are NO other options — the target session names both the destination workspace
   and the cwd — and `--target` defaults to `active`. It is equivalent to
-  `session new --cwd <source cwd> --after <source>` in ONE atomic round-trip.
+  `session new --cwd <source cwd> --after <source>` in ONE atomic round-trip, except that a remote
+  source's cwd goes through the local rule first (see Remote sessions): an existing local directory is
+  kept, anything else becomes home.
   ONLY the directory carries over: the duplicate is a plain login shell with the auto basename, and it
   does NOT inherit the source's custom name, `--command`, split, scratch, status, flag, font size, or
   background — it is "new session seeded with the source's cwd", not a clone of state. Errors: the usual
@@ -403,7 +413,8 @@ buys nothing. A caller with no tree uses `version`.
   directly after its source, carrying the source's focused-pane cwd. That equals the source node's
   `tree.cwd` for a non-split session (and a split focused on its primary pane); for a split focused off its
   primary the source node's `tree.cwd` reports the primary pane while the duplicate carries the focused
-  pane's directory. It is the control half of the sidebar row's **Duplicate Session** context-menu item
+  pane's directory, and for a remote source it is that cwd after the local rule, so it can read as home.
+  It is the control half of the sidebar row's **Duplicate Session** context-menu item
   (single-selection only).
 - `session close [--target T ...] [--window W]` — close one session, or repeat `--target` to close
   several sessions in the same window/store. Batch close honors the GUI grace-undo setting: one grouped
@@ -516,7 +527,7 @@ error keeps those names for compatibility.
   roles without restarting either process. Focus follows its terminal; split axis and ratio stay fixed.
   Works when the split is shown or hidden and under zoom/dashboard. Errors when there is no split or a
   surface is not ready. The new primary supplies `tree`'s `cwd`/`title`/`foreground`/`restoreCommand`/
-  `commandWait`; the other side supplies `splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
+  `commandWait`; the other side supplies `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
@@ -568,7 +579,8 @@ error keeps those names for compatibility.
   which pane set the status. It has three effects: (1) keystroke-clear becomes pane-scoped — a status set
   from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
   no longer wiped by foreground typing in the main pane, and only input in the OWNING pane clears it,
-  whether typed by hand or sent with `session type`), (2) while the session is `blocked`, a status from
+  whether typed by hand or sent with `session type`, and only as Settings ▸ Agent Status ▸ Status reset
+  allows: the first key by default, Return or a newline in the text under On Enter, never when Disabled), (2) while the session is `blocked`, a status from
   another pane that is not itself `blocked` is REFUSED with `blocked status owned by pane <pane>` —
   it changes nothing and plays no sound, so an agent working in one pane cannot erase the other pane's
   request for input; a second pane may still report its own `blocked`, `idle` is NOT exempt (Codex's
@@ -881,12 +893,19 @@ sandbox-local executable path.
   The GTK Linux frontend omits `geometry`: it restores and clamps size, but GTK4 does not provide
   reliable restorable x/y placement on Wayland or X11.
 - `window select <id>` — raise it if open, else open it.
+- `window go --to next|prev` — raise the next/previous OPEN window in library order, wrapping. Relative
+  to the active window, so it takes no id and no `--window`. Only open windows are stepped through: a
+  closed bundle is not a stop on the way round, and `window select` is what opens one. Returns the id it
+  landed on; errors `no other open window to navigate to` with a single window open. The GUI twins are
+  Navigate ▸ Previous/Next Window and the `previous_window`/`next_window` keymap actions, which ship
+  keyless.
 - `window close <id>` — close the on-screen window (the bundle is kept; reopen with select).
 - `window rename <id> <name>`.
 - `window delete <id>` — keep-at-least-one; deleting the last errors.
 - `window resize <id> --width W --height H` — frame size in points. The window must be open. The size is
   clamped into `[window min size, the display's visible frame]`, so an oversized or under-min request is
-  bounded to fit rather than applied verbatim.
+  bounded to fit rather than applied verbatim. Prints the applied width and height as `W H`; JSON reports
+  `result.width` and `result.height`, rounded to integer points like `window list` geometry.
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.
@@ -1198,11 +1217,12 @@ An explicit control notification bypasses focused-pane suppression; the terminal
 suppressed when its exact surface is already focused in the active window. Control-native (no
 GUI/menu equivalent).
 
-The banner is gated by **Settings ▸ Notifications ▸ Show notification banners**; the unseen badge is
-not. With banners off the command still succeeds and still raises the badge, but nothing reaches macOS
-— so it answers `ok` with an advisory `result.text` (`badge updated, but "Show notification banners" is
-off, so no banner was posted`) instead of a bare `ok`. Treat the presence of `result.text` as "no banner
-appeared"; a delivered notification carries none. The badge itself reads back on `tree` as `unseen`.
+The banner is gated by **Settings ▸ Notifications ▸ Show notification banners**; the unseen badge has its
+own toggle below it, **Show notification badges**, which hides the sidebar pill and the Dock count while the
+count keeps tracking and reads back on `tree` as `unseen`. With banners off the command still succeeds and
+still raises the badge, but nothing reaches macOS — so it answers `ok` with an advisory `result.text`
+(`badge updated, but "Show notification banners" is off, so no banner was posted`) instead of a bare `ok`.
+Treat the presence of `result.text` as "no banner appeared"; a delivered notification carries none.
 
 For agentic attention (waiting on input, or a finished result), prefer `session status` over `notify`
 and OSC 9/777. The two overlap, either can raise an "I need you" signal, but a notification is a
@@ -1312,7 +1332,14 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
   directory basename — or the focused pane's terminal title when the user turned on "Name sessions after
   the terminal title", which makes it remote-settable via OSC).
 - `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the working directory of the pane the command fired from;
-  the scratch terminal reports the main pane's, since it tracks no cwd of its own.
+  the scratch terminal reports the main pane's, since it tracks no cwd of its own. For a session opened
+  by `zmx attach` the path can be remote: the session starts with local HOME and follows subsequent cwd
+  reports. The command itself starts in that path only when it exists here as a directory, else in
+  local HOME. See Remote sessions.
+- `{AGT_SESSION_HOST}` / `$AGT_SESSION_HOST` — the SSH destination of a session opened by `zmx attach`,
+  verbatim as given (`user@alias` included); empty for a local session, an `ssh` typed into one included,
+  so branch on it: `if [ -n "$AGT_SESSION_HOST" ]; then ssh "$AGT_SESSION_HOST" uptime; fi` (a bare
+  `&&` chain exits 1 on a local session and the runner reports that as a failure).
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
 - `{AGT_PANE}` / `$AGT_PANE` — the pane the command fired from: `left` (main), `right` (split), or
   `scratch` (the session's scratch terminal). Feed it back as `session type --pane "$AGT_PANE"` to type
@@ -1329,7 +1356,7 @@ Built-in action names for `map` include: `new_window`, `new_workspace`, `new_ses
 `focus_workspace`, `toggle_workspace_filter`, `quick_terminal`,
 `session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
-`focus_left_pane`, `focus_right_pane`, `select_theme`). Editing the keymap from a terminal: open
+`previous_window`, `next_window`, `focus_left_pane`, `focus_right_pane`, `select_theme`). Editing the keymap from a terminal: open
 `keymap.conf` in `$EDITOR`, then `agtermctl keymap reload`.
 
 ## config
@@ -1470,6 +1497,18 @@ three-second undo. It refuses a daemon already gone, one zmx could not read (for
 live daemon's socket and leave it running unreachable), and a session inside its undo window. Killing the
 daemon of the pane you are typing in can kill the calling `agtermctl` before it reads the reply.
 
+`agtermctl zmx reset --force` — Agterm ▸ Reset Live Sessions… without the dialog. A live session created
+before the session host existed keeps its own macOS permission identity, so every new version of a tool in
+it asks for the microphone again; the reset ends those sessions' processes at the next launch and recreates
+them under the host, starting their captured commands again where possible. agterm quits and reopens itself
+right after answering, so running work in the affected sessions stops and agent conversations may need to be
+resumed by hand; run from inside one of those sessions it kills the calling shell. Sessions already
+supervised are left alone. It refuses outside Live sessions mode, while a mode change waits for a restart,
+on an incomplete pane inventory, and when nothing needs resetting. The reply carries `result.liveReset`
+with the session and pane counts; the next launch re-checks every session and only ever resets fewer than
+confirmed, and the tree's top-level `liveReset` reports `pending` until the quit and `last` for the launch
+that consumed the reset.
+
 `--window ID` scopes the search to one window's claims, for a session prefix claimed in more than one.
 Omit it to search every window, closed and unindexed ones included; `active` is not accepted, and neither
 is it for `--target`. Without it an ambiguous prefix reports `no left pane daemon for session ID`, the
@@ -1494,8 +1533,11 @@ pane, and be new enough to answer `zmx tree` at all; an older one is refused by 
 half-attached. It also needs `agtermctl` installed by the cask or the Help action: a machine merely
 running agterm has no CLI an ssh command can find, and the read fails with exit 127.
 
-`agtermctl zmx attach HOST SESSION` — open one of those sessions here, marked remote, in the current
-window's current workspace, selected, with the remote session's split when it has one. `SESSION` is the
+`agtermctl zmx attach HOST SESSION [--window W]` opens one of those sessions here, marked remote, in
+the destination window's current workspace, selected, with the remote session's split when it has one.
+`--window` takes a local open window ID, unique prefix, or `active`; omitted, it uses the frontmost window
+after discovery. An invalid or closed destination fails without creating a session. Targeting a background
+window leaves the frontmost window unchanged. `SESSION` is the
 `id` from `zmx tree`, never the name: remote names are editable and repeat across workspaces. Returns the
 new local session's `id`; read `remoteHost` on its tree node. The remote is resolved AGAIN before anything
 is created, so a session that has gone since the listing fails and creates nothing. Everything reported
@@ -1506,6 +1548,19 @@ and the exit status.
 Closing a remote session here ends only this side's connection: the far-side processes keep running and
 nothing agterm does from this end can kill them. It is never written to disk, so it does not come back
 after a relaunch whatever the restore mode is.
+
+The pane reports the far side's working directory, and the local launches that would inherit it pick
+their start directory by one rule: the reported path when it exists here as a directory, else local
+HOME. Those launches are a custom command (its `$AGT_SESSION_PWD` keeps the reported path and
+`$AGT_SESSION_HOST` names the destination), the scratch terminal, an overlay opened without `--cwd`,
+the quick terminal, a local split (the first one on a remote session that arrived without a split, or
+one opened after the attach-time split is closed), Duplicate Session, and New Session when it is set
+to open in the current session's directory. An explicit overlay `--cwd` is used as given. Quote both
+variables; an existing local path is not checked to be the same repository as the remote one.
+
+When another client leads at a different terminal size, local cursor and screen-text reads can disagree
+with the application's layout; automation relying on those reads, including the chat transport, is
+unsupported in that state.
 
 Both commands run ssh non-interactively (`BatchMode`), so key-based auth must already work for the host —
 a password or host-key prompt is a failure, not a question. An attach joins as a follower and pinned zmx

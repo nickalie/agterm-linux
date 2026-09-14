@@ -246,6 +246,9 @@ struct SocketClient {
             // payload ever gains a row: a second field belongs under --json, not in a format callers parse.
             return "\(cursor.column)"
         }
+        if let width = response.result?.width, let height = response.result?.height {
+            return "\(width) \(height)"
+        }
         if let ratio = response.result?.ratio {
             // session.resize echoes the applied (clamped) primary-pane fraction, scriptable as a bare number.
             return String(format: "%.3f", ratio)
@@ -409,8 +412,11 @@ struct SocketClient {
                 let realizedTag = session.realized == false ? " (not realized)" : ""
                 let tags = splitTag + realizedTag + (session.overlay ? " (overlay)" : "")
                     + (session.scratch ? " (scratch)" : "")
+                let splitCwdSuffix = session.splitCwd.map { $0 == session.cwd ? "" : "  split cwd: \($0)" } ?? ""
                 let titleSuffix = session.title.map { "  title: \($0)" } ?? ""
-                lines.append("  \(smark) \(session.name)\(tags)  [\(session.id)]  \(session.cwd)\(titleSuffix)")
+                let attribution = session.liveAttribution.map { "  live attribution: \($0)" } ?? ""
+                let splitAttribution = session.splitLiveAttribution.map { "  split live attribution: \($0)" } ?? ""
+                lines.append("  \(smark) \(session.name)\(tags)  [\(session.id)]  \(session.cwd)\(splitCwdSuffix)\(titleSuffix)\(attribution)\(splitAttribution)")
             }
         }
         return lines.joined(separator: "\n")

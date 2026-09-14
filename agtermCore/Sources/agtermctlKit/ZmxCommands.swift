@@ -15,15 +15,47 @@ struct Zmx: ParsableCommand {
         Every one needs a running agterm: only the app can join its live windows, its pending closes and \
         its persisted snapshots against what zmx reports. With agterm stopped there is nothing to ask.
         """,
-        subcommands: [List.self, Prune.self, Kill.self, Tree.self, Attach.self]
+        subcommands: [List.self, Prune.self, Kill.self, Reset.self, Tree.self, Attach.self]
     )
+
+    struct Reset: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Reset the live sessions this app does not supervise, then quit and reopen agterm.",
+            discussion: """
+            The same operation as Agterm > Reset Live Sessions, without the dialog. A live session created \
+            before the session host existed keeps its own macOS permission identity, so every new version \
+            of a tool in it asks for the microphone again. The reset ends those sessions' processes at the \
+            next launch and recreates them under the host, starting their captured commands again where \
+            possible. Sessions already supervised are left alone.
+
+            agterm quits and reopens itself right after answering. Running work in the affected sessions \
+            stops, and agent conversations may need to be resumed by hand. Run from inside one of those \
+            sessions, this kills the shell this agtermctl runs in.
+
+            It refuses outside Live sessions mode, when a mode change is waiting for a restart, when the \
+            pane inventory is incomplete, and when nothing needs resetting. The next launch re-checks every \
+            session and only ever resets fewer than confirmed; the tree's `liveReset` reports the result.
+            """)
+        @Flag(name: .long, help: "Required. Confirms ending the processes in every affected live session.")
+        var force = false
+
+        @OptionGroup var options: BasicOptions
+
+        func validate() throws {
+            guard force else { throw ValidationError("--force is required to end the processes in the affected live sessions") }
+        }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .zmxReset, args: ControlArgs(force: true))
+        }
+    }
 
     struct Attach: RequestCommand {
         static let configuration = CommandConfiguration(
             abstract: "Attach to a session on another Mac, as a session here.",
             discussion: """
-            Takes a host and the id of one of the sessions `zmx tree` listed, and opens it in this window \
-            marked as remote. A remote session with a split arrives with the same split.
+            Takes a host and the id of one of the sessions `zmx tree` listed, and opens it in the chosen window \
+            marked as remote. Defaults to the frontmost window after discovery. A remote session with a split arrives with the same split.
 
             The remote is resolved again before anything is created, so a session that has gone since the \
             list was taken fails rather than handing back a fresh shell wearing its name.
@@ -35,13 +67,15 @@ struct Zmx: ParsableCommand {
         var host: String
         @Argument(help: "The remote session's id, as `zmx tree` prints it.")
         var session: String
+        @Option(help: "Local open window id, unique prefix, or active (default: frontmost after discovery).")
+        var window: String?
         @OptionGroup var options: BasicOptions
 
         /// It creates a local session, so it echoes that session's id like every other create command.
         var echoesResultID: Bool { true }
 
         func makeRequest() throws -> ControlRequest {
-            ControlRequest(cmd: .zmxAttach, target: session, args: ControlArgs(host: host))
+            ControlRequest(cmd: .zmxAttach, target: session, args: ControlArgs(host: host, window: window))
         }
     }
 

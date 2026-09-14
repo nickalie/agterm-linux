@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "agtermCore", targets: ["agtermCore"]),
         .library(name: "agtermctlKit", targets: ["agtermctlKit"]),
+        .library(name: "AgtermResponsibility", targets: ["AgtermResponsibility"]),
         .executable(name: "agtermctl", targets: ["agtermctl"]),
     ],
     dependencies: [
@@ -15,6 +16,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "agtermCore", dependencies: [.product(name: "TOMLDecoder", package: "TOMLDecoder")]),
+        .target(name: "AgtermResponsibility"),
         .testTarget(name: "agtermCoreTests", dependencies: ["agtermCore"]),
         .target(
             name: "agtermctlKit",
@@ -28,3 +30,17 @@ let package = Package(
     ],
     swiftLanguageModes: [.v6]
 )
+
+#if os(macOS)
+package.products.append(.executable(name: "agterm-session-host", targets: ["agterm-session-host"]))
+package.targets += [
+    .target(name: "SessionHostTrampoline"),
+    .target(name: "SessionHostRuntime", dependencies: ["SessionHostTrampoline", "AgtermResponsibility", "agtermCore"]),
+    .executableTarget(name: "agterm-session-host", dependencies: ["SessionHostRuntime"]),
+    // The fixtures need a socket client they can copy into a test bundle, which /usr/bin/nc
+    // cannot be (see the target's own comment).
+    .executableTarget(name: "session-host-test-client"),
+    .testTarget(name: "SessionHostRuntimeTests",
+                dependencies: ["SessionHostRuntime", "agterm-session-host", "session-host-test-client"]),
+]
+#endif

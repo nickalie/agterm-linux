@@ -198,7 +198,13 @@ struct WorkspaceSidebar: NSViewRepresentable {
             // seed from the live mirror (SettingsModel applies the persisted size before any sidebar is
             // built) so the first appearanceChanged doesn't rebuild for no change.
             lastSidebarFontSize = GhosttyApp.shared.sidebarFontSize
-            renameController.onRenameEnded = { [weak self] in self?.focusActiveTerminal() }
+            renameController.onRenameEnded = { [weak self] node in
+                guard let self, !renameController.isEditing, !renameController.isCommitting else { return }
+                if let node, let outline = outlineView, outline.row(forItem: node) >= 0 {
+                    outline.reloadItem(node)
+                }
+                focusActiveTerminal()
+            }
             // the menu/palette can't reach the inline editor directly, so they post a notification. Scoped
             // by `object: store`: the handlers' selected-session guard is NOT a per-window scope, so an
             // `object: nil` pairing starts an inline edit in EVERY window — each leaving an unopened editor
@@ -773,9 +779,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         lazy var flaggedSessionIcon = Self.rowIcon("terminal.fill")
         lazy var flaggedSplitSessionIcon = Self.rowIcon("rectangle.split.2x1.fill")
         lazy var flaggedHorizontalSplitSessionIcon = Self.rowIcon("rectangle.split.1x2.fill")
-        lazy var remoteSessionIcon = Self.rowIcon("arrow.up.forward.bottomleading.rectangle")
-        lazy var remoteSplitSessionIcon = Self.rowIcon("arrow.up.forward.bottomleading.rectangle",
-                                                       weight: .bold)
+        lazy var remoteSessionIcon = Self.rowIcon("cloud")
+        lazy var remoteSplitSessionIcon = Self.rowIcon("cloud", weight: .bold)
 
         private static func rowIcon(_ symbolName: String, weight: NSFont.Weight = .regular) -> NSImage? {
             let config = NSImage.SymbolConfiguration(pointSize: 13, weight: weight)

@@ -57,6 +57,7 @@ final class MockControlActions: ControlActions {
         case zmxList
         case zmxPrune
         case zmxKill(target: String, window: String?, pane: ZmxPaneRole)
+        case zmxReset
         case zmxTree(host: String?)
         case zmxAttach(host: String, session: String)
         case sidebarVisibility(ControlToggleMode)
@@ -86,6 +87,7 @@ final class MockControlActions: ControlActions {
         case windowNew(String?, minimized: Bool)
         case windowList
         case windowSelect(target: String?)
+        case windowGo(WorkspaceNavigation)
         case windowClose(target: String?)
         case windowRename(target: String?, String)
         case windowDelete(target: String?)
@@ -137,6 +139,7 @@ final class MockControlActions: ControlActions {
     var nextZmxListResponse = ControlResponse(ok: true)
     var nextZmxPruneResponse = ControlResponse(ok: true)
     var nextZmxKillResponse = ControlResponse(ok: true)
+    var nextZmxResetResponse = ControlResponse(ok: true)
     var nextRemoteTreeResponse = ControlResponse(ok: true)
     var nextRemoteAttachResponse = ControlResponse(ok: true)
     var nextQuickResponse = ControlResponse(ok: true)
@@ -164,6 +167,7 @@ final class MockControlActions: ControlActions {
     var nextWindowNewResponse = ControlResponse(ok: true)
     var nextWindowListResponse = ControlResponse(ok: true)
     var nextWindowSelectResponse = ControlResponse(ok: true)
+    var nextWindowGoResponse = ControlResponse(ok: true)
     var nextWindowCloseResponse = ControlResponse(ok: true)
     var nextWindowRenameResponse = ControlResponse(ok: true)
     var nextWindowDeleteResponse = ControlResponse(ok: true)
@@ -441,6 +445,11 @@ final class MockControlActions: ControlActions {
         return nextZmxKillResponse
     }
 
+    func resetLiveSessions() -> ControlResponse {
+        calls.append(.zmxReset)
+        return nextZmxResetResponse
+    }
+
     func remoteTree(host: String?) async -> ControlResponse {
         calls.append(.zmxTree(host: host))
         return nextRemoteTreeResponse
@@ -599,6 +608,11 @@ final class MockControlActions: ControlActions {
     func windowSelect(_ target: String?) async -> ControlResponse {
         calls.append(.windowSelect(target: target))
         return nextWindowSelectResponse
+    }
+
+    func windowGo(direction: WorkspaceNavigation) -> ControlResponse {
+        calls.append(.windowGo(direction))
+        return nextWindowGoResponse
     }
 
     func windowClose(_ target: String?) async -> ControlResponse {

@@ -62,6 +62,14 @@ attached to it:
 agtermctl zmx kill --target 3f2a --pane left --force
 ```
 
+To move every live session created before the session host under it, so a tool's microphone permission
+stops being asked per version, reset them. agterm quits and reopens itself right after the reply, so run
+this from outside the sessions it affects, or expect the calling shell to end:
+
+```bash
+agtermctl zmx reset --force
+```
+
 ## Attach a session running on another Mac
 
 List what the other machine offers across every open window, then open one here by its ID. The far side
@@ -72,6 +80,8 @@ the same of this app, which is the form the remote call runs over there:
 ```bash
 agtermctl zmx tree studio.local
 agtermctl zmx attach studio.local 7c1e4a02-...
+# Place it in a specific open local window.
+agtermctl zmx attach studio.local 7c1e4a02-... --window "$window_id"
 ```
 
 To let the user choose, pipe the listing through the picker:
@@ -203,8 +213,10 @@ agtermctl session new --cwd "$HOME/project" --no-select
 `session duplicate` creates a fresh session — a plain login shell — in the SAME workspace as the target,
 directly AFTER it, rooted at the target's focused-pane cwd, then selects + focuses it and prints the new
 id. ONLY the directory carries over: no custom name, `--command`, split, scratch, status, flag, font size,
-or background. It is `session new --cwd <source cwd> --after <source>` in one atomic round-trip, and the
-control half of the sidebar row's **Duplicate Session** context-menu item.
+or background. It is `session new --cwd <source cwd> --after <source>` in one atomic round-trip, except
+that a remote source's cwd goes through the local rule first (an existing local directory is kept,
+anything else becomes home), and the control half of the sidebar row's **Duplicate Session**
+context-menu item.
 
 ```bash
 agtermctl session duplicate                                    # a second shell beside the current session, same cwd
@@ -216,7 +228,8 @@ Read it back off `tree` — there is no new tree field: the duplicate's node app
 source, carrying the source's focused-pane cwd. That equals the source node's `tree.cwd` for a non-split
 session (and a split focused on its primary pane); for a split focused off its primary the source node's
 `tree.cwd` reports the primary while the duplicate carries the focused pane's directory, so compare against
-the pane you duplicated from.
+the pane you duplicated from; for a remote source the duplicate carries that cwd after the local rule, so
+it can read as home.
 
 ## Build a small layout
 
@@ -454,11 +467,11 @@ and read it back — the twins of `session type`/`session text`, but always the 
 terminal (no `--target`/`--pane`).
 
 ```bash
-agtermctl quick show                                 # drop the overlay over whatever is active
-agtermctl quick type 'ls -la'$'\n'                   # inject keystrokes (\n runs it)
-echo "some payload" | agtermctl quick type --stdin   # pipe stdin in (e.g. a paste helper)
-agtermctl quick text --all                           # read its screen + scrollback back
-agtermctl tree | jq .quickVisible                    # is it open right now?
+agtermctl quick show                                    # drop the overlay over whatever is active
+agtermctl quick type 'ls -la'$'\n'                      # inject keystrokes (\n runs it)
+echo "some payload" | agtermctl quick type --stdin      # pipe stdin in (e.g. a paste helper)
+agtermctl quick text --all                              # read its screen + scrollback back
+agtermctl tree --json | jq '.result.tree.quickVisible'  # is it open right now?
 ```
 
 ## Flag a working set and view just the flagged sessions
@@ -1033,6 +1046,7 @@ agtermctl window zoom "$w"                 # maximize-to-screen toggle (call aga
 agtermctl window fullscreen "$w"           # native macOS full screen toggle (⌃⌘F / green button)
 agtermctl window minimize "$w" on          # park it in the Dock (off restores, toggle flips)
 agtermctl window select "$w"               # raise it, un-minimizing if it was parked
+agtermctl window go --to next              # raise the next OPEN window, wrapping (next|prev)
 ```
 
 `window new` returns only once the window is really on screen, so the `window resize` above works on the

@@ -1,3 +1,29 @@
+/// StatusReset is which keystroke moves a `blocked` or `completed` glyph: the first key, a submit (Return),
+/// or none. Raw-stored in `AppSettings.statusReset`, resolved by `effectiveStatusReset`.
+public enum StatusReset: String, Codable, Sendable, CaseIterable {
+    case firstKey
+    case enter
+    case never
+
+    /// Whether a keystroke may move an attention glyph at all. `enter` admits the submit alone, so an
+    /// interrupt leaves `blocked`/`completed` where it is and only `active`, which ignores this gate, drops.
+    func moves(_ keystroke: StatusKeystroke) -> Bool {
+        switch self {
+        case .firstKey: return true
+        case .enter: return keystroke == .submit
+        case .never: return false
+        }
+    }
+}
+
+/// StatusKeystroke is what one keystroke means to the glyph: an interrupt (Escape or Ctrl-C), a submit
+/// (Return with no modifier, or injected text carrying a newline), or plain typing.
+public enum StatusKeystroke: Sendable, Equatable {
+    case interrupt
+    case submit
+    case other
+}
+
 /// AgentStatus is the per-session agent state driven over the control channel (`session.status`).
 /// `idle` means nothing is shown; the other cases each render a tinted sidebar glyph.
 public enum AgentStatus: String, Codable, Sendable, CaseIterable {
@@ -10,24 +36,27 @@ public enum AgentStatus: String, Codable, Sendable, CaseIterable {
     public var needsAttention: Bool { self == .blocked || self == .completed }
 
     /// The state a keystroke in the session's terminal moves this one to, or nil to leave it alone.
-    /// `completed` clears on ANY key (you've engaged with the finished result), and `active` clears ONLY on an
-    /// interrupt (Escape or Ctrl-C), so typing while the agent works keeps the "working" glyph. That covers the
-    /// quick-cancel case: a pending question can still read `active` when you cancel it (Claude Code's
-    /// `blocked` notification lands seconds later) and the interrupt fires no hook, so nothing else drops the
-    /// stale value.
+    /// `blocked` and `completed` move as `reset` says: on any key (you've engaged with the prompt / the
+    /// finished result), on a submit only (a reply you started and walked away from keeps the glyph until you
+    /// send it), or never. `active` clears ONLY on an interrupt (Escape or Ctrl-C) in every mode, so typing
+    /// while the agent works keeps the "working" glyph. That covers the quick-cancel case: a pending question
+    /// can still read `active` when you cancel it (Claude Code's `blocked` notification lands seconds later)
+    /// and the interrupt fires no hook, so nothing else drops the stale value.
     ///
-    /// `blocked` splits on the same flag rather than clearing outright. An ordinary key there is you ANSWERING
+    /// Where upstream clears `blocked` outright, this fork ANSWERS it into `active`. The key is you answering
     /// the prompt, and the agent then works with NO hook announcing it — Claude Code's next event is
     /// `PostToolUse`, which lands only once the approved tool has finished, and its `PreToolUse` already fired
     /// before the prompt. Clearing to idle therefore left the glyph dark for the whole run, which is exactly
     /// the run you approved and walked away from. An interrupt stays the decline and still goes idle.
     /// The cost is that a stale `blocked` left by a dead agent becomes a stale `active` once you type; Esc,
     /// Ctrl-C and Clear Status drop it as they always did.
-    func afterKeystroke(isInterrupt: Bool) -> AgentStatus? {
+    func afterKeystroke(keystroke: StatusKeystroke, reset: StatusReset) -> AgentStatus? {
         switch self {
-        case .blocked: return isInterrupt ? .idle : .active
-        case .completed: return .idle
-        case .active: return isInterrupt ? .idle : nil
+        case .blocked:
+            guard reset.moves(keystroke) else { return nil }
+            return keystroke == .interrupt ? .idle : .active
+        case .completed: return reset.moves(keystroke) ? .idle : nil
+        case .active: return keystroke == .interrupt ? .idle : nil
         case .idle: return nil
         }
     }
@@ -139,9 +168,9 @@ public struct AgentIndicator: Equatable, Sendable {
     /// Only the pane OWNING the status may move it, so foreground typing can't wipe a background pane's glyph.
     /// The `blocked`→`active` promotion keeps the pane tag and blinks — matching the `active --blink` the hook
     /// would have set — but drops the per-call color and shape, which described the state being left.
-    public func afterKeystroke(pane: StatusPane, isInterrupt: Bool) -> AgentIndicator? {
+    public func afterKeystroke(pane: StatusPane, keystroke: StatusKeystroke, reset: StatusReset) -> AgentIndicator? {
         guard (statusPane ?? .left) == pane,
-              let next = status.afterKeystroke(isInterrupt: isInterrupt) else { return nil }
+              let next = status.afterKeystroke(keystroke: keystroke, reset: reset) else { return nil }
         return next == .idle ? AgentIndicator() : AgentIndicator(status: next, blink: true, statusPane: pane)
     }
 

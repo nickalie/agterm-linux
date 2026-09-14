@@ -43,9 +43,12 @@ the control channel is available:
   per-surface token. The role is not rewritten after promotion or swap; the token resolves the LIVE slot.
   Prefer `--pane-id "$AGTERM_PANE_ID"` where supported, including `session status`, `session restore` and
   `session text`. The agent-status hook forwards both values for compatibility.
+- `TERM_PROGRAM=agterm` / `TERM_PROGRAM_VERSION` (agterm's version): the terminal identity, replacing
+  the `ghostty` pair embedded libghostty would set. A tool that decides a capability from a list of
+  terminal names (Claude Code's OSC 8 hyperlinks) needs its own override; see troubleshooting.md.
 
-The quick terminal is scratch (not in the tree) and belongs to no window, so it only gets
-`AGTERM_ENABLED` and `AGTERM_SOCKET` (no session/workspace/window ids). An untargeted `agtermctl` run
+The quick terminal is scratch (not in the tree) and belongs to no window, so of the `AGTERM_*` variables
+it only gets `AGTERM_ENABLED` and `AGTERM_SOCKET` (no session/workspace/window ids). An untargeted `agtermctl` run
 from it therefore resolves the active window like any other caller.
 
 These variables are inherited by every process the session's shell spawns — including long-lived
@@ -92,9 +95,11 @@ One slot, so a session shows either a HUD or a program overlay, never both. Sepa
 or whatever share Settings sets instead; not part of the tree and not owned by a window).
 
 Inspect the live tree any time with `agtermctl tree --json` (workspaces → sessions, each with
-`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `hud`, `ask`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
+`id`, `name`, `cwd`, `splitCwd`, `title`, `active`, `split`, `overlay`, `hud`, `ask`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
 terminal title (e.g. a remote host over SSH), omitted when none was reported — read it when a
-session's local `cwd` is stale because it's connected to a remote. `surfaces[].id` is the
+session's local `cwd` is stale because it's connected to a remote. `splitCwd` is the split pane's last
+reported directory, falling back to its restored directory, then the primary cwd. It is present for a
+shown or hidden split and omitted without one or on older servers. `surfaces[].id` is the
 control address for `surface zoom` and `surface cursor` (`left`, `right`, `scratch`, `overlay`,
 `overlay-left`, or `overlay-right`), including hidden-but-alive split/scratch surfaces. The tree object also carries
 read-only top-level fields — `idleMs` (ms since the last user input in the window), `autoFollowMs`
@@ -235,6 +240,8 @@ created by a scheduled job overnight stays unrealized until the displays wake an
 Poll this after an unattended create),
 `backedByZmx` (true only when every existing primary/split pane is currently zmx-backed; primary/split
 entries in `surfaces` report their own Boolean, while scratch and overlays omit it),
+`liveAttribution` and `splitLiveAttribution` (local Live pane attribution, including hidden splits;
+[values and omission rules](reference.md#tree)),
 `remoteHost` (the machine an attached session came from, the read side of `zmx attach`; omitted for a local
 session, and never present after a relaunch because a remote session is not persisted),
 `hasSplit` (whether a second pane exists at all, shown or hidden; omitted when there is none — read this
@@ -309,10 +316,12 @@ omitted when expanded).
 - `session duplicate [--target]` — create a fresh session (a plain login shell) in the target's workspace, right
   after it, rooted at the target's focused-pane cwd; selects + focuses it and returns the new id. ONLY the
   directory carries over — no custom name, command, split, scratch, status, flag, font size, or background.
-  Equivalent to `session new --cwd <source cwd> --after <source>` in one round-trip. Read it back from
-  `tree`: the new node sits directly after its source carrying the source's focused-pane cwd (equal to the
-  source node's `tree.cwd` unless the source is a split focused off its primary pane, where `tree.cwd`
-  reports the primary).
+  Equivalent to `session new --cwd <source cwd> --after <source>` in one round-trip, except that a remote
+  source's cwd goes through the local rule first (an existing local directory is kept, anything else
+  becomes home). Read it back from `tree`: the new node sits directly after its source carrying the
+  source's focused-pane cwd (equal to the source node's `tree.cwd` unless the source is a split focused
+  off its primary pane, where `tree.cwd` reports the primary, or a remote session, where it can read as
+  home).
 - `session close [--target T ...]` — close one session, or repeat `--target` to close a batch with one
   grace-period undo.
 - `session select` · `session rename <name>` · `session reveal` (select the focused pane's cwd in Finder).
@@ -333,7 +342,9 @@ omitted when expanded).
   open runs in the hidden shell and is invisible until it closes. There is no write twin of
   `session overlay text`: an overlay runs the caller's own program, so nothing types into one. Typing is the
   input a waiting agent asked for, so it clears that pane's `blocked`/`completed` glyph exactly as a
-  keystroke does; another pane's glyph, an `active` one, and an empty payload are left alone.
+  keystroke does, under Settings ▸ Agent Status ▸ Status reset: on the first key by default, only when the
+  text carries a newline under On Enter, never when Disabled; another pane's glyph, an `active` one, and an
+  empty payload are left alone.
 - `session copy` — print the session's selected text (does NOT touch the system clipboard).
 - `session paste` — paste the system clipboard into the session (the socket analogue of ⌘V; read it back with
   `session text`). `--pane left|right|scratch` picks the pane, with the usual role and position aliases;
@@ -354,7 +365,7 @@ omitted when expanded).
 - `session swap`: exchange the two terminals' physical positions and primary/split roles without restarting
   them. Focus follows the terminal; axis and divider ratio stay fixed. Works on shown or hidden splits and
   under zoom/dashboard; errors when there is no split or either surface is not ready. Read the new primary
-  from `tree`'s `cwd`/`title`/`foreground` and the other side from `splitForeground`.
+  from `tree`'s `cwd`/`title`/`foreground` and the other side from `splitCwd`/`splitForeground`.
 - `session scratch [on|off|toggle] [--command CMD]` — full-coverage third shell (hide keeps it alive; `exit`
   recreates). `--command` (when showing) runs a program instead of a shell, run-once like `session new
   --command` (respawns the scratch if one is open). Target your own session with
@@ -473,7 +484,10 @@ omitted when expanded).
   and `surface zoom` will not address it. `session hud update`/`session hud close` with none up answer `no hud`. Read it
   back from the tree node's `hud` object; nothing announces it as an event, so poll `tree`.
 
-**window** — `window new [name] [--minimized]` · `window list` · `window select <id>` · `window close <id>` ·
+**window** — `window new [name] [--minimized]` · `window list` · `window select <id>` ·
+`window go --to next|prev` (raise the next/previous OPEN window, wrapping; relative, so it takes no id, and a
+closed bundle is not a stop — `window select` opens one. Errors with one window open. GUI twins: Navigate ▸
+Previous/Next Window and the keyless `previous_window`/`next_window` keymap actions) · `window close <id>` ·
 `window rename <id> <name>` ·
 `window delete <id>` · `window resize <id> --width W --height H` · `window move <id> --x X --y Y [--display N]` ·
 `window zoom <id>` (maximize-to-screen toggle, the double-click-header gesture; a plain green-button click does full screen) ·
@@ -481,6 +495,9 @@ omitted when expanded).
 `window minimize <id> [on|off|toggle]` (minimize to the Dock or restore, the ⌘M / yellow-button action; default
 `toggle`, the id may be omitted so `window minimize on` targets the active window; errors on a full-screen
 window; read back as `minimized` on `window list`).
+
+`window resize` prints the applied width and height as `W H`, after clamping. JSON reports
+`result.width` and `result.height` in integer points, matching `window list` geometry.
 
 **surface** — `surface zoom [show|hide|toggle] [--target surface:<session-id>:left|right|scratch|overlay|overlay-left|overlay-right|quick] [--window W]`
 — zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
@@ -595,13 +612,19 @@ refusing outright on an incomplete or conflicted inventory, and reporting each d
 stale-socket cleanup is not a kill · `zmx kill --target ID --pane left|right --force` - destroy one pane's
 daemon and the process in it; all three are required because this kills a backend process that reaches a
 pane no window is showing and every client attached to it, and none of its outcomes gets the undo grace ·
+`zmx reset --force` - Agterm ▸ Reset Live Sessions… without the dialog: ends every live session this app
+does not supervise at the next launch and recreates it under the session host, quitting and reopening
+agterm right after the reply; refused outside Live mode, on an incomplete inventory, and with nothing to
+reset ·
 `zmx tree [HOST]` - attachable sessions across EVERY open window, on another Mac with a HOST or this app
 without one (the bare form is exactly what the remote call runs on the far side). Each row carries the id
 `zmx attach` takes plus `windowID`/`windowName`, `workspaceID`/`workspaceName` (show the names, group by
 the ids: neither is unique), `context` when set, and per-pane `foreground`; only a session whose every pane
 still has a live daemon is listed, and an empty list does NOT mean the far side is not in live mode -
 `zmx list` reports that · `zmx attach
-HOST SESSION` - open one of them here, marked remote and carrying its split; takes the ID from that
+HOST SESSION [--window W]` - open one of them here, marked remote and carrying its split, in the
+chosen open local window's current workspace (default: frontmost after discovery). A background target
+keeps the frontmost window unchanged; an invalid or closed target fails. Takes the ID from that
 listing, not the name, and resolves the remote again first, so a session that has gone fails instead of
 handing back a fresh shell wearing its name. Closing it here ends only this side's connection and it is
 never restored after a relaunch. Both run ssh non-interactively, so key-based auth must already work, and

@@ -11,7 +11,8 @@ extension WindowContentView {
     var titleLabel: TitlebarLabel {
         TitlebarLabel(store: store, library: library, windowID: windowID, toolbarMode: toolbarMode,
                       chromeText: chromeText, showsSessionName: shows(.sessionName),
-                      showsWindowName: shows(.windowName), showsContext: shows(.sessionContext))
+                      showsWindowName: shows(.windowName), showsContext: shows(.sessionContext),
+                      showsRemoteHost: shows(.remoteHost))
     }
 
     /// Feeds the OS window title to `WindowAccessor` from its own body, for the same reason as `titleLabel`.
@@ -41,8 +42,8 @@ extension WindowContentView {
 
     /// Custom titlebar row replacing the system toolbar: the sidebar toggle pinned to the sidebar's trailing
     /// edge (by the divider), the title at the terminal's start, and the trailing cluster (recent-sessions /
-    /// attention popovers, divider, scratch / split controls, divider, dashboard / quick terminal). Positions
-    /// track `sidebarWidth`; the left inset clears the system traffic lights.
+    /// attention popovers, divider, scratch / split controls, divider, dashboard / quick terminal / custom
+    /// commands). Positions track `sidebarWidth`; the left inset clears the system traffic lights.
     private var titlebarRow: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: 78).allowsHitTesting(false) // system traffic lights
@@ -86,9 +87,10 @@ extension WindowContentView {
     }
 
     /// The title bar's trailing action cluster, each button gated by its Interface toggle: recent-sessions /
-    /// attention popovers, per-session scratch / split controls, window-overlay dashboard / quick terminal.
-    /// A separator sits ONLY where two groups that each still show 2+ buttons meet, so a group reduced to one
-    /// button flows in unbracketed and an empty group lets its neighbors meet directly.
+    /// attention popovers, per-session scratch / split controls, window-overlay dashboard / quick terminal
+    /// and the custom-commands popover. A separator sits ONLY where two groups that each still show 2+
+    /// buttons meet, so a group reduced to one button flows in unbracketed and an empty group lets its
+    /// neighbors meet directly.
     private var titlebarTrailingActions: some View {
         let showRecent = shows(.recentSessions)
         let showAttention = attentionButtonEnabled // the bell keeps its own separate Notifications setting
@@ -96,9 +98,10 @@ extension WindowContentView {
         let showSplit = shows(.split)
         let showDashboard = shows(.dashboard)
         let showQuick = shows(.quickTerminal)
+        let showCustom = shows(.customCommands)
         let countA = (showRecent ? 1 : 0) + (showAttention ? 1 : 0)
         let countB = (showScratch ? 1 : 0) + (showSplit ? 1 : 0)
-        let countC = (showDashboard ? 1 : 0) + (showQuick ? 1 : 0)
+        let countC = (showDashboard ? 1 : 0) + (showQuick ? 1 : 0) + (showCustom ? 1 : 0)
         // a separator only between two 2+-button groups (the host-free rule, unit-tested in agtermCore).
         let dividers = InterfaceElement.titlebarGroupDividers(countA: countA, countB: countB, countC: countC)
         return HStack(spacing: 14) {
@@ -110,6 +113,7 @@ extension WindowContentView {
             if dividers.afterB { titlebarDivider }
             if showDashboard { dashboardButton.labelStyle(.iconOnly) }
             if showQuick { quickTerminalButton.labelStyle(.iconOnly) }
+            if showCustom { customCommandsButton.labelStyle(.iconOnly) }
         }
         .padding(.trailing, 14)
     }
@@ -228,12 +232,33 @@ struct TitlebarLabel: View {
     let showsSessionName: Bool
     let showsWindowName: Bool
     let showsContext: Bool
+    let showsRemoteHost: Bool
 
     var body: some View {
         let composition = composition
         VStack(alignment: .leading, spacing: 1) {
-            if !composition.title.isEmpty {
-                Text(composition.title).fontWeight(.semibold)
+            HStack(spacing: 0) {
+                if !composition.title.isEmpty {
+                    Text(composition.title).fontWeight(.semibold)
+                        .layoutPriority(1)
+                }
+                if let host = composition.host {
+                    HStack(spacing: 4) {
+                        Image(systemName: "cloud")
+                            .fixedSize()
+                            .accessibilityHidden(true)
+                        RemoteHostTextLayout {
+                            Text(verbatim: host)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .foregroundStyle(chromeText.opacity(0.6))
+                    .padding(.leading, composition.title.isEmpty ? 0 : 6)
+                    .layoutPriority(1)
+                }
+                if !composition.tail.isEmpty {
+                    Text(composition.tail).fontWeight(.semibold)
+                }
             }
             if !composition.subtitle.isEmpty {
                 Text(composition.subtitle)
@@ -242,7 +267,8 @@ struct TitlebarLabel: View {
             }
         }
         // a caller-set context can run to 256 bytes, far past the row; tail truncation drops its end rather
-        // than letting the label push the trailing button cluster off the bar.
+        // than letting the label push the trailing button cluster off the bar. the host truncates in the
+        // MIDDLE under its own ceiling instead, so an ssh target retains both of its ends.
         .lineLimit(1)
         .truncationMode(.tail)
     }
@@ -253,9 +279,24 @@ struct TitlebarLabel: View {
                 sessionName: showsSessionName ? (store.activeSession?.displayName ?? "Agterm") : nil,
                 windowName: showsWindowName ? library.customWindowName(for: windowID) : nil,
                 context: showsContext ? store.activeSession?.context : nil,
-                detail: store.activeSession?.subtitleDetail ?? ""
+                detail: store.activeSession?.subtitleDetail ?? "",
+                remoteHost: showsRemoteHost ? store.activeSession?.remoteHost : nil
             ),
             mode: toolbarMode
         )
+    }
+}
+
+/// Caps the host without expanding short names or preventing compression beside the sidebar.
+private struct RemoteHostTextLayout: Layout {
+    static let ceiling: CGFloat = 240
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = min(proposal.width ?? Self.ceiling, Self.ceiling)
+        return subviews[0].sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

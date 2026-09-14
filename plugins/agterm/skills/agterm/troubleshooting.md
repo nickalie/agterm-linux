@@ -134,6 +134,12 @@ Check these in order:
   or promotes a primary rather than leaving a daemon to recreate. To check what was captured, read
   `foregroundCommand` in `windows/<id>.json` while agterm is STOPPED: the next launch moves it into memory
   and rewrites the file with nil, so a running app always shows null there.
+- **A tool asks for the microphone again after every update.** The pane was created before the session
+  host and reads `orphaned` in `agtermctl tree --json`, so macOS charges each tool version separately. Agterm ▸
+  Reset Live Sessions… (or `agtermctl zmx reset --force`) ends those sessions' processes at the next launch
+  and recreates them under the host; agterm quits and reopens itself, captured commands start again where
+  possible, and the notification afterwards says how many sessions were covered. A session whose old process
+  could not be confirmed gone gets no command restarted and the reset can be run again.
 - **Switching modes ends detached live processes.** Selecting Fresh shells or Re-run commands and restarting
   reaps the live daemons in this state directory. An unavailable launch that still requests Live sessions
   preserves its claimed daemons for a later eligible launch.
@@ -214,11 +220,10 @@ posted and the suppressed case under the `NotificationManager` category.
 
 Programs run in a session request Automation, Camera, Microphone, Contacts, Calendars, Reminders, Photos,
 Location, Bluetooth, local network, speech recognition, system administration and system audio recording
-THROUGH agterm: macOS treats agterm as the responsible app, so the prompt names agterm and the answer is
-recorded against agterm, not the tool. One grant then covers every program in every session with no
-further prompt, and a dismissed prompt is never re-offered (`osascript` keeps returning "Not authorized
-to send Apple events"). The user changes the answer in System Settings ▸ Privacy & Security under the
-matching service, e.g. Automation ▸ agterm. This is macOS policy, not an agterm bug: do not file it.
+through agterm while macOS attributes them to it. The prompt names agterm and the answer applies to
+programs with that attribution. A dismissed prompt is never re-offered (`osascript` keeps returning
+"Not authorized to send Apple events"). The user changes the answer in System Settings ▸ Privacy & Security
+under the matching service, for example Automation ▸ agterm. This is macOS policy, not an agterm bug: do not file it.
 
 ### "a command cannot read ~/Downloads, ~/Desktop or ~/Documents"
 
@@ -235,15 +240,11 @@ file it.
 
 ### "agterm would like to access data from other apps, over and over"
 
-macOS App Data, a third mechanism after the two above. The consent is held by a running process rather than
-stored as a setting, and App Data has no entry of its own in System Settings. macOS charges the request to
-the responsible app, so a session the running agterm started costs one prompt per agterm launch. A pane
-carried across a restart by Live sessions mode was started by an agterm that has since exited, and every
-process in it then answers as its own responsible process, so the consent belongs to each command and the
-prompt returns on the next one. Full Disk Access is the only permanent answer and stops the request being
-made at all; in Live sessions mode relaunching does not help on its own, since the same daemons are handed
-back, while a Fresh shells or Re-run commands launch starts every session under the running app. Needing the
-grant is macOS policy: do not file the prompt itself as an agterm bug.
+Use `agtermctl tree --json` to read `liveAttribution` and `splitLiveAttribution`; see the
+[tree field definitions](reference.md#tree). The [App Data diagnosis](https://github.com/umputun/agterm/blob/master/docs/troubleshooting.md#agterm-would-like-to-access-data-from-other-apps-keeps-coming-back)
+covers the permission guidance: which panes keep agterm's attribution after a relaunch, and Full Disk
+Access for `orphaned` and `app` panes. Needing the consent grant is macOS policy: do not file the consent
+prompt itself as an agterm bug.
 
 ### "The agent-status glyph does not update"
 
@@ -284,6 +285,17 @@ mishandles it. agterm emits correct paired focus-in/focus-out and is already mac
 refocus click is not forwarded into the pty), so the terminal is not at fault. Tracked as
 anthropics/claude-code#72188 (mouse-click variant #72273). Workaround: answer before switching away, or
 `Esc` the stuck prompt and let it re-ask.
+
+### "Claude Code prints links as `label (url)` instead of clickable labels"
+
+Detection, not rendering. agterm identifies as `TERM_PROGRAM=agterm` (see the env list in SKILL.md) and
+Claude Code's hyperlink allowlist lacks that name, so it prints the URL. agterm renders OSC 8 links fine.
+Workaround: `FORCE_HYPERLINK=1 claude` (Claude Code reads it before any terminal check), or
+`env = FORCE_HYPERLINK=1` in `~/.config/agterm/ghostty.conf` for every new shell, after a config reload
+(`agtermctl config reload` or File ▸ Reload Config) and a new session; that form also forces links into
+redirected output. `env = TERM_PROGRAM=ghostty` there does nothing: agterm applies its identity after the
+config file. Do not file an agterm issue for it; the fix belongs upstream (Claude Code recognizing `agterm`
+or `TERM=xterm-ghostty`).
 
 ### "Every session restores to the directory it was created in"
 

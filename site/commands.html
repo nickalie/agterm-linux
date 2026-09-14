@@ -444,6 +444,9 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">name</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">cwd</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCwd</span> (the split pane's last reported
+                directory, falling back to its restored directory, then the primary cwd; present for shown or hidden splits,
+                omitted without a split or on older servers),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">title</span> (raw OSC terminal title, omitted when
                 none), <span style="font-family: &quot;JetBrains Mono&quot;, monospace">active</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">split</span> (both split panes are SHOWN),
@@ -456,6 +459,15 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">backedByZmx</span> (true only when every existing
                 primary/split pane is currently zmx-backed; each primary/split object in
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">surfaces</span> reports its own value),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">liveAttribution</span> and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitLiveAttribution</span> (primary and split pane
+                attribution: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">supervisor</span> identifies the bundled
+                persistent host, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">app</span> the running agterm,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">orphaned</span> a self-responsible pane or a confirmed
+                dead responsible process, and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">unknown</span> an
+                unavailable reading or an unrelated live responsible process; omitted for non-Live and remote panes;
+                the split field includes hidden splits and is omitted without a split; these describe attribution,
+                not permission grants),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">hasSplit</span> (a second pane exists at all, shown or
                 hidden, omitted when there is none — read this rather than
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">split</span> to tell whether a session has a split),
@@ -969,7 +981,8 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">cwd</span> (equal to the source node's
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree.cwd</span> unless the source is a split
                 focused off its primary pane, where <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree.cwd</span>
-                reports the primary).
+                reports the primary, or a remote session, whose cwd goes through the local rule first — an existing local
+                directory is kept, anything else becomes home — so the duplicate can read as home).
               </p>
             </div>
 
@@ -1264,6 +1277,7 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">restoreCommand</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">commandWait</span> change sides in
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span>; the split-side read-back is
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCwd</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitForeground</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitRestoreCommand</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCommandWait</span>. The GUI twin is
@@ -1924,7 +1938,8 @@
             <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
               These take the window selector as a positional argument (default
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace">active</span>, the frontmost). A window need not be open
-              to be a target.
+              to be a target. <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">window go</span> is the
+              exception: it is relative to the active window and takes no selector.
             </p>
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
@@ -1987,6 +2002,24 @@
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl window go --to next|prev
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">window.go</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Raise the next or previous open window, wrapping at both ends. Relative to the active window, so unlike its
+                neighbours it takes no window selector. Returns the id of the window it landed on.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                Only open windows are stepped through — a closed bundle is not a stop on the way round, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">window select</span> is what opens one. With a single window open it
+                errors with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no other open window to navigate to</span>. The GUI twins are Navigate ▸
+                Previous/Next Window and the <span style="font-family: &quot;JetBrains Mono&quot;, monospace">previous_window</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">next_window</span>
+                keymap actions, which ship with no key of their own.
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
                 agtermctl window close &lt;id&gt;
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">window.close</div>
@@ -2022,7 +2055,9 @@
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
                 Frame size in points. The window must be open. The size is clamped into the window's minimum and the display's visible
                 frame, so an oversized request is bounded rather than applied verbatim. Control-native (the title bar already
-                drags-to-resize).
+                drags-to-resize). Prints the applied width and height as <span style="font-family: &quot;JetBrains Mono&quot;, monospace">W H</span>; JSON reports
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.width</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.height</span>, rounded to integer points like
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">window list</span> geometry.
               </p>
             </div>
 
@@ -3055,6 +3090,21 @@
             </div>
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl zmx reset --force
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">zmx.reset</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Reset the live sessions this app does not supervise, then quit and reopen agterm. Agterm ▸ Reset Live Sessions… without the dialog.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                A live session created before the session host keeps its own macOS permission identity, so every new version of a tool in it asks for the microphone again. The reset ends those sessions' processes at the next launch and recreates them under the host, starting their captured commands again where possible; sessions already supervised are left alone. agterm quits and reopens itself right after answering, so running work in the affected sessions stops, agent conversations may need to be resumed by hand, and a call from inside one of those sessions kills its own shell. Refused outside Live sessions mode, while a mode change waits for a restart, on an incomplete pane inventory, and when nothing needs resetting.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--json</span> answers <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.liveReset</span> with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sessions</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">panes</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pending</span>. The next launch re-checks every session and only ever resets fewer than confirmed; the tree's top-level <span style="font-family: &quot;JetBrains Mono&quot;, monospace">liveReset</span> and the <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx list</span> header report <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pending</span> until the quit and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">last</span> for the launch that consumed the reset.
+              </p>
+            </div>
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
                 agtermctl zmx tree [HOST]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">zmx.tree</div>
@@ -3089,11 +3139,14 @@
             </div>
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
-                agtermctl zmx attach HOST SESSION
+                agtermctl zmx attach HOST SESSION [--window W]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">zmx.attach</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
-                Open one of the sessions <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx tree</span> listed as a session here, marked remote. It takes the session <em>id</em> from that listing — remote names are editable and repeat across workspaces — and lands in the current window's current workspace, selected, carrying the remote session's split when it has one. Returns the new session's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span>; read <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remoteHost</span> on its tree node.
+                Open one of the sessions <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx tree</span> listed as a session here, marked remote. It takes the session <em>id</em> from that listing, because remote names are editable and repeat across workspaces. It opens in the destination window's current workspace, selected, carrying the remote session's split when it has one. Returns the new session's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span>; read <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remoteHost</span> on its tree node.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span> takes a local open window ID, unique prefix, or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">active</span>.
+                Omitted, it uses the frontmost window after discovery. An invalid or closed destination fails without creating
+                a session. A background target leaves the frontmost window unchanged.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 The remote is resolved again before anything is created, so a session gone since the listing fails and creates nothing rather than handing back a fresh shell wearing its name. Only failures found before that point are reported here; a connection that starts and later drops is an ordinary pane exit.

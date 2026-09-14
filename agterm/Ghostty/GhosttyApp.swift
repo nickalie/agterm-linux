@@ -20,6 +20,13 @@ final class GhosttyApp {
     /// libghostty attributes none to a file. `reloadConfig` surfaces it for the Reload Config /
     /// `config.reload` warning; the Console log names the offending line.
     private(set) var lastConfigDiagnosticsCount = 0
+    /// What the launch's Live sessions reset did, recorded before any window mounts and posted from the
+    /// window task once notifications are registered; nil when no marker was consumed.
+    private(set) var liveResetOutcome: LiveReset.Outcome?
+
+    func recordLiveResetOutcome(_ outcome: LiveReset.Outcome) {
+        liveResetOutcome = outcome
+    }
     /// Terminal background from the resolved config; tints the window so the title bar blends with the
     /// terminal instead of the default titlebar material. Nil when unread.
     private(set) var terminalBackgroundColor: NSColor?
@@ -55,6 +62,9 @@ final class GhosttyApp {
     /// Whether the sidebar draws the red unseen-notification count badge. The sidebar Coordinator reads it
     /// (gating the count to 0 when off); settings-mirrored like `toolbarMode`.
     private(set) var notificationBadgeEnabled: Bool = true
+    /// Which keystroke clears a blocked or completed glyph; read at keystroke time by the surface factories'
+    /// status-clear closure. Settings-mirrored like `toolbarMode`.
+    private(set) var statusReset: StatusReset = .firstKey
     /// Whether a click anywhere on a sidebar workspace row toggles its expansion; on by default. The sidebar
     /// Coordinator reads it in `handleSingleClick`, and the disclosure triangle ignores it because AppKit
     /// toggles that natively. Settings-mirrored like `toolbarMode`.
@@ -211,6 +221,10 @@ final class GhosttyApp {
 
     func setAttentionButtonEnabled(_ enabled: Bool) {
         attentionButtonEnabled = enabled
+    }
+
+    func setStatusReset(_ mode: StatusReset) {
+        statusReset = mode
     }
 
     func setHiddenInterfaceElements(_ elements: Set<InterfaceElement>) {

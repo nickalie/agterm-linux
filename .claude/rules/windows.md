@@ -68,14 +68,22 @@ session drag are out of scope.
   live cwd changes, which structural saves may not capture. Selection and font use a roughly 0.3-second
   `Debouncer`; structural mutations save synchronously and cancel pending saves.
 - Quit uses `applicationShouldTerminate` and a warning alert with host-free `openCounts` and
-  `QuitPrompt.message`. Skip it for system shutdown/restart/logout, no open windows, XCUITest, or an
-  unwired library during the first roughly four seconds. The system-quit half is host-free in
+  `QuitPrompt.message`, which takes the launch decision's active restore mode:
+  Live drops the shell clause and promises no reattachment.
+  Skip it for system shutdown/restart/logout, no open windows, XCUITest, or an unwired library during
+  the first roughly four seconds. The system-quit half is host-free in
   `QuitReason.isSystemQuit` and covered by `QuitReasonTests`.
   The keyword must come from `kAEQuitReason`, because `AEKeyword("why?")` resolves to
   `UInt32.init?(String)` and is always nil.
   The reason is an attribute, not a param, despite `AERegistry.h` calling it a parameter: loginwindow
   writes it with `AEPutAttributePtr`. Never switch that read to `paramDescriptor`.
   The GUI-only prompt is keep-in-sync exempt and manually verified.
+- A confirmed Live sessions reset (`LiveResetCoordinator.pending`) skips the quit alert, since its own
+  dialog or `zmx.reset --force` was the confirmation. `AppDelegate.exitFlush` fixes the order: capture,
+  finalize pending closes, then the CHECKED save; only a fully saved snapshot arms the marker and the
+  relauncher. `LaunchOrchestration.run` in `LiveResetConsumer.swift` owns the launch side: the library's
+  inventory sink only stores the inventory, the consumer runs after `WindowLibrary` returns, and the
+  ordinary reap and the foreground resolver refresh follow it, all before any window mounts.
 - App-side `WindowRegistry` maps IDs to `NSWindow`. Register/unregister through `TitleProbeView`;
   `raise` deminiaturizes and fronts, and `close` uses `performClose` so standard teardown runs.
 
@@ -184,6 +192,19 @@ session drag are out of scope.
   agterm, select the non-active window, confirm list marks it active and untargeted session creation lands
   there. XCUITest cannot deactivate without disturbing the user's Space.
 
+## Live session host
+
+- `agterm-session-host` is a persistent responsibility root for Live daemons in one state directory.
+  Reuse it across app restarts; host death leaves its panes orphaned and later panes can start a
+  replacement host.
+- Keep all `responsibility_*` SPI lookups in the `AgtermResponsibility` target.
+  If the SPI is unavailable, panes fall back to bare attach.
+- `SessionHostTrampoline` owns the `forkpty` child path through `execve`; no Swift runs there.
+- The host answers one client at a time.
+  A connected client waits up to 30 seconds for its turn before falling back to a bare attach,
+  so a long enough queue of creations still yields an `app` pane.
+- Fresh shells and Re-run never stop a live host.
+
 ## Attachment and cache
 
 - `window.new` is not ready when its store becomes open. Its `NSWindow` registers only after store
@@ -198,13 +219,24 @@ session drag are out of scope.
 
 ## Control catalog
 
-- Commands are `window.new`, `window.list`, `window.select`, `window.close`, `window.rename`,
+- Commands are `window.new`, `window.list`, `window.select`, `window.go`, `window.close`, `window.rename`,
   `window.delete`, `window.resize`, `window.move`, `window.zoom`, `window.fullscreen`, and
   `window.minimize`. Keep their protocol cases, dispatch/actions, CLI mappings, and tests synchronized
   per the repository-wide control contract.
 - `window.list` returns ID/name/open/active plus open-store auto-follow/sidebar state and live
   geometry/fullscreen/zoom/minimize. Closed-window live fields are omitted. Geometry is top-left,
   display-relative, y-down, matching move/resize.
+- `window.go --to next|prev` steps the OPEN windows in library order, wrapping, through host-free
+  `WindowLibrary.navigateWindow`, which the `previous_window`/`next_window` built-ins share. A CLOSED entry
+  is not a candidate: `window.select` is the verb that opens one, and a step that silently opened a window
+  would make the wrap length depend on the library rather than on what is on screen. It takes no target and
+  no `--window`, being app-global, and errors `no other open window to navigate to` below two open windows.
+  BOTH it and the GUI twins raise through `WindowRegistry.raise`, never `AppActions.openWindow`: that hub
+  falls back to `enqueueClaim` plus a fresh scene when a raise fails, and the failure case for a step is an
+  OPEN window still attaching, so one store would get two scenes. `enqueueClaim` dedups only PENDING claims,
+  so a popped claim does not protect it. Control refuses out loud; the GUI drops the step. Both then publish
+  frontmost themselves — `WindowAccessor.reportFrontmost` rides `didBecomeKey`, which never arrives while the
+  app is inactive, the state a step from the quick terminal raises in. Read back `window.list`'s `active`.
 - Delete enforces at least one library entry without GUI confirmation. `window.select` raises or opens.
   Window ID resolution accepts active, exact ID, unique prefix, ambiguity, and not found; most library
   commands can address closed entries.

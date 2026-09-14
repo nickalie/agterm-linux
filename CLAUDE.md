@@ -123,6 +123,10 @@ C-boundary concurrency before changing the bridge.
 - Manual Debug UI work uses a separate `open -n` instance with isolated state and short socket. Address
   its CLI with `--socket` after the subcommand. Stop only its known PID with SIGTERM; clean quit triggers
   the visible quit-confirmation alert. Use clean quit only when testing its final cwd/running-command flush.
+- A manual-test pane opens in `$HOME`, and a pane restored from a daemon keeps whatever directory it had.
+  Never type a bare `claude` into one. Always send `cd <dir> && claude` with a directory Claude Code
+  already trusts, `~/dev.umputun/agterm` by default. A session rooted at `$HOME` treats every dotfile and
+  repo as its project, and it stops on the folder-trust prompt, which is never yours to answer.
 - Never run the Help ▸ Install installers (agent hooks, CLI, agent skill) from a Debug or worktree
   instance, and never invoke `AgentHooksInstaller` in a manual run. They write `~/.config/agterm/`,
   `~/.claude/settings.json`, and `~/.codex/`, which `AGTERM_STATE_DIR` does not isolate, and bake
@@ -181,6 +185,10 @@ C-boundary concurrency before changing the bridge.
   teardown, and no SIGHUP reaches the process because the pty's session leader is the surviving `login`, so
   it outlives the app in whatever loop it was in. `hud.sh` takes the app's pid through its input file and
   exits on a builtin `kill -0`.
+- A confirmed Live sessions reset (Help item or `zmx.reset`) is the one path that ends CLAIMED daemons at a
+  Live launch: `LiveResetConsumer` consumes the marker before any kill and only narrows it, then the
+  ordinary reap runs. Nothing arms it but the dialog or an explicit `--force` request; `control-api.md`
+  owns the contract.
 - Live-session reap follows the requested restore mode. A requested-live launch preserves claimed daemons
   when eligibility falls back to fresh shells; a deliberate Fresh shells or Re-run commands launch reaps
   every detached app daemon in the state directory. Semantic deletion kills the named daemon, while app and

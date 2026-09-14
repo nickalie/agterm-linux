@@ -1,11 +1,75 @@
 import AppKit
 import agtermCore
 import Foundation
+import AgtermResponsibility
+import Darwin
 
 /// The `zmx` command group: the daemon inventory and, later, the actions over it. Every command needs a
 /// running instance by design — only one can join the live stores, the pending-close records, the checked
 /// closed-window snapshots and the observed daemons into a single answer.
 extension ControlServer {
+    func liveAttributions(in sessions: [Session], leaders: [String: pid_t]?) -> [UUID: SessionHost.Attribution] {
+        let identities = Set(sessions.filter { $0.remoteHost == nil }.flatMap { session -> [UUID] in
+            var ids = session.surface?.backedByZmx == true ? [session.paneIdentity] : []
+            if session.hasSplit, session.splitSurface?.backedByZmx == true, let split = session.splitPaneIdentity { ids.append(split) }
+            return ids
+        })
+        guard !identities.isEmpty, let leaders else { return [:] }
+        var probes: [pid_t: SessionHost.ResponsibleProcess] = [:]
+        func responsible(_ pid: pid_t) -> SessionHost.ResponsibleProcess {
+            if let cached = probes[pid] { return cached }
+            let result = liveAttributionProbe.responsible(pid)
+            probes[pid] = result
+            return result
+        }
+        let host = liveHostPID(responsible: responsible)
+        return Dictionary(uniqueKeysWithValues: identities.map { identity in
+            let leader = leaders[ZmxSupport.daemonName(for: identity)]
+            return (identity, SessionHost.classify(leader: leader, responsible: leader.map(responsible), hostPid: host, appPid: liveAttributionProbe.appPID))
+        })
+    }
+
+    /// The session host's pid when its pidfile names a live host, else nil.
+    private func liveHostPID(responsible: (pid_t) -> SessionHost.ResponsibleProcess) -> pid_t? {
+        guard let candidate = zmxClient.flatMap({ liveAttributionProbe.hostPID($0.endpoint) }) else { return nil }
+        return responsible(candidate) == .live(candidate) ? candidate : nil
+    }
+
+    /// The reset's read-back for the tree top level and the `zmx list` header: nil when nothing is pending
+    /// and no launch consumed a marker, so an untouched instance shows no field at all.
+    func liveResetReadback() -> ControlLiveResetReadback? {
+        let pending = liveReset?.pending.map(\.targets.count)
+        let last = liveResetOutcome()
+        guard pending != nil || last != nil else { return nil }
+        return ControlLiveResetReadback(pending: pending, last: last)
+    }
+
+    /// `zmx.reset`: the dialog's confirm path without the dialog. The quit is not requested here; the
+    /// connection thread requests it once this reply is written.
+    func resetLiveSessions() -> ControlResponse {
+        guard let liveReset else {
+            return ControlResponse(ok: false, error: ControlActionsUnsupported.message("zmx.reset"))
+        }
+        switch liveReset.request(confirmed: true) {
+        case .refused(let refusal):
+            return ControlResponse(ok: false, error: refusal.message)
+        case .cancelled:
+            return ControlResponse(ok: false, error: "zmx.reset was cancelled")
+        case .confirmed(let selection):
+            let status = ControlLiveResetStatus(sessions: selection.sessionCount, panes: selection.targets.count, pending: true)
+            return ControlResponse(ok: true, result: ControlResult(text: LiveReset.dialogText(sessionCount: selection.sessionCount).body,
+                                                                    liveReset: status))
+        }
+    }
+
+    /// The panes Agterm ▸ Reset Live Sessions… would reset: every claim, open or saved, whose daemon leader
+    /// is orphaned or attributed to this app. Nil when the listing failed, which refuses the action.
+    func liveResetSelection() -> LiveReset.Selection? {
+        guard let zmxClient, let records = zmxClient.sessionRecords() else { return nil }
+        return LiveReset.select(claims: library.paneClaims(), records: records,
+                                classify: liveAttributionProbe.classifier(endpoint: zmxClient.endpoint))
+    }
+
     /// Observed daemons joined against the panes that claim them, with the restore status as a header.
     ///
     /// A failed listing is an error rather than an empty inventory: an empty namespace is a real answer and
@@ -21,7 +85,7 @@ extension ControlServer {
         let result = ZmxInventory.join(observed: observed, claims: walk.claims,
                                        inventoryComplete: walk.complete)
         let inventory = ControlZmxInventory(restore: restoreStatus(), result: result,
-                                            endpoint: client.endpoint)
+                                            endpoint: client.endpoint, liveReset: liveResetReadback())
         return ControlResponse(ok: true, result: ControlResult(zmx: inventory))
     }
 }
@@ -79,7 +143,7 @@ extension ControlServer {
                                             result: ZmxInventory.join(observed: observed,
                                                                       claims: walk.claims,
                                                                       inventoryComplete: walk.complete),
-                                            endpoint: client.endpoint)
+                                            endpoint: client.endpoint, liveReset: liveResetReadback())
         // a live store IS the open-window test, the same one `openCounts` uses: a closed window has no
         // store, and its panes are not attachable from here anyway
         let windows = library.windows.compactMap { entry in
@@ -97,22 +161,23 @@ extension ControlServer {
         }
     }
 
+    func attachRemoteSession(host: String, session: String) async -> ControlResponse {
+        await attachRemoteSession(host: host, session: session, window: nil)
+    }
+
     /// Create a local session attached to one of `host`'s.
     ///
     /// The remote is resolved again here rather than trusted from whatever the caller last saw: a picker's
     /// answer can be minutes old, and a daemon that has gone since would otherwise be CREATED by the
     /// attach, handing back a fresh shell wearing the session's name. Everything that can fail is checked
     /// before the model is touched, so a refusal leaves no half-built row behind.
-    func attachRemoteSession(host: String, session: String) async -> ControlResponse {
+    func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse {
         let discovery = await remoteTree(host: host)
         guard discovery.ok, let tree = discovery.result?.remote else { return discovery }
         // by id only: remote session names are mutable and deliberately non-unique across workspaces, and
         // `zmx tree` prints the id for exactly this hand-off
         guard let remote = tree.sessions.first(where: { $0.id == session }) else {
             return ControlResponse(ok: false, error: "no attachable session \(session) on \(host)")
-        }
-        guard let store = library.activeStore, let workspace = store.currentWorkspaceID else {
-            return ControlResponse(ok: false, error: "no window to attach into")
         }
         // by role, never by position: a payload with two lefts or no left must fail rather than quietly
         // become one pane, or the wrong one
@@ -131,6 +196,14 @@ extension ControlServer {
             }
         } catch {
             return ControlResponse(ok: false, error: "\(host) reported a session agterm cannot address")
+        }
+        let store: AppStore
+        switch resolveOpenWindow(window) {
+        case .failure(let response): return response
+        case .success(let (_, resolved)): store = resolved
+        }
+        guard let workspace = store.currentWorkspaceID else {
+            return ControlResponse(ok: false, error: "no window to attach into")
         }
         // the LOCAL working directory, not the remote one: libghostty chdirs the ssh process here, and a
         // path that exists on the far side may not exist on this Mac. The attached shell reports its real
@@ -295,5 +368,44 @@ extension ControlServer {
               view.claimProcessExit() else { return }
         agtermApp.handlePaneExit(view, store: store, sessionID: claim.sessionID, library: library,
                                  alreadyFinalized: claim.paneIdentity)
+    }
+}
+
+struct LiveAttributionProbe {
+    var responsible: (pid_t) -> SessionHost.ResponsibleProcess = LiveAttributionProbe.lookup
+    var hostPID: (ControlZmxEndpoint) -> pid_t? = LiveAttributionProbe.host
+    var appPID: pid_t = getpid()
+
+    /// A classifier over daemon leaders that resolves the host once and probes each pid once.
+    func classifier(endpoint: ControlZmxEndpoint) -> (String, Int32) -> SessionHost.Attribution {
+        var probes: [pid_t: SessionHost.ResponsibleProcess] = [:]
+        func probed(_ pid: pid_t) -> SessionHost.ResponsibleProcess {
+            if let cached = probes[pid] { return cached }
+            let result = responsible(pid)
+            probes[pid] = result
+            return result
+        }
+        let host = hostPID(endpoint).flatMap { probed($0) == .live($0) ? $0 : nil }
+        return { _, leader in
+            SessionHost.classify(leader: leader, responsible: probed(leader), hostPid: host, appPid: appPID)
+        }
+    }
+
+    private static func lookup(_ leader: pid_t) -> SessionHost.ResponsibleProcess {
+        guard Responsibility.system.isAvailable, let pid = Responsibility.system.responsibleProcess(of: leader) else { return .unknown }
+        if kill(pid, 0) == 0 || errno == EPERM { return .live(pid) }
+        return errno == ESRCH ? .dead : .unknown
+    }
+
+    private static func host(_ endpoint: ControlZmxEndpoint) -> pid_t? {
+        guard let paths = try? SessionHost.paths(socketDirectory: endpoint.socketDirectory) else { return nil }
+        guard let value = try? String(contentsOfFile: paths.pidfile, encoding: .utf8),
+              let pid = pid_t(value.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else { return nil }
+        let expected = URL(fileURLWithPath: endpoint.executable).deletingLastPathComponent().appendingPathComponent("agterm-session-host")
+        guard let path = realpath(expected.path, nil) else { return nil }
+        defer { free(path) }
+        var bytes = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &bytes, UInt32(bytes.count)) > 0 else { return nil }
+        return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self) == String(cString: path) ? pid : nil
     }
 }

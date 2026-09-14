@@ -31,6 +31,7 @@ extension AppActions {
             activeWorkspaceMarked: activeStore?.isCurrentWorkspaceFocusMember == true,
             activeWorkspaceCollapsed: activeStore?.isCurrentWorkspaceCollapsed == true,
             canStepWorkspaces: activeStore?.canStepWorkspaces == true,
+            canStepWindows: library.canStepWindows,
             activeSessionHasSplit: activeStore?.activeSession?.hasSplit == true,
             activeSplitAxis: activeStore?.activeSession?.splitAxis,
             hasPendingClose: activeStore?.pendingCloseSummary != nil,
@@ -81,6 +82,8 @@ extension AppActions {
         case .nextAttentionSession: selectNextAttentionSession()
         case .previousWorkspace: selectPreviousWorkspace()
         case .nextWorkspace: selectNextWorkspace()
+        case .previousWindow: selectPreviousWindow()
+        case .nextWindow: selectNextWindow()
         case .firstSession: selectFirstSession()
         case .lastSession: selectLastSession()
         case .showAttention: openAttentionPalette()
@@ -192,17 +195,20 @@ extension AppActions {
         return items
     }
 
-    /// The user-defined keymap commands as palette items with their bound chord; running one delegates to the
-    /// runner, which resolves the active session's context and spawns the shell line. `badge` tags each entry.
+    /// The user-defined keymap commands as palette items with their bound chord. `badge` tags each entry.
     private func customCommandItems(badge: String?) -> [PaletteItem] {
         (settingsModel?.keymap.commands ?? []).map { command in
             PaletteItem(id: "custom-\(command.id)", title: command.name,
                         shortcut: command.shortcut.isEmpty ? nil : command.shortcut,
-                        badge: badge) { [weak self] in
-                guard self?.uiActionsEnabled == true else { return }
-                self?.customCommandRunner?.run(command)
-            }
+                        badge: badge) { [weak self] in self?.runCustomCommand(command) }
         }
+    }
+
+    /// Run a keymap command picked from the palette or the title-bar popover, behind the same modal gate as
+    /// every UI action; the runner resolves the active session's context and spawns the shell line.
+    func runCustomCommand(_ command: CustomCommand) {
+        guard uiActionsEnabled else { return }
+        customCommandRunner?.run(command)
     }
 
     /// The user-defined keymap commands alone, for the `.customCommands` palette: unbadged, all are custom.

@@ -71,7 +71,7 @@ paths:
   alternative, `alternative skipped`/`alternative dropped` with more), pinned by
   `KeymapTests.pipeFreeKeymapParsesExactlyAsItDidBeforeAlternatives`.
 - Pure types live in `Keybind.swift`, `KeybindMatcher`, `CustomCommand`/`CommandContext`,
-  `BuiltinAction` (46 cases, pinned by `BuiltinActionTests`), `Keymap`, and `ConfigPaths`.
+  `BuiltinAction` (48 cases, pinned by `BuiltinActionTests`), `Keymap`, and `ConfigPaths`.
   `CommandContext` owns the shared expansion/environment token table.
 - Built-ins use AppKit menu key equivalents from `keymap.equivalent(for:)`; apply only non-nil
   `KeyboardShortcut`s. SwiftUI rebuilds menu shortcuts on the next activation, not immediately after
@@ -116,6 +116,14 @@ paths:
   launchers still work. If `referencesSessionScopedContext` finds any session/workspace/selection token
   in `{...}` or `$...` form, no-op with notice; empty `{AGT_SESSION_PWD}` can turn `rm -rf .../*` into a
   root glob. Commands using only `AGT_SOCKET`/`AGT_WINDOW`/`AGT_PANE` may run sessionless.
+- `{AGT_SESSION_HOST}`/`$AGT_SESSION_HOST` is the SSH destination of a `zmx attach` session, empty
+  otherwise; an `ssh` typed into a local session leaves it empty while `AGT_SESSION_PWD` still follows
+  any cwd reports that shell emits. `AGT_SESSION_PWD` stays the pane's reported path, remote or not; the
+  command's execution directory comes separately from `Session.localWorkingDirectory`, which returns
+  that path for a local session and, for a remote one, only when it exists here as a directory, else
+  HOME. Scratch, overlay default, quick terminal, a local split (the first on an unsplit remote session
+  or one after the attach-time split closes), Duplicate Session and a new session under the
+  current-directory setting seed through the same helper.
 - `{AGT_PANE}`/`$AGT_PANE` is `left`, `right`, or `scratch`, derived from the firing surface for keybinds
   and `splitFocused` for palette runs. The scratch and both overlay kinds are the sessionless surfaces with
   a pane, resolved together in `sessionlessPane`; the quick terminal is nobody's pane and takes the plain

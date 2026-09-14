@@ -98,6 +98,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let id: String
     public let name: String
     public let cwd: String
+    /// The split pane's last reported or fallback directory, including hidden splits; omitted without one.
+    public let splitCwd: String?
     /// The raw terminal title from the latest OSC 0/1/2 (a remote host over SSH, a shell `PROMPT_COMMAND`);
     /// nil/omitted when none reported. The unprocessed `Session.oscTitle`, distinct from `name` (the derived
     /// sidebar label, which uses it as one fallback); a remote session's local `cwd` goes stale, this does not.
@@ -114,6 +116,9 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let hasSplit: Bool?
     /// True only when every existing primary/split pane is currently zmx-backed; nil on older servers.
     public let backedByZmx: Bool?
+    /// Process attribution for each local Live pane; this does not describe permission grants.
+    public let liveAttribution: String?
+    public let splitLiveAttribution: String?
     /// Divider direction for a live split (`vertical`=left/right, `horizontal`=top/bottom); nil without one.
     public let splitAxis: String?
     /// The primary-pane fraction (0.05...0.95) of the pane area below the titlebar band, for a session that
@@ -254,7 +259,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
                 surfaces: [ControlSurfaceNode]? = nil, realized: Bool? = nil,
-                context: String? = nil, remoteHost: String? = nil) {
+                context: String? = nil, remoteHost: String? = nil, splitCwd: String? = nil,
+                liveAttribution: String? = nil, splitLiveAttribution: String? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -295,7 +301,10 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.scratchFontSize = scratchFontSize
         self.surfaces = surfaces
         self.realized = realized
+        self.splitCwd = splitCwd
         self.remoteHost = remoteHost
+        self.liveAttribution = liveAttribution
+        self.splitLiveAttribution = splitLiveAttribution
     }
 }
 
@@ -404,6 +413,9 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// agent already reading the tree gets its version floor without a second round-trip; `version` answers
     /// the same question for a caller that has no tree, no window, and no JSON parser.
     public let app: AppIdentity?
+    /// The Live sessions reset state: app-global like `app`, omitted when nothing is pending and no launch
+    /// has consumed a marker. The read side of `zmx.reset`.
+    public let liveReset: ControlLiveResetReadback?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
                 sidebarVisible: Bool? = nil, sidebarMode: String? = nil, sidebarWidth: Double? = nil, workspaceFilter: Bool? = nil,
@@ -411,8 +423,9 @@ public struct ControlTree: Codable, Sendable, Equatable {
                 zoomedSurface: String? = nil, dashboardMembers: [String]? = nil,
                 dashboardHighlighted: String? = nil, dashboardFontSize: Double? = nil,
                 dashboardFontMode: String? = nil, pickPending: String? = nil, askPending: String? = nil,
-                app: AppIdentity? = nil) {
+                app: AppIdentity? = nil, liveReset: ControlLiveResetReadback? = nil) {
         self.workspaces = workspaces
+        self.liveReset = liveReset
         self.idleMs = idleMs
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible

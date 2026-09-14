@@ -46,6 +46,14 @@ enum ZmxLaunch {
         return bundleURL.appendingPathComponent("Contents/MacOS/zmx").path
     }
 
+    static func sessionHostExecutablePath(bundleURL: URL, environment: [String: String],
+                                          allowDebugOverride: Bool) -> String {
+        if allowDebugOverride, let override = environment["AGTERM_SESSION_HOST_PATH"], !override.isEmpty {
+            return override
+        }
+        return bundleURL.appendingPathComponent("Contents/MacOS/agterm-session-host").path
+    }
+
     @MainActor
     static func liveUnavailableReason(
         bundleURL: URL = Bundle.main.bundleURL,
@@ -89,12 +97,15 @@ enum ZmxLaunch {
         ZmxSupport.launchDisposition(requested: requested, active: active, configuration: configuration)
     }
 
+    /// `suppressed` consumes the pending replay without using it and withholds the durable command: the
+    /// pane's old process may still be running, and the attach must not start a second copy.
     @MainActor
     static func surfaceSeed(disposition: Disposition, session: Session, pane: StatusPane,
-                            denylist: Set<String>) -> SurfaceSeed? {
+                            denylist: Set<String>, suppressed: Bool = false) -> SurfaceSeed? {
         guard case .wrapped(let configuration) = disposition else { return nil }
-        let replay = session.takePendingForegroundCommand(pane: pane)
-        let creationCommand: String? = if replay == nil {
+        let captured = session.takePendingForegroundCommand(pane: pane)
+        let replay = suppressed ? nil : captured
+        let creationCommand: String? = if replay == nil, !suppressed {
             switch pane {
             case .left: session.initialCommand
             case .right: session.splitInitialCommand
@@ -130,7 +141,9 @@ enum ZmxLaunch {
             stateDirectory: stateDirectory,
             paneIdentity: paneIdentity,
             baseEnvironment: baseEnvironment,
-            inheritedZdotdir: runtime.environment["ZDOTDIR"]
+            inheritedZdotdir: runtime.environment["ZDOTDIR"],
+            sessionHostExecutablePath: sessionHostExecutablePath(bundleURL: runtime.bundleURL, environment: runtime.environment,
+                                                                  allowDebugOverride: runtime.allowDebugOverride)
         ))
     }
 }

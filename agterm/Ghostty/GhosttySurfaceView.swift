@@ -16,7 +16,7 @@ private let logger = Logger(subsystem: "com.umputun.agterm", category: "GhosttyS
 final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
 
-    private let workingDirectory: String
+    let workingDirectory: String
 
     /// The command run as the surface's process instead of the login shell, nil for the login shell; read in
     /// `createSurface`. The overlay uses it to run one program (e.g. a TUI) whose exit closes the overlay.
@@ -123,14 +123,14 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
     /// whose focus report is suppressed though the user is looking at it. Set by the main/split factories.
     var onClearUnseen: (() -> Void)?
 
-    /// Called on the main actor on EVERY keystroke into this surface, carrying whether the key interrupts the
-    /// agent (Escape or Ctrl-C). The factory moves the glyph per pane via
-    /// `AgentIndicator.afterKeystroke(pane:isInterrupt:)`, and only when THIS surface's pane owns the status,
-    /// so foreground typing cannot touch a background pane's block. Passing the pane rather than reading
+    /// Called on the main actor on EVERY keystroke into this surface, carrying what the key means to the glyph
+    /// (`InterruptKeystroke.classify`: interrupt, submit or plain typing). The factory moves the glyph per pane
+    /// via `AgentIndicator.afterKeystroke(pane:keystroke:reset:)`, and only when THIS surface's pane owns the
+    /// status, so foreground typing cannot touch a background pane's block. Passing the pane rather than reading
     /// `view.session` lets the scratch, which has none, transition itself. Status is otherwise control-driven;
     /// this is the one input-driven path, covering the two moments Claude Code fires no hook for — declining a
     /// prompt, and answering one before its approved tool finishes.
-    var onUserInputStatusKeystroke: ((Bool) -> Void)?
+    var onUserInputStatusKeystroke: ((StatusKeystroke) -> Void)?
 
     /// Called on the main actor on EVERY keystroke to stamp user activity and reset the window's auto-follow
     /// idle timer. Fires unconditionally, unlike `onUserInputStatusKeystroke`: ordinary typing in an idle

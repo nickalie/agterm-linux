@@ -8,6 +8,16 @@ import Testing
 /// the point is that the CLI cannot send a kill the server would have to refuse, and that a reader can
 /// tell a closed window's resting state from a leak.
 struct ZmxCommandsTests {
+    @Test func attachCarriesTheLocalWindowSeparatelyFromTheRemoteSession() throws {
+        let attach = try Zmx.Attach.parse(["buildbox", "s1", "--window", "local-window"])
+        let request = try attach.makeRequest()
+        #expect(request.cmd == .zmxAttach)
+        #expect(request.target == "s1")
+        #expect(request.args?.host == "buildbox")
+        #expect(request.args?.window == "local-window")
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: JSONEncoder().encode(request)) == request)
+    }
+
     @Test func treeCarriesItsHostAsAnArgumentNotATarget() throws {
         let tree = try Zmx.Tree.parse(["buildbox"])
 
@@ -163,5 +173,18 @@ struct ZmxCommandsTests {
         let rendered = SocketClient.formatZmx(ControlZmxInventory(restore: status, result: result))
         #expect(rendered.contains("inventory incomplete"))
         #expect(rendered.contains("no daemons"))
+    }
+
+    @Test func resetEncodesForce() throws {
+        let request = try Zmx.Reset.parse(["--force"]).makeRequest()
+
+        #expect(request.cmd == .zmxReset)
+        #expect(request.args?.force == true)
+        #expect(request.target == nil, "the reset is app-global and takes no target")
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: JSONEncoder().encode(request)) == request)
+    }
+
+    @Test func resetRefusesWithoutForce() {
+        #expect(throws: (any Error).self) { try Zmx.Reset.parse([]) }
     }
 }

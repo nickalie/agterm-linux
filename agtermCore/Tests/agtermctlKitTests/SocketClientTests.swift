@@ -234,6 +234,8 @@ struct SocketClientTests {
             new_window                  cmd+opt+n
             rename_window               -
             delete_window               -
+            previous_window             -
+            next_window                 -
             new_workspace               cmd+shift+n
             rename_workspace            -
             delete_workspace            -
@@ -834,6 +836,41 @@ struct SocketClientTests {
         let decoded = try JSONDecoder().decode(ControlResponse.self, from: Data(line.utf8))
         #expect(decoded.ok)
         #expect(decoded.result?.id == "9f3c")
+    }
+
+    @Test(arguments: [("/other", "/main  split cwd: /other"), ("/main", "/main")])
+    func formatTreeIncludesOnlyADifferingSplitDirectory(_ splitCwd: String, _ expected: String) throws {
+        let data = Data(#"{"id":"s","name":"shell","cwd":"/main","splitCwd":"\#(splitCwd)","active":true,"split":true,"overlay":false,"scratch":false,"flagged":false}"#.utf8)
+        let session = try JSONDecoder().decode(ControlSessionNode.self, from: data)
+        let tree = ControlTree(workspaces: [ControlWorkspaceNode(id: "w", name: "work", active: true, sessions: [session])])
+        let response = ControlResponse(ok: true, result: ControlResult(tree: tree))
+        let output = SocketClient.formatResponse(response, json: false)
+        #expect(output == "* work  [w]\n  * shell (split)  [s]  \(expected)")
+        let json = SocketClient.formatResponse(response, json: true)
+        let decoded = try JSONDecoder().decode(ControlResponse.self, from: Data(json.utf8))
+        #expect(decoded.result?.tree?.workspaces[0].sessions[0].splitCwd == splitCwd)
+    }
+
+    @Test func formatWindowResizeReportsAppliedWidthAndHeight() throws {
+        let response = try JSONDecoder().decode(ControlResponse.self, from: Data(#"{"ok":true,"result":{"id":"w","width":1200,"height":800}}"#.utf8))
+        #expect(SocketClient.formatResponse(response, json: false) == "1200 800")
+        let encoded = SocketClient.formatResponse(response, json: true)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
+        let result = try #require(json["result"] as? [String: Any])
+        #expect(result["width"] as? Int == 1200)
+        #expect(result["height"] as? Int == 800)
+    }
+
+    @Test func formatTreeIncludesBothAttributionsWhenPresent() throws {
+        let data = Data(#"""
+        {"id":"s","name":"shell","cwd":"/main","active":true,"split":false,"hasSplit":true,
+         "overlay":false,"scratch":false,"flagged":false,"liveAttribution":"supervisor","splitLiveAttribution":"orphaned"}
+        """#.utf8)
+        let session = try JSONDecoder().decode(ControlSessionNode.self, from: data)
+        let tree = ControlTree(workspaces: [ControlWorkspaceNode(id: "w", name: "work", active: true, sessions: [session])])
+        let output = SocketClient.formatResponse(ControlResponse(ok: true, result: ControlResult(tree: tree)), json: false)
+        #expect(output.contains("live attribution: supervisor"))
+        #expect(output.contains("split live attribution: orphaned"))
     }
 
     @Test func formatResponseTree() {

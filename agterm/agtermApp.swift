@@ -21,6 +21,7 @@ struct agtermApp: App {
     @State private var globalHotkey: GlobalHotkey
     @State var settingsModel: SettingsModel
     @State private var controlServer: ControlServer
+    @State var liveReset: LiveResetCoordinator
     @State private var customCommandRunner: CustomCommandRunner
     @State private var appearanceObserver: SystemAppearanceObserver
     @State private var accessibilityObserver: SystemAccessibilityObserver
@@ -38,6 +39,9 @@ struct agtermApp: App {
     /// what arms it.
     private let spawnRegistry: SpawnRegistry
     private let launchContext: LaunchSpawnContext
+    /// The one-shot marker for a confirmed Live sessions reset, in the state directory; handed to the
+    /// delegate on scene appear because the quit path is the only writer.
+    private let liveResetMarkerStore: LiveResetMarkerStore
 
     /// The plain `WindowGroup`'s scene id, used by `openWindow(id:)` to spawn additional windows.
     private static let windowGroupID = "terminal"
@@ -64,6 +68,7 @@ struct agtermApp: App {
     init() {
         let stateDirectory = ProcessInfo.processInfo.environment["AGTERM_STATE_DIR"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? PersistenceStore.defaultDirectory
+        liveResetMarkerStore = LiveResetMarkerStore(directory: stateDirectory)
         // FIRST, before anything reads or writes the state directory: `WindowLibrary`'s bootstrap seeds a
         // window and saves it, which a later read would see as evidence of an earlier launch.
         let hadPriorState = FirstRunWelcome.hasPriorState(in: stateDirectory)
@@ -92,6 +97,10 @@ struct agtermApp: App {
                                           zmxForegroundResolver: restored.foregroundResolver,
                                           zmxClient: restored.zmxClient)
         _controlServer = State(initialValue: controlServer)
+        let liveReset = LiveResetCoordinator(settingsModel: settingsModel,
+                                             selection: { [weak controlServer] in controlServer?.liveResetSelection() })
+        controlServer.liveReset = liveReset
+        _liveReset = State(initialValue: liveReset)
         _sessionSwitcher = State(initialValue: SessionSwitcher(library: library, canSwitch: { actions.uiActionsEnabled }))
         _paneShortcuts = State(initialValue: PaneShortcuts(library: library, actions: actions))
         _undoCloseShortcut = State(initialValue: UndoCloseShortcut(actions: actions))
@@ -100,6 +109,7 @@ struct agtermApp: App {
         // server's bound socket path for `{AGT_SOCKET}`.
         _customCommandRunner = State(initialValue: CustomCommandRunner(
             library: library, settings: settingsModel, actions: actions,
+            usage: CustomCommandUsageStore(directory: stateDirectory),
             socketProvider: { controlServer.resolvedSocketPath }))
         // follows macOS light/dark via KVO on NSApp.effectiveAppearance; dependency-free, started in `.task`.
         _appearanceObserver = State(initialValue: SystemAppearanceObserver())
@@ -189,6 +199,8 @@ struct agtermApp: App {
                         // `.agtermKeymapChanged`, removed on terminate via the delegate reference.
                         appDelegate.customCommandRunner = customCommandRunner
                         appDelegate.settingsModel = settingsModel
+                        appDelegate.liveResetMarkerStore = liveResetMarkerStore
+                        appDelegate.liveReset = liveReset
                         // hand the delegate the action hub and drain folders `open -a agterm /path` queued
                         // before the window store resolved.
                         appDelegate.actions = actions
@@ -221,6 +233,10 @@ struct agtermApp: App {
                         // (applicationDidFinishLaunching, before registration): same `hasReopened` gate.
                         if !library.hasReopened, GhosttyApp.shared.lastConfigDiagnosticsCount > 0 {
                             NotificationManager.shared.notifyConfigDiagnostics(count: GhosttyApp.shared.lastConfigDiagnosticsCount)
+                        }
+                        // same for the Live sessions reset, recorded by `restoredRuntime` before any window
+                        if !library.hasReopened, let outcome = GhosttyApp.shared.liveResetOutcome {
+                            NotificationManager.shared.notifyLiveResetOutcome(outcome)
                         }
                         // runs once via the library latch — the .task fires per window.
                         reopenWindows()
@@ -264,6 +280,10 @@ struct agtermApp: App {
     @MainActor
     final class LaunchSpawnContext {
         var runningNames: Set<String>?
+        /// The claimed pane identities the library inventoried during bootstrap; nil when incomplete.
+        var launchInventory: Set<UUID>?
+        /// Panes whose reset could not be confirmed: they attach with no replay and no durable command.
+        var suppressedLaunchPayloads: Set<UUID> = []
     }
 
     /// Builds the window library and zmx foreground resolver for the state directory. Bootstrap
@@ -287,14 +307,19 @@ struct agtermApp: App {
                 _ = client.kill(paneIdentities: $0)
                 foregroundResolver.noteLifecycleChange()
             },
-            launchInventorySink: {
-                context.runningNames = client.reap(knownPaneIdentities: $0,
-                                                   launchDecision: ghostty.restoreLaunchDecision).runningNames
-                foregroundResolver.noteLifecycleChange()
-            },
+            launchInventorySink: { context.launchInventory = $0 },
             launchPaneDrop: { identities in
                 for identity in identities { pacer.discard(identity) }
             })
+        // the reap waits for the library so a confirmed Live sessions reset can narrow its marker against the
+        // current claims first; both finish before any window mounts
+        let consumer = LiveResetConsumer.Dependencies(markerStore: LiveResetMarkerStore(directory: stateDirectory),
+                                                      probe: LiveAttributionProbe())
+        let launch = LaunchOrchestration.Inputs(library: library, client: client, resolver: foregroundResolver,
+                                                context: context, launchDecision: ghostty.restoreLaunchDecision)
+        if let outcome = LaunchOrchestration.run(launch, consumer: consumer) {
+            ghostty.recordLiveResetOutcome(outcome)
+        }
         return RestoredRuntime(library: library, foregroundResolver: foregroundResolver, zmxClient: client,
                                spawnContext: context)
     }
@@ -427,7 +452,8 @@ struct agtermApp: App {
     @MainActor
     static func launchSeedPolicy(_ ghostty: GhosttyApp, context: LaunchSpawnContext) -> LaunchSeedPolicy {
         LaunchSeedPolicy(restoreEnabled: ghostty.restoreRunningCommand, denylist: ghostty.restoreDenylist,
-                         runningNames: context.runningNames)
+                         runningNames: context.runningNames,
+                         suppressedDaemons: Set(context.suppressedLaunchPayloads.map(ZmxSupport.daemonName(for:))))
     }
 
     /// A wrapped pane's shell environment is zmx's own; every other disposition inherits the pane env.
@@ -489,8 +515,9 @@ struct agtermApp: App {
     }
 
     /// Wires the pane-scoped keystroke transition: `keyDown` fires `onUserInputStatusKeystroke` unconditionally,
-    /// and this closure applies host-free `AgentIndicator.afterKeystroke(pane:isInterrupt:)` only when the
-    /// keystroke's OWN pane owns the status, so a block set from a background pane survives typing elsewhere.
+    /// and this closure applies host-free `AgentIndicator.afterKeystroke(pane:keystroke:reset:)` only when the
+    /// keystroke's OWN pane owns the status under the Status reset setting, read live from `GhosttyApp` so a
+    /// Settings change applies to the next key. A block set from a background pane survives typing elsewhere.
     /// An answered block becomes `active` rather than idle; everything else clears. Main/split read
     /// the LIVE `isSplitPane` at keystroke time, so a promoted survivor clears as `.left`, matching its migrated
     /// status identity and `tree` addressing; a captured `.right` would clear the wrong pane and leave both panes
@@ -498,10 +525,10 @@ struct agtermApp: App {
     @MainActor
     private static func wireStatusKeystroke(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID,
                                             fixedPane: StatusPane? = nil) {
-        view.onUserInputStatusKeystroke = { [weak view] isInterrupt in
+        view.onUserInputStatusKeystroke = { [weak view] keystroke in
             let pane = fixedPane ?? ((view?.isSplitPane ?? false) ? .right : .left)
-            guard let next = store.session(withID: sessionID)?
-                .agentIndicator.afterKeystroke(pane: pane, isInterrupt: isInterrupt) else { return }
+            guard let next = store.session(withID: sessionID)?.agentIndicator
+                .afterKeystroke(pane: pane, keystroke: keystroke, reset: GhosttyApp.shared.statusReset) else { return }
             store.setAgentIndicator(next, forSession: sessionID)
         }
     }
@@ -514,7 +541,9 @@ struct agtermApp: App {
     static func makeSplitSurface(for session: Session, store: AppStore, env: [String: String],
                                  services: SurfaceServices) -> GhosttySurfaceView {
         // cwd is the persisted `initialSplitCwd` (a restored split keeps its own directory), else the session's
-        // effectiveCwd. Font size matches the primary; env inherits the parent's window/workspace/session ids.
+        // effectiveCwd, both through `Session.localWorkingDirectory`: the directory is the LOCAL launch's,
+        // whether that is a shell or the attach-time ssh client. Font size matches the primary; env inherits
+        // the parent's window/workspace/session ids.
         // Creation, capture and override precedence matches the primary.
         let ghostty = GhosttyApp.shared
         let zmx = ZmxLaunch.wrapsLocally(mode: ghostty.launchRestoreMode, session: session)
@@ -523,7 +552,9 @@ struct agtermApp: App {
         let disposition = ZmxLaunch.disposition(requested: ghostty.requestedRestoreMode,
                                                 active: ghostty.launchRestoreMode, configuration: zmx)
         if disposition.backedByZmx { services.zmxForegroundResolver?.noteLifecycleChange() }
-        let view = GhosttySurfaceView(workingDirectory: session.initialSplitCwd ?? session.effectiveCwd,
+        let cwd = session.localWorkingDirectory(reported: session.initialSplitCwd ?? session.effectiveCwd,
+                                                homeDirectory: NSHomeDirectory())
+        let view = GhosttySurfaceView(workingDirectory: cwd,
                                       fontSize: session.fontSize.map(Float.init),
                                       env: Self.surfaceEnv(disposition: disposition, fallback: env),
                                       backedByZmx: disposition.backedByZmx)
@@ -574,8 +605,8 @@ struct agtermApp: App {
     /// and captures no exit status, since it is a message the app painted rather than a program the caller
     /// ran. Its body file is the helper's only input, deleted with the surface like the exit-code file.
     @MainActor
-    private static func makeOverlaySurface(for session: Session, store: AppStore, pane: OverlayPane?,
-                                           env: [String: String]) -> GhosttySurfaceView {
+    static func makeOverlaySurface(for session: Session, store: AppStore, pane: OverlayPane?,
+                                   env: [String: String]) -> GhosttySurfaceView {
         let sessionID = session.id
         let spec = Self.overlaySpec(for: session, pane: pane)
         // the session-wide slot's occupant decides passivity; the body file is what that occupant needs
@@ -586,7 +617,10 @@ struct agtermApp: App {
         overlayEnv[OverlayCapture.cmdEnvKey] = spec.command
         overlayEnv[OverlayCapture.codeEnvKey] = codeFile
         if let hudFile { overlayEnv[HudLayout.fileEnvKey] = hudFile }
-        let view = GhosttySurfaceView(workingDirectory: spec.cwd ?? session.effectiveCwd,
+        // an explicit `--cwd` is the caller's local choice; only the inherited default follows the remote rule.
+        let cwd = spec.cwd ?? session.localWorkingDirectory(reported: session.effectiveCwd,
+                                                             homeDirectory: NSHomeDirectory())
+        let view = GhosttySurfaceView(workingDirectory: cwd,
                                       fontSize: session.fontSize.map(Float.init), command: overlayExitWrapper,
                                       waitAfterCommand: spec.wait, autoFocus: !isHud, env: overlayEnv)
         view.overlayCodeFile = codeFile
@@ -652,13 +686,14 @@ struct agtermApp: App {
     /// RUN-ONCE. `autoFocus` grabs first responder on show (winning the SwiftUI/AppKit responder race); the
     /// shell's `exit` runs `closeScratch`, hiding + tearing down so the next show is fresh.
     @MainActor
-    private static func makeScratchSurface(for session: Session, store: AppStore, env: [String: String],
-                                           suppressAutoFocus: Bool, actions: AppActions) -> GhosttySurfaceView {
+    static func makeScratchSurface(for session: Session, store: AppStore, env: [String: String],
+                                   suppressAutoFocus: Bool, actions: AppActions) -> GhosttySurfaceView {
         // re-shows are focused via the `scratchActive` onChange (which also defers to those covers).
         // scratchCommand is run-once: read it for this spawn, then clear so a post-exit respawn is a shell.
         let command = session.scratchCommand
         session.scratchCommand = nil
-        let view = GhosttySurfaceView(workingDirectory: session.effectiveCwd,
+        let cwd = session.localWorkingDirectory(reported: session.effectiveCwd, homeDirectory: NSHomeDirectory())
+        let view = GhosttySurfaceView(workingDirectory: cwd,
                                       fontSize: session.fontSize.map(Float.init),
                                       command: command,
                                       autoFocus: !suppressAutoFocus, env: env)
@@ -714,16 +749,21 @@ struct agtermApp: App {
                                          programVersion: Self.terminalProgramVersion)
     }
 
+    /// The quick terminal's start directory: the active session's, through the remote rule, else HOME.
+    @MainActor
+    static func quickTerminalCwd(library: WindowLibrary?) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard let session = library?.activeStore?.activeSession else { return home }
+        return session.localWorkingDirectory(reported: session.effectiveCwd, homeDirectory: home)
+    }
+
     /// Bind the app's one quick terminal to the library. Every provider resolves through `activeStore` at
     /// call time rather than capturing a window, the panel outliving any particular one; `canShow` is what
     /// keeps it from being summoned into an app with no window left to return to.
     @MainActor
     func wireQuickTerminal(library: WindowLibrary) {
         let controller = QuickTerminalController.shared
-        controller.cwdProvider = { [weak library] in
-            library?.activeStore?.activeSession?.effectiveCwd
-                ?? FileManager.default.homeDirectoryForCurrentUser.path
-        }
+        controller.cwdProvider = { [weak library] in Self.quickTerminalCwd(library: library) }
         controller.envProvider = { [self] in quickTerminalEnv() }
         // typing counts as activity, so an idle auto-follow fire can't reshuffle the active window's
         // selection behind the panel while the user types (mirrors the overlay/scratch).

@@ -1793,7 +1793,7 @@ struct AppStorePaneTests {
         store.setAgentIndicator(AgentIndicator(status: .blocked, statusPane: .right), forSession: session.id)
         #expect(session.agentIndicator.statusPane == .left)                      // coerced — no live split
         // the sole (left) pane owns it, so its keystrokes move it
-        #expect(session.agentIndicator.afterKeystroke(pane: .left, isInterrupt: true) == AgentIndicator())
+        #expect(session.agentIndicator.afterKeystroke(pane: .left, keystroke: .interrupt, reset: .firstKey) == AgentIndicator())
         // and the tree agrees: split:false with statusPane "left", never the contradictory "right".
         let node = store.controlTree().workspaces[0].sessions.first
         #expect(node?.split == false)
@@ -1824,7 +1824,7 @@ struct AppStorePaneTests {
         #expect(session.agentIndicator.statusPane == .right)                  // kept — the split is coming up
         // once the deck realizes the surface, the block is exactly where the right pane can clear it.
         session.splitSurface = SpySurface()
-        #expect(session.agentIndicator.afterKeystroke(pane: .right, isInterrupt: true) == AgentIndicator())
+        #expect(session.agentIndicator.afterKeystroke(pane: .right, keystroke: .interrupt, reset: .firstKey) == AgentIndicator())
         let node = store.controlTree().workspaces[0].sessions.first
         #expect(node?.split == true)
         #expect(node?.statusPane == "right")

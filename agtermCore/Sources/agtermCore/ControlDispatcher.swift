@@ -36,7 +36,7 @@ public protocol ControlActions {
     /// means clear.
     func setSessionContext(_ target: String?, window: String?, context: String?) -> ControlResponse
     func markSessionSeen(_ target: String?, window: String?) -> ControlResponse
-    func setSessionStatus(_ target: String?, window: String?, update: ControlSessionStatusUpdate) -> ControlResponse
+    func setSessionStatus(_ target: String?, window: String?, update: ControlSessionStatusUpdate) async -> ControlResponse
     /// Write a pane's PERSISTED restore-command override (consumed on the NEXT launch, never this run).
     /// The host resolves the target session and the live pane slot, then stores the tri-state value; it
     /// also owns the pane rejections that need a session (`scratch`, `right` without a split, an
@@ -116,6 +116,7 @@ public protocol ControlActions {
     func windowNew(name: String?, minimized: Bool) async -> ControlResponse
     func windowList() -> ControlResponse
     func windowSelect(_ target: String?) async -> ControlResponse
+    func windowGo(direction: WorkspaceNavigation) -> ControlResponse
     func windowClose(_ target: String?) async -> ControlResponse
     func windowRename(_ target: String?, name: String) -> ControlResponse
     func windowDelete(_ target: String?) -> ControlResponse
@@ -153,12 +154,17 @@ public protocol ControlActions {
     /// Destroy ONE pane's daemon. The host resolves the owner against the inventory rather than the open
     /// stores, since this reaches closed and unindexed claims the target resolver cannot see.
     func killZmxDaemon(target: String, window: String?, pane: ZmxPaneRole) -> ControlResponse
+    /// Confirm the Live sessions reset without the dialog: the host selects the panes, refuses outside Live
+    /// or on an incomplete inventory, answers, and quits only after this reply is written.
+    func resetLiveSessions() -> ControlResponse
     /// Another machine's attachable sessions. Async because it runs ssh: a blocking wait here would hold
     /// the main actor for the whole network deadline.
     func remoteTree(host: String?) async -> ControlResponse
     /// Create a local session attached to `session` on `host`. Resolves the remote itself before inserting
     /// anything, so a session that has gone since the tree was read creates nothing.
     func attachRemoteSession(host: String, session: String) async -> ControlResponse
+    /// Attach into an open local window, defaulting to the frontmost window after discovery.
+    func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse
 }
 
 /// Routes control commands through a host-provided action seam. The dispatcher owns command parsing and
@@ -180,7 +186,7 @@ public struct ControlDispatcher {
         case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
                 .sessionReveal, .sessionMove, .sessionFlag, .sessionContext, .sessionSeen, .sessionStatus,
                 .sessionRestore:
-            return dispatchSessionCommand(request)
+            return await dispatchSessionCommand(request)
         case .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionScratch, .sessionFocus, .sessionResize,
                 .surfaceZoom, .surfaceCursor, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
@@ -195,11 +201,11 @@ public struct ControlDispatcher {
                 .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
                 .sidebarCollapse, .sidebarWidth, .restoreClear, .restoreCapture, .version:
             return dispatchAppCommand(request)
-        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach:
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach:
             return await dispatchZmxCommand(request)
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
-        case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
+        case .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename,
                 .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize:
             return await dispatchWindowCommand(request)
         case .dashboard:
@@ -253,7 +259,7 @@ public struct ControlDispatcher {
         return actions.readEvents(ControlEventReadOptions(cursor: cursor, kinds: kinds, limit: limit))
     }
 
-    private func dispatchSessionCommand(_ request: ControlRequest) -> ControlResponse {
+    private func dispatchSessionCommand(_ request: ControlRequest) async -> ControlResponse {
         switch request.cmd {
         case .sessionNew:
             let args = request.args
@@ -383,7 +389,7 @@ public struct ControlDispatcher {
                                                     sound: request.args?.sound, color: request.args?.color,
                                                     shape: shape,
                                                     pane: pane, paneID: request.args?.paneID)
-            return actions.setSessionStatus(request.target, window: request.args?.window, update: update)
+            return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)
         case .sessionRestore:
             return dispatchSessionRestore(request)
         default:
@@ -890,6 +896,11 @@ public struct ControlDispatcher {
             return actions.windowList()
         case .windowSelect:
             return await actions.windowSelect(request.target)
+        case .windowGo:
+            guard let dir = (request.args?.to).flatMap(WorkspaceNavigation.init(wire:)) else {
+                return ControlResponse(ok: false, error: "window.go requires --to next|prev")
+            }
+            return actions.windowGo(direction: dir)
         case .windowClose:
             return await actions.windowClose(request.target)
         case .windowRename:

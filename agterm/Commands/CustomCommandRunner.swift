@@ -30,11 +30,15 @@ final class CustomCommandRunner {
     /// How long a half-typed leader sequence waits for its next chord before abandoning (kitty-style).
     private static let leaderTimeout: TimeInterval = 1.5
 
-    init(library: WindowLibrary, settings: SettingsModel, actions: AppActions,
+    /// Run counts behind the title-bar popover's most-used section; every spawn path records into it.
+    let usage: CustomCommandUsageStore
+
+    init(library: WindowLibrary, settings: SettingsModel, actions: AppActions, usage: CustomCommandUsageStore,
          socketProvider: @escaping () -> String) {
         self.library = library
         self.settings = settings
         self.actions = actions
+        self.usage = usage
         self.socketProvider = socketProvider
     }
 
@@ -224,38 +228,46 @@ final class CustomCommandRunner {
         // promoted survivor sits in the `surface` slot with both nil/false, so `.left`.
         let onSplit = session.splitFocused && session.splitSurface != nil
         let selectionSurface = (onSplit ? session.splitSurface : session.surface) as? GhosttySurfaceView
-        let context = self.context(for: session, in: store, selectionSurface: selectionSurface,
-                                   pane: onSplit ? .right : .left)
-        spawn(command, context: context)
+        spawn(command, for: session, in: store, selectionSurface: selectionSurface, pane: onSplit ? .right : .left)
     }
 
     /// Run a command fired by KEYBIND: context from the surface that had focus at key-down, so a chord from a
     /// split/scratch (or during a window-switch race) runs against THAT surface's session/cwd/window and reads
     /// its selection. A sessionless focused surface routes through `runFromSessionlessSurface`.
     func runFromKeybind(_ command: CustomCommand, focusedSurface: GhosttySurfaceView) {
-        guard let session = focusedSurface.session, let store = library.store(forSession: session.id) else {
+        guard let session = focusedSurface.session, let store = store(owning: session) else {
             runFromSessionlessSurface(command, focusedSurface: focusedSurface)
             return
         }
         // the pane is the surface's identity, not the focus flag, so a chord reports the pane it was typed in
         // even before the flag catches up.
         let pane: CommandContext.Pane = (session.splitSurface as? GhosttySurfaceView) === focusedSurface ? .right : .left
-        let context = self.context(for: session, in: store, selectionSurface: focusedSurface, pane: pane)
-        spawn(command, context: context)
+        spawn(command, for: session, in: store, selectionSurface: focusedSurface, pane: pane)
     }
 
-    /// The keybind fallback for a sessionless focused surface (quick terminal, overlay, scratch). The scratch
-    /// and the overlays belong to the ACTIVE session, so a chord from one runs against that session and reads
-    /// THAT surface's own selection — the read leg of `$AGT_PANE` → `session type --pane scratch`. The quick
-    /// terminal is nobody's pane and takes the plain palette path.
-    private func runFromSessionlessSurface(_ command: CustomCommand, focusedSurface: GhosttySurfaceView) {
-        guard let store = library.activeStore, let session = store.activeSession,
-              let pane = sessionlessPane(of: focusedSurface, in: session) else {
-            runNoSurface(command)
-            return
+    /// The open store holding `session` itself. Matched by object identity rather than through
+    /// `store(forSession:)`, which answers with the first window carrying that id and a snapshot written by
+    /// an older build can put one id in two windows.
+    private func store(owning session: Session) -> AppStore? {
+        for windowID in library.openIDs() {
+            guard let store = library.store(for: windowID) else { continue }
+            if store.workspaces.contains(where: { $0.sessions.contains { $0 === session } }) { return store }
         }
-        let context = self.context(for: session, in: store, selectionSurface: focusedSurface, pane: pane)
-        spawn(command, context: context)
+        return nil
+    }
+
+    /// Resolve the surface and its owning store together, since a session id can repeat across windows.
+    /// The quick terminal has no session owner and keeps the active-session fallback.
+    private func runFromSessionlessSurface(_ command: CustomCommand, focusedSurface: GhosttySurfaceView) {
+        for windowID in library.openIDs() {
+            guard let store = library.store(for: windowID) else { continue }
+            for session in store.workspaces.flatMap(\.sessions) {
+                guard let pane = sessionlessPane(of: focusedSurface, in: session) else { continue }
+                spawn(command, for: session, in: store, selectionSurface: focusedSurface, pane: pane)
+                return
+            }
+        }
+        runNoSurface(command)
     }
 
     /// Which pane `session`'s sessionless surface reports as `$AGT_PANE`, nil when the surface is not one of
@@ -295,21 +307,31 @@ final class CustomCommandRunner {
             logger.notice("custom command \"\(command.name, privacy: .public)\" references session context but no session is active; ignored")
             return
         }
-        spawn(command, context: sessionlessContext())
+        spawn(command, context: sessionlessContext(), cwd: nil)
     }
 
-    /// Resolve every `{AGT_X}` token for the given session: ids + cwd from the model, names from the owning
-    /// workspace/window, the selection from `selectionSurface`, the fired-from pane from the caller
-    /// (`left`|`right`|`scratch`), the socket from the control server.
+    /// Spawn for a session pane: the context carries the pane's reported cwd raw, while the process starts
+    /// where `Session.localWorkingDirectory` says, which differs on a remote session whose path is not here.
+    private func spawn(_ command: CustomCommand, for session: Session, in store: AppStore,
+                       selectionSurface: GhosttySurfaceView?, pane: CommandContext.Pane) {
+        let context = self.context(for: session, in: store, selectionSurface: selectionSurface, pane: pane)
+        let cwd = session.localWorkingDirectory(reported: context.sessionPWD, homeDirectory: NSHomeDirectory())
+        spawn(command, context: context, cwd: cwd)
+    }
+
+    /// Resolve every `{AGT_X}` token for the given session: ids + cwd + remote host from the model, names
+    /// from the owning workspace/window, the selection from `selectionSurface`, the fired-from pane from the
+    /// caller (`left`|`right`|`scratch`), the socket from the control server.
     private func context(for session: Session, in store: AppStore, selectionSurface: GhosttySurfaceView?,
                          pane: CommandContext.Pane) -> CommandContext {
         let workspace = store.workspace(forSession: session.id)
-        let windowID = library.windowID(forSession: session.id)
+        let windowID = library.windowID(for: store)
         let windowName = library.windowName(for: windowID)
         return CommandContext(
             sessionID: session.id.uuidString,
             sessionName: session.displayName,
             sessionPWD: session.cwd(for: pane),
+            sessionHost: TerminalText.sanitized(session.remoteHost ?? ""),
             workspaceID: workspace?.id.uuidString ?? "",
             workspaceName: workspace?.name ?? "",
             windowID: windowID?.uuidString ?? "",
@@ -330,10 +352,10 @@ final class CustomCommandRunner {
     }
 
     /// Spawn the expanded command as a detached `/bin/sh -c`, exporting `$AGT_*` over the app environment and
-    /// running in the session's cwd. `PATH` is widened first (`CommandPath`): the app's own is launchd's, and
-    /// `sh -c` runs no profile, so a bare `agtermctl` would exit 127. A spawn error or non-zero exit posts a
-    /// failure banner; no output capture, no success banner.
-    private func spawn(_ command: CustomCommand, context: CommandContext) {
+    /// running in `cwd` (nil for a sessionless launch, which inherits the app's). `PATH` is widened first
+    /// (`CommandPath`): the app's own is launchd's, and `sh -c` runs no profile, so a bare `agtermctl` would
+    /// exit 127. A spawn error or non-zero exit posts a failure banner; no output capture, no success banner.
+    private func spawn(_ command: CustomCommand, context: CommandContext, cwd: String?) {
         let line = context.expand(command.command)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -347,8 +369,8 @@ final class CustomCommandRunner {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        if !context.sessionPWD.isEmpty {
-            process.currentDirectoryURL = URL(fileURLWithPath: context.sessionPWD, isDirectory: true)
+        if let cwd, !cwd.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
         }
         let name = command.name
         process.terminationHandler = { proc in
@@ -359,6 +381,7 @@ final class CustomCommandRunner {
         }
         do {
             try process.run()
+            usage.record(command)
         } catch {
             logger.error("custom command \"\(name, privacy: .public)\" failed to spawn: \(error.localizedDescription, privacy: .public)")
             NotificationManager.shared.notifyCommandFailure(name: name, detail: error.localizedDescription)
