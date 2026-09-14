@@ -145,6 +145,9 @@ final class AppController {
     var settingsCustomDirectoryRow: OpaquePointer?
     var settingsConfigDirectoryRow: OpaquePointer?
     var settingsAutoFollowAwayRow: OpaquePointer?
+    /// Settings ▸ Agent Status ▸ Status reset, cached off the keystroke path and refreshed by
+    /// `applyAgentStatusSettings` so a Settings change applies to the next key without a disk read per press.
+    var statusResetMode: StatusReset = .firstKey
     var settingsInterfaceRows: [OpaquePointer: InterfaceElement] = [:]
     var integrationRows: [IntegrationKind: OpaquePointer] = [:]
     var integrationKindButtons: [IntegrationKind: OpaquePointer] = [:]
@@ -315,6 +318,7 @@ final class AppController {
 
         applyWindowTranslucency()
         applyAutoFollowSettings()
+        applyAgentStatusSettings()
         gtk_window_present(WIN(window))
         applySidebarThemeColor()   // tint the sidebar to the terminal theme background
         loadKeymapAtStartup()   // this window's own keymap.conf caches; NOT an app-wide reload
@@ -639,10 +643,12 @@ final class AppController {
     }
 
     /// Move the pane's agent status along a keystroke: typing clears completed and answers blocked into
-    /// active, Escape or bare Ctrl-C clears everything. `AgentIndicator.afterKeystroke` owns the table.
-    func applyKeystrokeToStatus(_ id: UUID, pane: StatusPane, isInterrupt: Bool) {
+    /// active, Escape or bare Ctrl-C clears everything, all gated by Settings ▸ Agent Status ▸ Status reset.
+    /// `AgentIndicator.afterKeystroke` owns the table.
+    func applyKeystrokeToStatus(_ id: UUID, pane: StatusPane, keystroke: StatusKeystroke) {
         guard let session = store.session(withID: id),
-              let next = session.agentIndicator.afterKeystroke(pane: pane, isInterrupt: isInterrupt)
+              let next = session.agentIndicator
+                  .afterKeystroke(pane: pane, keystroke: keystroke, reset: statusResetMode)
         else { return }
         store.setAgentIndicator(next, forSession: id)
         rebuildSidebar()

@@ -777,6 +777,12 @@ extension AppController: ControlActions {
                 }
                 if let surface {
                     surface.inject(text: options.text)
+                    // the input a blocked agent was waiting for has arrived, so the block must not outlive
+                    // it. A newline in the payload counts as Return, never as the Escape/Ctrl-C interrupt.
+                    if !options.text.isEmpty {
+                        applyKeystrokeToStatus(id, pane: options.pane ?? .left,
+                                               keystroke: InterruptKeystroke.classify(text: options.text))
+                    }
                     return ok(id)
                 }
                 usleep(30_000)

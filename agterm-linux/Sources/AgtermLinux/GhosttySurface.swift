@@ -612,12 +612,10 @@ final class GhosttySurface: PaneRoleMutableSurface {
         guard let surface else { return false }
         controller?.noteUserActivity()
 
-        let control = (state & (1 << 2)) != 0
-        let hasOtherModifiers = (state & ((1 << 0) | (1 << 3) | (1 << 26))) != 0
         let baseScalar = Unicode.Scalar(gdk_keyval_to_unicode(gdk_keyval_to_lower(keyval)))
-        let isInterrupt = keyval == 0xFF1B || (control && !hasOtherModifiers && baseScalar?.value == 0x63)
         if let pane = role.statusPane {
-            controller?.applyKeystrokeToStatus(sessionID, pane: pane, isInterrupt: isInterrupt)
+            let keystroke = LinuxStatusKeystroke.classify(keyval: keyval, state: state, baseCharacter: baseScalar)
+            controller?.applyKeystrokeToStatus(sessionID, pane: pane, keystroke: keystroke)
         }
 
         // App-level shortcuts run first via the shared keymap (rebindable built-ins + custom commands +

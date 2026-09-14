@@ -359,7 +359,7 @@ struct AppStoreNavigationTests {
         let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
         store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: session.id)
         #expect(store.attentionSessions.map(\.id) == [session.id])
-        let answered = session.agentIndicator.afterKeystroke(pane: .left, isInterrupt: false)!
+        let answered = session.agentIndicator.afterKeystroke(pane: .left, keystroke: .other, reset: .firstKey)!
         store.setAgentIndicator(answered, forSession: session.id)
         #expect(answered.status == .active)
         #expect(store.attentionSessions.isEmpty)
