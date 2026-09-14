@@ -23,13 +23,15 @@ Drive the workflow, show evidence at each checkpoint, and pause only at the cons
 
 ## Use These Approval Gates
 
-Continue autonomously through inspection, merging, implementation, testing, commits requested by the user, and review fixes.
+Continue autonomously through inspection, merging, implementation, testing, commits requested by the user, review fixes,
+and fast-forward pushes of `master` and `linux-port` to `origin`.
+A fast-forward push of either branch needs no approval: it adds commits and destroys nothing, and the fork is the
+user's own workspace. Report the refs it moved instead of asking first.
 Stop and obtain explicit approval immediately before:
 
-1. pushing an updated `master` or `linux-port` branch;
-2. any force-push or remote tag move;
-3. creating or pushing a Linux release tag;
-4. publishing user-authored release text or making a product/UX divergence from upstream.
+1. any force-push or remote tag move;
+2. creating or pushing a Linux release tag;
+3. publishing user-authored release text or making a product/UX divergence from upstream.
 
 Show the exact commits, refs, command, and validation state at each gate.
 Never use a blind force push; use a narrowly scoped `--force-with-lease` only after approval.
@@ -81,7 +83,7 @@ Use the branch model documented in `README.md`:
 1. Check that switching branches will not overwrite user changes. Do not stash, discard, or relocate them without approval.
 2. Switch to `master` and fast-forward it to the chosen upstream commit. Use `upstream/master` for rolling parity or the exact upstream tag for a tag-bounded release.
 3. Confirm the resulting `master` contains no downstream-only commit.
-4. Present the branch push gate before updating `origin/master`.
+4. Push the fast-forwarded `master` to `origin`, reporting the refs it moved.
 5. Switch to `linux-port`, update it from `origin/linux-port` with `--ff-only`, then merge `master` with a normal merge commit when one is needed.
 6. Resolve shared-core conflicts toward upstream unless a carried fix remains portable, necessary, and intentionally upstreamable.
 7. Confirm the selected upstream tag is an ancestor of `linux-port` and the protected test file has no downstream diff.
@@ -157,15 +159,15 @@ Before declaring parity complete:
 
 ## Phase 7: Commit and Push
 
-Before the push gate, report:
+Push each branch fast-forward and report, with the pushed refs:
 
 - target upstream version and merge commit;
 - parity commits and deliberate exemptions;
 - exact test, lint, build, manual, and CI results;
 - current worktree status and explicitly excluded files;
-- commits that will update each remote ref.
+- the before and after object of every remote ref the push moved.
 
-After approval, push the named branch normally.
+A push that is refused as non-fast-forward is a gate, not a retry: stop, show why, and ask.
 If history was deliberately rewritten and the user approved it, fetch first and use `--force-with-lease` against the observed remote object.
 Wait for Linux branch CI to finish and fix failures before release tagging.
 
@@ -231,7 +233,7 @@ Rerun the existing tag with `workflow_dispatch` when only infrastructure was tra
 
 If source or workflow fixes are required:
 
-1. fix, validate, commit, and push `linux-port` through the normal push gate;
+1. fix, validate, commit, and push `linux-port` fast-forward as usual;
 2. confirm no GitHub release was published from the failed tag;
 3. show the old tag object, new commit, and exact lease-protected tag update;
 4. obtain explicit approval before moving the remote tag.
