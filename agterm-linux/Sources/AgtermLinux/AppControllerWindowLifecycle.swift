@@ -22,13 +22,15 @@ extension AppController {
     }
 
     /// Whether the window may close now, or should first confirm. Mirrors the macOS app-quit alert:
-    /// closing the LAST open window quits the app + ends every running shell, so confirm that loss.
+    /// closing the LAST open window quits the app and, outside Live sessions mode, ends every running
+    /// shell, so confirm that loss.
     /// A non-last window, an empty app, or an already-confirmed close proceeds immediately.
     func windowShouldClose() -> Bool {
         if confirmedClose { return true }
         let counts = library.openCounts()
         guard counts.windows <= 1, counts.sessions > 0 else { return true }
-        let body = QuitPrompt.message(windows: counts.windows, sessions: counts.sessions)
+        let body = QuitPrompt.message(windows: counts.windows, sessions: counts.sessions,
+                                      mode: gZmx.activeMode)
         let dialog = OpaquePointer("Quit agterm?".withCString { h in body.withCString { b in adw_alert_dialog_new(h, b) } })
         attachControllerContext(to: dialog, windowID: windowID)
         "cancel".withCString { i in "Cancel".withCString { l in adw_alert_dialog_add_response(cast(dialog), i, l) } }
