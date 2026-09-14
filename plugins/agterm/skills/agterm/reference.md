@@ -130,7 +130,8 @@ it),
 the bundled persistent host, `app` the running agterm, `orphaned` a self-responsible pane or a confirmed
 dead responsible process, and `unknown` an unavailable reading or an unrelated live responsible process;
 omitted for non-Live and remote panes; the split field includes hidden splits and is omitted without a
-split; these describe attribution, not permission grants),
+split; these describe attribution, not permission grants; the GTK Linux frontend runs no session host and
+omits both),
 `remoteHost` (the machine an attached session came from — the read side of `zmx attach`; omitted for a
 local session, and never present after a relaunch because a remote session is never written to disk),
 `hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
@@ -580,7 +581,9 @@ error keeps those names for compatibility.
   from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
   no longer wiped by foreground typing in the main pane, and only input in the OWNING pane clears it,
   whether typed by hand or sent with `session type`, and only as Settings ▸ Agent Status ▸ Status reset
-  allows: the first key by default, Return or a newline in the text under On Enter, never when Disabled), (2) while the session is `blocked`, a status from
+  allows: the first key by default, Return or a newline in the text under On Enter, never when Disabled;
+  on the GTK Linux frontend an answered `blocked` becomes `active` rather than idle, since the approved
+  tool then runs with no hook to announce it, and only an interrupt clears it), (2) while the session is `blocked`, a status from
   another pane that is not itself `blocked` is REFUSED with `blocked status owned by pane <pane>` —
   it changes nothing and plays no sound, so an agent working in one pane cannot erase the other pane's
   request for input; a second pane may still report its own `blocked`, `idle` is NOT exempt (Codex's
@@ -906,6 +909,8 @@ sandbox-local executable path.
   clamped into `[window min size, the display's visible frame]`, so an oversized or under-min request is
   bounded to fit rather than applied verbatim. Prints the applied width and height as `W H`; JSON reports
   `result.width` and `result.height`, rounded to integer points like `window list` geometry.
+  The GTK Linux frontend echoes the size clamped the same way but not a measured frame: GTK applies a size
+  on the next layout and the compositor has the final say.
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.
@@ -1508,6 +1513,9 @@ on an incomplete pane inventory, and when nothing needs resetting. The reply car
 with the session and pane counts; the next launch re-checks every session and only ever resets fewer than
 confirmed, and the tree's top-level `liveReset` reports `pending` until the quit and `last` for the launch
 that consumed the reset.
+
+Not available on the GTK Linux frontend, which runs no session host: there is no permission identity to
+repair, and the command answers that it is unsupported.
 
 `--window ID` scopes the search to one window's claims, for a session prefix claimed in more than one.
 Omit it to search every window, closed and unindexed ones included; `active` is not accepted, and neither
