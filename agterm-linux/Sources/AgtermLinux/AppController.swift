@@ -415,15 +415,6 @@ final class AppController {
         return step.workspaceID
     }
 
-    /// Step to the next/previous OPEN window and raise it, through the shared `library.navigateWindow` the
-    /// palette, the keymap builtin and `window.go` all call. A single open window has nowhere to go.
-    @discardableResult
-    func navigateWindow(_ direction: WorkspaceNavigation) -> UUID? {
-        guard let target = library.navigateWindow(direction) else { return nil }
-        openWindow(target)
-        return target
-    }
-
     /// The window-level work a workspace step owes once core has moved the selection itself — the half
     /// `selectSession` would have run. An EMPTY destination selects nothing, and then none of it applies.
     /// Reconciles rather than only re-selecting: such a destination reveals itself through
@@ -659,25 +650,6 @@ final class AppController {
         store.setWorkspacesExpanded(expanded)
         rebuildSidebar()
         syncSidebarSelection()
-    }
-
-    /// Move the pane's agent status along a keystroke: typing clears completed and answers blocked into
-    /// active, Escape or bare Ctrl-C clears everything, all gated by Settings ▸ Agent Status ▸ Status reset.
-    /// `AgentIndicator.afterKeystroke` owns the table.
-    func applyKeystrokeToStatus(_ id: UUID, pane: StatusPane, keystroke: StatusKeystroke) {
-        guard let session = store.session(withID: id),
-              let next = session.agentIndicator
-                  .afterKeystroke(pane: pane, keystroke: keystroke, reset: statusResetMode)
-        else { return }
-        store.setAgentIndicator(next, forSession: id)
-        rebuildSidebar()
-    }
-    /// Reset the active session's agent status to idle (the palette "Clear Status", GUI half of
-    /// `session.status idle`).
-    func clearActiveStatus() {
-        guard let id = store.selectedSessionID else { return }
-        store.setAgentIndicator(AgentIndicator(), forSession: id)
-        rebuildSidebar()
     }
 
     /// Move the active session to another workspace (the palette "Move Session to <ws>").

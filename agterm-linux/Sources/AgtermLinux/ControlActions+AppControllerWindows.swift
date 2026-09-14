@@ -48,6 +48,15 @@ extension AppController {
         }
     }
 
+    /// Step to the next/previous OPEN window and raise it, through the shared `library.navigateWindow` the
+    /// palette, the keymap builtin and `window.go` all call. A single open window has nowhere to go.
+    @discardableResult
+    func navigateWindow(_ direction: WorkspaceNavigation) -> UUID? {
+        guard let target = library.navigateWindow(direction) else { return nil }
+        openWindow(target)
+        return target
+    }
+
     /// Step to the next/previous OPEN window in library order and raise it, through the shared
     /// `library.navigateWindow` the menu and the palette also call. Only open windows are stops, so a
     /// closed one is skipped on the way round; with fewer than two there is nowhere to go.

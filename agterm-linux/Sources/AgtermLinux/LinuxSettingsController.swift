@@ -437,10 +437,6 @@ extension AppController {
         for controller in gWindows.values { controller.applyAgentStatusSettings() }
     }
 
-    func applyAgentStatusSettings() {
-        statusResetMode = linuxSettingsStore().load().effectiveStatusReset
-    }
-
     func applyAutoFollowSettings() {
         let settings = linuxSettingsStore().load()
         let timeout = AppSettings.AutoFollowAttention(tolerant: settings.autoFollowAttention).timeout
