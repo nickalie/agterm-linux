@@ -171,6 +171,30 @@ A push that is refused as non-fast-forward is a gate, not a retry: stop, show wh
 If history was deliberately rewritten and the user approved it, fetch first and use `--force-with-lease` against the observed remote object.
 Wait for Linux branch CI to finish and fix failures before release tagging.
 
+Then roll the validated build out over the maintainer's own install, without asking.
+The local install is how the user runs agterm day to day, so parity that never reaches it is not delivered.
+
+```sh
+rm -rf build/stage-deploy
+docker run --rm -v "$PWD:/w" -w /w -e AGTERM_PACKAGE_VERSION=X.Y.Z localhost/agterm-build:6.3.2 \
+  bash -lc 'scripts/stage-linux.sh /w/build/stage-deploy'
+rsync -a --delete build/stage-deploy/ ~/.local/share/agterm-linux/
+rm -rf build/stage-deploy
+```
+
+- Stage INSIDE the build container: `stage-linux.sh` bundles the Swift runtime through `ldd`, which the
+  host cannot resolve.
+- `AGTERM_PACKAGE_VERSION` is the upstream version this parity base tracks, since `agtermctl version` is
+  what a cookbook recipe's minimum is compared against; the commit is taken from `HEAD`.
+- Smoke-test the staged `bin/agtermctl --help` on the host before the rsync — it needs no socket and proves
+  the bundled runtime loads.
+- Leave `~/.local/share/applications/*.desktop` alone: it carries the user's own `AGTERM_NO_UPDATE=1`
+  guard, and the payload ships its own copy anyway. `~/.local/bin/agtermctl` is a symlink into the payload
+  and survives the rsync.
+- NEVER restart, quit, or relaunch the running app. Replacing files leaves the live process on its old
+  inodes; when the user restarts is the user's call. Report the installed VERSION and COMMIT and say that a
+  restart is what picks them up.
+
 ## Phase 8: Prepare the Linux Release
 
 Linux releases mirror the upstream version and use `linux-vX.Y.Z` tags from `linux-port`.
@@ -244,5 +268,6 @@ Prefer a new version if any artifact or release became public or downstream user
 ## Finish with an Evidence-Based Handoff
 
 Lead with the outcome.
-Include the upstream range, parity status, platform exemptions, commits, pushed refs, release/tag/run URLs, validation evidence, and remaining work.
+Include the upstream range, parity status, platform exemptions, commits, pushed refs, the version and commit
+now installed locally, release/tag/run URLs, validation evidence, and remaining work.
 Mention protected or unrelated files that were intentionally left untouched when relevant.
