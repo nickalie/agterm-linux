@@ -749,11 +749,16 @@ extension AppController {
                     windowName: hidden.contains(.windowName) || windowInfo?.hasCustomName != true
                         ? nil : windowInfo?.name,
                     context: hidden.contains(.sessionContext) ? nil : store.activeSession?.context,
-                    detail: store.activeSession?.subtitleDetail ?? ""
+                    detail: store.activeSession?.subtitleDetail ?? "",
+                    remoteHost: hidden.contains(.remoteHost) ? nil : store.activeSession?.remoteHost
                 ),
                 mode: settings.effectiveToolbarMode
             )
-            composition.title.withCString { adw_window_title_set_title(titleWidget, $0) }
+            // AdwWindowTitle takes plain strings, so the host cannot be styled or truncated on its own as
+            // the SwiftUI bar does it. It reads as one line with the cloud marking where it starts.
+            let host = composition.host.map { " \u{2601} " + $0 } ?? ""
+            let barTitle = composition.title + host + composition.tail
+            barTitle.withCString { adw_window_title_set_title(titleWidget, $0) }
             composition.subtitle.withCString { adw_window_title_set_subtitle(titleWidget, $0) }
         }
         normalTitle.withCString { value in

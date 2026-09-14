@@ -269,7 +269,10 @@ extension AppController {
         guard let row = op(gtk_list_box_row_new()), let box = op(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)) else { return nil }
         "session-row".withCString { gtk_widget_set_name(W(row), $0) }
         gtk_widget_add_css_class(W(box), "agterm-session-row-content")
-        if let lead = op(gtk_image_new_from_icon_name("utilities-terminal-symbolic")) {
+        // a session attached with `zmx attach` takes a cloud in place of the terminal glyph, the sidebar
+        // half of the title bar's remote host
+        let leadIcon = s.remoteHost == nil ? "utilities-terminal-symbolic" : "weather-overcast-symbolic"
+        if let lead = op(gtk_image_new_from_icon_name(leadIcon)) {
             gtk_widget_set_margin_start(W(lead), 6)
             gtk_box_append(cast(box), W(lead))
         }
