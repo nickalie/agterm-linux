@@ -113,8 +113,13 @@ extension AppController {
     /// Open a brand-new window (the New Window palette action).
     func openNewWindow() { openWindow(gLibrary.newWindow().id) }
 
+    /// Reopen the latest Recent Closed entry into the window that still OWNS it — its own window ahead of
+    /// the one holding its workspace — rather than forcing it into this one, which could leave the same
+    /// session live in two windows after an undo of the original close.
     func reopenRecentClosed() {
-        if library.reopenLatestRecentClosed(into: store) { reconcile() }
+        guard let owner = library.reopenLatestRecentClosedReportingWindow() else { return }
+        openWindow(owner)
+        gWindows[owner]?.reconcile()
     }
 
     func undoPendingClose() {

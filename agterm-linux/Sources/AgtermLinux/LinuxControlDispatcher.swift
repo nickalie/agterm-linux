@@ -50,7 +50,7 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "sidebar.width requires a width in points")
             }
             return actions.setSidebarWidth(points, window: request.args?.window)
-        case .restoreMode, .zmxList, .zmxPrune, .zmxKill:
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset:
             return dispatchZmxCommand(request)
         case .windowRename, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
                 .windowGo:
@@ -128,6 +128,13 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "zmx.kill requires --force")
             }
             return actions.killZmxDaemon(target: target, window: request.args?.window, pane: pane)
+        case .zmxReset:
+            // the --force gate stands whatever the host answers, so the refusal a Linux caller gets names
+            // the feature rather than the missing flag
+            guard request.args?.force == true else {
+                return ControlResponse(ok: false, error: "zmx.reset requires --force")
+            }
+            return actions.resetLiveSessions()
         default:
             return ControlResponse(ok: false, error: "unexpected zmx command: \(request.cmd.rawValue)")
         }
