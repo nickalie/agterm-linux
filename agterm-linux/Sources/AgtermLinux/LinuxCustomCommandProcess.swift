@@ -56,14 +56,18 @@ enum LinuxCustomCommandFailure: Sendable, Equatable {
 }
 
 enum LinuxCustomCommandProcess {
+    /// `cwd` is where the process STARTS, which a remote session separates from the reported
+    /// `AGT_SESSION_PWD` the context still carries: the far side's path need not exist here.
     static func request(
-        command: CustomCommand, context: CommandContext, baseEnvironment: [String: String]
+        command: CustomCommand, context: CommandContext, baseEnvironment: [String: String],
+        cwd: String? = nil
     ) -> LinuxProcessLaunchRequest {
-        LinuxProcessLaunchRequest(
+        let directory = cwd ?? context.sessionPWD
+        return LinuxProcessLaunchRequest(
             executablePath: "/bin/sh",
             arguments: ["-c", context.expand(command.command)],
             environment: baseEnvironment.merging(context.environment()) { _, commandValue in commandValue },
-            currentDirectoryPath: context.sessionPWD.isEmpty ? nil : context.sessionPWD,
+            currentDirectoryPath: directory.isEmpty ? nil : directory,
             standardIO: .null)
     }
 
@@ -71,10 +75,11 @@ enum LinuxCustomCommandProcess {
         command: CustomCommand,
         context: CommandContext,
         baseEnvironment: [String: String] = LinuxCommandPath.environment(),
+        cwd: String? = nil,
         launcher: any LinuxProcessLaunching,
         onFailure: @escaping @Sendable (LinuxCustomCommandFailure) -> Void
     ) {
-        let request = request(command: command, context: context, baseEnvironment: baseEnvironment)
+        let request = request(command: command, context: context, baseEnvironment: baseEnvironment, cwd: cwd)
         do {
             try launcher.launch(request) { status in
                 if status != 0 { onFailure(.exit(status)) }

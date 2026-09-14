@@ -333,8 +333,10 @@ final class AppController {
         reconcile()
     }
     func newSessionCwd() -> String {
-        linuxSettingsStore().load().resolveNewSessionCwd(currentSessionCwd: store.activeSession?.focusedCwd,
-                                                    home: Self.homeCwd)
+        let active = store.activeSession
+        return linuxSettingsStore().load().resolveNewSessionCwd(
+            currentSessionCwd: active.map { localLaunchCwd($0, reported: $0.focusedCwd) },
+            home: Self.homeCwd)
     }
     func newWorkspace() {
         noteUserActivity()

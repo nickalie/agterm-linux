@@ -101,7 +101,7 @@ extension AppController {
             if scratchSurfaces[s.id] == nil {
                 let command = s.scratchCommand
                 s.scratchCommand = nil
-                let sc = GhosttySurface(sessionID: s.id, cwd: s.effectiveCwd, command: command,
+                let sc = GhosttySurface(sessionID: s.id, cwd: localLaunchCwd(s), command: command,
                                         env: sessionEnv(for: s, pane: .scratch), controller: self,
                                         role: .scratch,
                                         reportsPaneState: false)
@@ -145,7 +145,7 @@ extension AppController {
                 var ovlEnv = sessionEnv(for: s, pane: pane == .left ? .left : .right)
                 ovlEnv[OverlayCapture.cmdEnvKey] = wanted.command
                 ovlEnv[OverlayCapture.codeEnvKey] = codePath
-                let ov = GhosttySurface(sessionID: s.id, cwd: wanted.cwd ?? s.effectiveCwd,
+                let ov = GhosttySurface(sessionID: s.id, cwd: wanted.cwd ?? localLaunchCwd(s),
                                         command: "sh -c " + Self.singleQuoted(OverlayCapture.shellLine),
                                         env: ovlEnv, controller: self, waitAfterCommand: wanted.wait,
                                         role: .overlay,
@@ -192,7 +192,7 @@ extension AppController {
                 // the HUD painter re-reads this file every tick and exits at once without it, so a panel
                 // spawned with no `AGTERM_HUD_FILE` closes itself the moment it starts
                 if let hudFile = s.hudActive ? s.hudFile : nil { ovlEnv[HudLayout.fileEnvKey] = hudFile }
-                let ov = GhosttySurface(sessionID: s.id, cwd: s.overlayCwd ?? s.effectiveCwd,
+                let ov = GhosttySurface(sessionID: s.id, cwd: s.overlayCwd ?? localLaunchCwd(s),
                                         command: "sh -c " + Self.singleQuoted(OverlayCapture.shellLine),
                                         env: ovlEnv, controller: self, waitAfterCommand: s.overlayWait,
                                         role: .overlay,
@@ -297,9 +297,27 @@ extension AppController {
         return CommandRestore.shellQuotedLine(captured) + "\n"
     }
 
+    /// A session's cwd as a LOCAL launch may use it. A remote pane reports the far side's path, which need
+    /// not exist here, so `Session.localWorkingDirectory` keeps an existing local one and falls back to home.
+    func localLaunchCwd(_ session: Session, reported: String? = nil) -> String {
+        session.localWorkingDirectory(reported: reported ?? session.effectiveCwd, homeDirectory: Self.homeCwd)
+    }
+
+    /// The session whose pane `surface` is, across every pane kind this window holds.
+    func sessionOwning(_ surface: GhosttySurface) -> Session? {
+        for map in [surfaces, splitSurfaces, scratchSurfaces] {
+            if let id = map.first(where: { $0.value === surface })?.key,
+               let session = store.session(withID: id) { return session }
+        }
+        return nil
+    }
+
     func runCustomCommand(_ cmd: CustomCommand, origin: GhosttySurface? = nil,
                           allowSessionless: Bool = false) {
-        let s = store.activeSession
+        // the OWNING session first: sidebar selection moves ahead of the asynchronous focus handoff, and in
+        // that gap a chord fired from a scratch or split pane would build its context from the active
+        // session instead, so every $AGT_SESSION_* value described a pane the user was not looking at
+        let s = origin.flatMap(sessionOwning) ?? store.activeSession
         guard s != nil || allowSessionless else { return }
         if s == nil, CommandContext.referencesSessionScopedContext(cmd.command) {
             showToast("\(cmd.name) needs an active session")
@@ -326,6 +344,7 @@ extension AppController {
         }
         let context = CommandContext(sessionID: s?.id.uuidString ?? "", sessionName: s?.displayName ?? "",
                                      sessionPWD: s?.effectiveCwd ?? "",
+                                     sessionHost: TerminalText.sanitized(s?.remoteHost ?? ""),
                                      workspaceID: workspace?.id.uuidString ?? "",
                                      workspaceName: workspace?.name ?? "",
                                      windowID: windowID.uuidString,
@@ -334,7 +353,10 @@ extension AppController {
                                      socket: gControlServer.boundSocketPath ?? "")
         let controllerOrigin = customCommandOrigin
         let launcher = controllerOrigin.launcher
-        LinuxCustomCommandProcess.launch(command: cmd, context: context, launcher: launcher) { [weak self] failure in
+        // the reported cwd can be the far side's, which need not exist here; the context keeps it raw
+        let cwd = s?.localWorkingDirectory(reported: context.sessionPWD, homeDirectory: Self.homeCwd)
+        LinuxCustomCommandProcess.launch(command: cmd, context: context, cwd: cwd,
+                                         launcher: launcher) { [weak self] failure in
             runOnMain { [weak self, weak controllerOrigin] in
                 MainActor.assumeIsolated {
                     guard let self, let controllerOrigin,
@@ -377,7 +399,7 @@ extension AppController {
         guard let paned = sessionPanes[s.id] else { return }
         if s.isSplit, splitSurfaces[s.id] == nil {
             let launch = paneLaunch(for: s, pane: .right)
-            let split = GhosttySurface(sessionID: s.id, cwd: s.initialSplitCwd ?? s.effectiveCwd,
+            let split = GhosttySurface(sessionID: s.id, cwd: s.initialSplitCwd ?? localLaunchCwd(s),
                                        command: launch.command, env: launch.environment, controller: self,
                                        waitAfterCommand: launch.waitAfterCommand,
                                        role: .split, fontSize: s.fontSize,
