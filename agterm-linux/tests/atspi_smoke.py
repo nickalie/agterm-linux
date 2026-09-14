@@ -1033,6 +1033,58 @@ def verify_v027_control_parity(env):
         stop(process)
 
 
+def verify_v029_control_parity(env):
+    """Round-trip the upstream v0.29 additions: the window step, resize read-back, and the pane cwd."""
+    process, app = launch(env)
+    try:
+        first = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, first)["workspaces"][0]["sessions"][0]["id"]
+
+        # a lone window has nowhere to step to, and says so rather than answering ok
+        alone = raw_control_json(env, {"cmd": "window.go", "args": {"to": "next"}})
+        assert not alone["ok"] and alone["error"] == "no other open window", alone
+        bad = raw_control_json(env, {"cmd": "window.go", "args": {"to": "sideways"}})
+        assert not bad["ok"] and bad["error"] == "window.go requires --to next|prev", bad
+
+        second = control_json(env, "window", "new", "step-target", "--json")["result"]["id"]
+        wait_for(lambda: sum(1 for item in window_list(env) if item["open"]) == 2,
+                 "the second window never opened")
+        stepped = control_json(env, "window", "go", "--to", "next", "--json")
+        assert stepped["ok"], f"window.go failed: {stepped}"
+        assert stepped["result"]["id"] in (first, second), stepped
+        back = control_json(env, "window", "go", "--to", "prev", "--json")
+        assert back["result"]["id"] != stepped["result"]["id"], (stepped, back)
+        control_json(env, "window", "close", second, "--json")
+
+        # the echo is the size this machine will show, so an under-minimum request comes back bounded
+        applied = control_json(env, "window", "resize", first, "--width", "900", "--height", "600", "--json")
+        assert applied["ok"], f"window.resize failed: {applied}"
+        assert applied["result"]["width"] == 900 and applied["result"]["height"] == 600, applied
+        clamped = control_json(env, "window", "resize", first, "--width", "10", "--height", "10", "--json")
+        assert clamped["result"]["width"] >= 480 and clamped["result"]["height"] >= 320, clamped
+
+        # the split's own directory, which a caller could not read about a split it could otherwise inspect
+        def session_node():
+            return window_tree(env, first)["workspaces"][0]["sessions"][0]
+        assert session_node().get("splitCwd") is None, "an unsplit session reported a splitCwd"
+        control_json(env, "session", "split", "on", "--target", session_id, "--window", first, "--json")
+        wait_for(lambda: session_node().get("splitCwd"), "the tree never reported the split's cwd")
+        control_json(env, "session", "split", "close", "--target", session_id, "--window", first, "--json")
+
+        # the session host is macOS-only, so the reset says so rather than half-running
+        gated = raw_control_json(env, {"cmd": "zmx.reset"})
+        assert not gated["ok"] and gated["error"] == "zmx.reset requires --force", gated
+        refused = raw_control_json(env, {"cmd": "zmx.reset", "args": {"force": True}})
+        assert not refused["ok"] and "zmx.reset" in refused["error"], refused
+
+        # an explicit window that is not open fails without creating a session
+        missing = raw_control_json(env, {"cmd": "zmx.attach", "target": "abc",
+                                         "args": {"host": "nowhere.invalid", "window": "00000000-0000-0000-0000-000000000000"}})
+        assert not missing["ok"], missing
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2282,7 +2334,7 @@ def main():
     scenario = os.environ.get("AGTERM_ATSPI_SCENARIO")
     if scenario is None:
         for child_scenario in (
-            "normal", "upstream-controls", "v024-controls", "v027-controls",
+            "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls",
             "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -2330,6 +2382,8 @@ def main():
             verify_v024_control_parity(env)
         elif scenario == "v027-controls":
             verify_v027_control_parity(env)
+        elif scenario == "v029-controls":
+            verify_v029_control_parity(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
