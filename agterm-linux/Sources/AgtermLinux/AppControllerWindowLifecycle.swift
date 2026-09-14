@@ -55,6 +55,7 @@ extension AppController {
         customCommandOrigin.invalidate()
         commitBackgroundOpacity()
         dismissSessionPicker()
+        dismissCustomCommands()
         dismissControlPick(retainResultThroughRegistry: true)
         // an id poll must read `cancelled` the moment the owner leaves, not block on a dialog nobody can
         // answer any more; the store cancels a session ask on close, the window's own sessions need this.

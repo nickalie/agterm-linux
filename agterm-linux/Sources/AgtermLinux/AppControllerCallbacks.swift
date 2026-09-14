@@ -120,6 +120,10 @@ let onQuickToggle: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void
     MainActor.assumeIsolated { controllerForWidget(button)?.toggleQuick() }
 }
 
+let onCustomCommandsButton: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
+    MainActor.assumeIsolated { controllerForWidget(button)?.showCustomCommands(anchor: button) }
+}
+
 let onDashboardToggle: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
     MainActor.assumeIsolated { controllerForWidget(button)?.toggleDashboard() }
 }

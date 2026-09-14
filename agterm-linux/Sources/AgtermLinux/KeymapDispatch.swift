@@ -213,6 +213,8 @@ extension AppController {
         let (km, diagnostics) = loadLinuxKeymap(configDirectory: configDirectory())
         keymap = km
         keymapDiagnostics = diagnostics
+        // a reload that empties the list leaves no outside click to dismiss an open popover
+        updateCustomCommandsButton()
 
         // Reverse map: defaults for un-overridden actions first, then overrides (so an override REPLACES
         // its action's default chord; a genuine chord collision resolves override-wins). Reserved monitor

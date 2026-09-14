@@ -40,6 +40,9 @@ final class AppController {
     var splitToggleBtn: OpaquePointer?    // title-bar split toggle (swaps to .fill when active)
     var scratchToggleBtn: OpaquePointer?  // title-bar scratch toggle (swaps to .fill when active)
     var recentSessionsButton: OpaquePointer? // title-bar MRU session picker
+    var customCommandsButton: OpaquePointer?         // title-bar custom-commands popover
+    var customCommandsPopover: OpaquePointer?
+    var customCommandContexts: [CustomCommandRowContext] = []
     var attentionButton: OpaquePointer?   // optional title-bar attention indicator button
     var dashboardButton: OpaquePointer?   // title-bar MRU dashboard toggle
     var quickToggleBtn: OpaquePointer?; var sidebarToggleBtn: OpaquePointer?; var titleWidget: OpaquePointer?; var titlebarDividerAfterA: OpaquePointer?; var titlebarDividerAfterB: OpaquePointer?
@@ -266,7 +269,10 @@ final class AppController {
         connect(sidebarBtn, "clicked", unsafeBitCast(onSidebarToggle as @convention(c) (OpaquePointer?, gpointer?) -> Void, to: GCallback.self))
         adw_header_bar_pack_start(contentHeader, W(sidebarBtn))
         installPreferencesShortcut()
-        // Left-to-right: Recent, Attention | Scratch, Split | Dashboard, Quick; split/scratch gain fill when active.
+        // Left-to-right: Recent, Attention | Scratch, Split | Dashboard, Quick, Custom commands;
+        // split/scratch gain fill when active.
+        customCommandsButton = linuxHeaderToggle(contentHeader, "view-more-symbolic", "Custom commands",
+                                                 onCustomCommandsButton)
         quickToggleBtn = linuxHeaderToggle(contentHeader, "agterm-quick-symbolic", "Quick Terminal (Ctrl+`)", onQuickToggle)
         dashboardButton = linuxHeaderToggle(contentHeader, "agterm-grid-symbolic", "Dashboard (Ctrl+Shift+M)", onDashboardToggle)
         titlebarDividerAfterB = linuxHeaderSeparator(contentHeader)
@@ -278,6 +284,7 @@ final class AppController {
         registerInterfaceWidgets(sidebarToggle: sidebarBtn)
         updateAttentionButton()
         updateDashboardButton()
+        updateCustomCommandsButton()
         applyInterfaceElements()
         let contentToolbar = OpaquePointer(adw_toolbar_view_new())
         adw_toolbar_view_add_top_bar(contentToolbar, W(contentHeader))
@@ -358,6 +365,7 @@ final class AppController {
         syncSidebarSelection()
         updateTitle()
         updateRecentSessionsButton()
+        updateCustomCommandsButton()
         if needsRefresh || focusFilterChanged { rebuildSidebar() }
     }
     /// Close the search bar when the selection leaves the session it was pinned to — it searches ONE

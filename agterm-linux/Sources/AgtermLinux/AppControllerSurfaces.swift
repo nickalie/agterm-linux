@@ -353,6 +353,8 @@ extension AppController {
                                      socket: gControlServer.boundSocketPath ?? "")
         let controllerOrigin = customCommandOrigin
         let launcher = controllerOrigin.launcher
+        // every spawn path counts, so the popover's most-used section sees chord and palette runs too
+        Self.customCommandUsage.record(cmd)
         // the reported cwd can be the far side's, which need not exist here; the context keeps it raw
         let cwd = s?.localWorkingDirectory(reported: context.sessionPWD, homeDirectory: Self.homeCwd)
         LinuxCustomCommandProcess.launch(command: cmd, context: context, cwd: cwd,

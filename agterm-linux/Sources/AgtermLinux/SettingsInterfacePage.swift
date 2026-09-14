@@ -36,6 +36,7 @@ extension AppController {
             .split: splitToggleBtn,
             .dashboard: dashboardButton,
             .quickTerminal: quickToggleBtn,
+            .customCommands: customCommandsButton,
             .newWorkspace: footerNewWorkspaceButton,
             .newSession: footerNewSessionButton,
             .flaggedView: footerFlaggedButton,
