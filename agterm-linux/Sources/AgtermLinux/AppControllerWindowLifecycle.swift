@@ -121,5 +121,6 @@ extension AppController {
         library.closeWindow(windowID)
         gWindows[windowID] = nil
         if gController === self { gController = gWindows.values.first }
+        refreshAttentionButtons()
     }
 }

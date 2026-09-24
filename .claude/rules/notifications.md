@@ -171,6 +171,11 @@ paths:
   `revealActiveBlockedPane` exactly as the per-window path does. Ctrl-Shift-I, Navigate > Go to
   Attention, and Show Attention in the palette retain the searchable keyboard surface over the same
   list. The Dock menu stays scoped to its captured window.
+  **Linux adapter:** `AppControllerAttention.swift` owns the pair as `canSelectAttention` and
+  `selectAttention` (a covered window is `acceptsAttentionSelection` false), deferred through
+  `MainTimer.schedule(after: 0)` from both the popover and the palette. Nothing observes the library on
+  GTK, so `updateAttentionButton` repaints EVERY window's bell and window close calls
+  `refreshAttentionButtons`; a per-window refresh would leave a background window's bell stale.
 - The button ID is `attention-button`, with help and value `none`, `attention`, or `blocked`.
   `WindowContentView` mirrors `GhosttyApp.attentionButtonEnabled` into state and refreshes on
   `.agtermAppearanceChanged`, not `model.settings`. This mouse form of controllable attention selection is

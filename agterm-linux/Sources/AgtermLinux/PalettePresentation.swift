@@ -15,11 +15,14 @@ struct LinuxPaletteRow: Equatable {
     let shortcut: String?
     /// A trailing pill (currently only `custom`), nil for the ordinary catalog rows.
     let badge: String?
+    /// False renders the row inert: an attention row whose window sits under a cover.
+    let enabled: Bool
 
-    init(title: String, shortcut: String? = nil, badge: String? = nil) {
+    init(title: String, shortcut: String? = nil, badge: String? = nil, enabled: Bool = true) {
         self.title = title
         self.shortcut = shortcut
         self.badge = badge
+        self.enabled = enabled
     }
 
     /// The keys `fuzzyRank` scores this row against: the bare title, plus — only when the row actually

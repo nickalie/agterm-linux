@@ -156,10 +156,8 @@ extension AppController {
     /// Jump to a session that needs attention, matching the shared `show_attention` built-in action.
     func showAttentionPalette() { showPalette(attention: true) }
 
-    /// Sessions as palette entries (label = "name — workspace"), each selecting that session.
-    /// `navigableSessions` is the ⌃P switcher's list (every workspace, sidebar order); `attentionSessions`
-    /// is the attention palette's, already ranked blocked→completed — which `filterPalette`
-    /// preserves for an empty query rather than alphabetizing.
+    /// Sessions as palette entries (label = "name — workspace"), each selecting that session: the ⌃P
+    /// switcher's `navigableSessions` (every workspace, sidebar order).
     private func sessionRows(_ sessions: [Session]) -> [LinuxPaletteItem] {
         sessions.map { s in
             let ws = store.workspace(forSession: s.id)?.name ?? ""
@@ -208,7 +206,7 @@ extension AppController {
         gtk_widget_add_controller(W(win), kc)
 
         paletteAll = attention
-            ? LinuxPaletteList(items: sessionRows(store.attentionSessions), preservesNaturalOrder: true)
+            ? LinuxPaletteList(items: attentionPaletteRows(), preservesNaturalOrder: true)
             : LinuxPaletteList(items: sessions ? sessionRows(store.navigableSessions) : paletteActionList())
         filterPalette("")
         gtk_window_present(WIN(win))
@@ -262,6 +260,7 @@ extension AppController {
                 gtk_box_append(cast(box), W(chord))
             }
             gtk_list_box_row_set_child(GLBR(row), W(box))
+            if !item.row.enabled { gtk_widget_set_sensitive(W(row), 0) }
             gtk_list_box_append(lb, W(row))
             rendered.append(item)
         }
@@ -281,7 +280,7 @@ extension AppController {
     }
 
     private func runPaletteIndex(_ idx: Int) {
-        guard idx >= 0, idx < paletteItems.count else { return }
+        guard idx >= 0, idx < paletteItems.count, paletteItems[idx].row.enabled else { return }
         let run = paletteItems[idx].run
         closePalette()
         run()
