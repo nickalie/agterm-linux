@@ -64,6 +64,16 @@ struct SharedCommandProcessTests {
         }
     }
 
+    @Test("session lead reaches the socket with its pane")
+    func sessionLead() throws {
+        let result = try runWithServer(["session", "lead", "--pane", "right", "--target", "abc"]) { request in
+            #expect(request.cmd == .sessionLead)
+            #expect(request.target == "abc")
+            #expect(request.args?.pane == "right")
+        }
+        #expect(result.status == 0)
+    }
+
     @Test("socket precedence is flag then state directory then Linux XDG application support")
     func socketPrecedence() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

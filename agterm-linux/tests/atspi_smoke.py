@@ -1085,6 +1085,39 @@ def verify_v029_control_parity(env):
         stop(process)
 
 
+def verify_v032_pane_lead(env):
+    """`session.lead` over the real socket on panes no zmx reports a role for, and the omitted read-back."""
+    process, app = launch(env)
+    try:
+        first = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, first)["workspaces"][0]["sessions"][0]["id"]
+
+        def lead(**args):
+            return raw_control_json(env, {"cmd": "session.lead", "target": session_id, "args": args})
+
+        none = lead()
+        assert not none["ok"] and none["error"] == "pane has no lead to take", none
+        scratch = lead(pane="scratch")
+        assert not scratch["ok"] and scratch["error"] == "the scratch terminal has no lead", scratch
+        split = lead(pane="right")
+        assert not split["ok"] and split["error"] == "session has no split pane", split
+        bad = lead(pane="sideways")
+        assert not bad["ok"] and bad["error"].startswith("invalid pane"), bad
+        cli = subprocess.run([CTL, "session", "lead", "--target", session_id, "--socket", env["AGTERM_CONTROL_SOCKET"]],
+                             env=env, capture_output=True, text=True, timeout=10)
+        assert cli.returncode != 0 and "pane has no lead to take" in (cli.stdout + cli.stderr), cli
+
+        # an unmanaged pane reports no role, so nothing covers it and paste keeps its ordinary answer
+        wait_for(lambda: window_tree(env, first)["workspaces"][0]["sessions"][0].get("realized"),
+                 "the session never realized")
+        node = window_tree(env, first)["workspaces"][0]["sessions"][0]
+        assert all("lead" not in surface for surface in node.get("surfaces", [])), node
+        pasted = raw_control_json(env, {"cmd": "session.paste", "target": session_id})
+        assert pasted["ok"], pasted
+    finally:
+        stop(process)
+
+
 def verify_v031_sidebar_parity(env, state):
     """The v0.30-v0.31 sidebar and title bar additions: the flagged tree, the workspace title, the
     cross-window attention list and `pick --select`."""
@@ -2692,7 +2725,7 @@ def main():
     if scenario is None:
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
-            "v030-hooks", "v032-keymap-hud", "v032-pane-background",
+            "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead",
             "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -2750,6 +2783,8 @@ def main():
             verify_v032_keymap_hud(env)
         elif scenario == "v032-pane-background":
             verify_v032_pane_background(env, state)
+        elif scenario == "v032-pane-lead":
+            verify_v032_pane_lead(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
