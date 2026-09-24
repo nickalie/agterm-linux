@@ -101,7 +101,7 @@ extension AppController: ControlActions {
                 case .auto: return "auto"
                 }
             },
-            app: LinuxAppMetadata.identity
+            app: LinuxAppMetadata.identity, flaggedLayout: GhosttyApp.shared.flaggedViewLayout
         )
         let tree = projectingLinuxAutoFollow(baseTree)
         return ControlResponse(ok: true, result: ControlResult(tree: tree))

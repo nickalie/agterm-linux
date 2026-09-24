@@ -40,6 +40,9 @@ final class GhosttyApp: @unchecked Sendable {
     var currentThemeOSC: String = ""
     var currentThemeBackgroundHex: String?
     @MainActor private var appliedAppearanceSide: LinuxAppearanceSide?
+    /// How every window's flagged sidebar view arranges its sessions, mirrored from settings so a
+    /// sidebar rebuild and a metadata retext never read the disk.
+    @MainActor var flaggedViewLayout: FlaggedViewLayout = .flat
 
     @MainActor func start(appearanceSide: LinuxAppearanceSide) {
         setGhosttyResourcesEnv()   // export GHOSTTY_RESOURCES_DIR before init + buildConfig read it

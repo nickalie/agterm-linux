@@ -17,6 +17,35 @@ enum LinuxSidebarPolicy {
             """
     }
 
+    /// The workspace rows and the session rows under each, in store order; nil under the flat flagged list,
+    /// which has no workspace rows. The flagged tree reads every workspace, since flagged mode ignores the
+    /// focus filter, and omits a workspace holding nothing flagged.
+    @MainActor
+    static func workspaceProjection(_ store: AppStore, flaggedLayout: FlaggedViewLayout)
+        -> [(workspace: Workspace, sessions: [Session])]? {
+        guard store.rendersWorkspaceRows(flaggedLayout: flaggedLayout) else { return nil }
+        guard store.sidebarMode == .flagged else { return store.visibleWorkspaces.map { ($0, $0.sessions) } }
+        return store.workspaces.compactMap { workspace in
+            let flagged = workspace.sessions.filter(\.flagged)
+            return flagged.isEmpty ? nil : (workspace, flagged)
+        }
+    }
+
+    /// The layout `sidebar.flagged-layout` asks for; `toggle` resolves from the current one.
+    static func flaggedLayout(for mode: ControlFlaggedLayoutMode, current: FlaggedViewLayout) -> FlaggedViewLayout {
+        switch mode {
+        case .flat: return .flat
+        case .tree: return .tree
+        case .toggle: return current == .flat ? .tree : .flat
+        }
+    }
+
+    /// Only the flat flagged list names each row's workspace; every other layout nests rows under it.
+    @MainActor
+    static func labelsSessionsWithWorkspace(_ store: AppStore, flaggedLayout: FlaggedViewLayout) -> Bool {
+        store.sidebarMode == .flagged && flaggedLayout == .flat
+    }
+
     @MainActor
     static func flaggedRowLabel(for session: Session, in store: AppStore) -> String {
         if let workspace = store.workspace(forSession: session.id) {

@@ -19,19 +19,22 @@ struct LinuxTreeProjectionTests {
     func treeCarriesEveryField() throws {
         let tree = ControlTree(
             workspaces: [], idleMs: 10, autoFollowMs: 1,
-            sidebarVisible: true, sidebarMode: "tree", sidebarWidth: 240, workspaceFilter: true,
-            quickVisible: false, zoomedSurface: "s:left", dashboardMembers: ["a"],
+            sidebarVisible: true, sidebarMode: "tree", sidebarFlaggedLayout: "tree", sidebarWidth: 240,
+            workspaceFilter: true, quickVisible: false, zoomedSurface: "s:left", dashboardMembers: ["a"],
             dashboardHighlighted: "a", dashboardFontSize: 13, dashboardFontMode: "auto",
             pickPending: "pick-id", askPending: "ask-id",
-            app: AppIdentity(version: "0.27.1", commit: "abcdef"))
+            app: AppIdentity(version: "0.27.1", commit: "abcdef"),
+            liveReset: ControlLiveResetReadback(pending: 1, last: nil))
         let projected = ControlTree(
             workspaces: tree.workspaces, idleMs: tree.idleMs, autoFollowMs: tree.autoFollowMs,
             sidebarVisible: tree.sidebarVisible, sidebarMode: tree.sidebarMode,
+            sidebarFlaggedLayout: tree.sidebarFlaggedLayout,
             sidebarWidth: tree.sidebarWidth, workspaceFilter: tree.workspaceFilter,
             quickVisible: tree.quickVisible, zoomedSurface: tree.zoomedSurface,
             dashboardMembers: tree.dashboardMembers, dashboardHighlighted: tree.dashboardHighlighted,
             dashboardFontSize: tree.dashboardFontSize, dashboardFontMode: tree.dashboardFontMode,
-            pickPending: tree.pickPending, askPending: tree.askPending, app: tree.app)
+            pickPending: tree.pickPending, askPending: tree.askPending, app: tree.app,
+            liveReset: tree.liveReset)
         #expect(try canonical(projected) == canonical(tree))
     }
 

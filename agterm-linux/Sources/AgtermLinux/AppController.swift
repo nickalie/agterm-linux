@@ -430,14 +430,6 @@ final class AppController {
         syncSidebarSelection()
     }
 
-    /// Fold or unfold the current workspace's own subtree — the per-row twin of Expand / Collapse Workspaces.
-    func toggleCurrentWorkspaceCollapse() {
-        guard let id = store.currentWorkspaceID else { return }
-        store.setWorkspaceExpanded(id, expanded: store.isCurrentWorkspaceCollapsed)
-        rebuildSidebar()
-        syncSidebarSelection()
-    }
-
     /// Defer scrolling until the selected sidebar row is allocated.
     func scrollRowIntoView(_ row: OpaquePointer) {
         guard let scroller = sidebarScroller else { return }
@@ -636,20 +628,6 @@ final class AppController {
     func clearFlagged() {
         store.clearFlags()
         rebuildSidebar()
-    }
-
-    /// Expand every workspace (show all sessions) — the palette + `sidebar.expand` control arm.
-    func expandWorkspaces() {
-        store.setWorkspacesExpanded(Set(store.workspaces.map(\.id)))
-        rebuildSidebar()
-    }
-
-    /// Collapse every workspace except the active one to a header — the palette + `sidebar.collapse` arm.
-    func collapseOtherWorkspaces() {
-        let expanded = store.currentWorkspaceID.map { Set([$0]) } ?? []
-        store.setWorkspacesExpanded(expanded)
-        rebuildSidebar()
-        syncSidebarSelection()
     }
 
     /// Move the active session to another workspace (the palette "Move Session to <ws>").

@@ -92,6 +92,10 @@ paths:
   taking the layout as a parameter because the store does not hold app-wide state.
 - `Coordinator.workspaceProjection` yields the workspace rows for the ordinary tree AND the flagged tree, so
   `rebuildAndReload` keeps one expansion-restore path. Never add a parallel flagged-tree build.
+  **Linux adapter:** `LinuxSidebarPolicy.workspaceProjection` is that projection, read by both
+  `rebuildSidebar` and `sidebarLabelPlan`, over the `GhosttyApp.flaggedViewLayout` mirror of the setting.
+  GTK workspace rows carry no badge, so `displayedUnseen` has no twin, and a switch reveals through
+  `syncSidebarSelection` only: Linux never opens a collapsed workspace for a selection.
 - A flagged-tree header badge sums only its flagged children (`displayedUnseen(for:)`), in both the cell
   builder and the content-diff builder. `Workspace.unseenCount` sums every session and would report
   notifications from rows the view leaves out.

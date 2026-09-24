@@ -105,14 +105,15 @@ extension AppController {
     /// GtkEntry instead of a label and is left out of both this plan and `renderedNameLabels`.
     private func sidebarLabelPlan() -> [(id: UUID, isWorkspace: Bool, text: String)] {
         var plan: [(id: UUID, isWorkspace: Bool, text: String)] = []
-        guard store.sidebarMode != .flagged else {
+        guard let projection = LinuxSidebarPolicy.workspaceProjection(
+            store, flaggedLayout: GhosttyApp.shared.flaggedViewLayout) else {
             return store.flaggedSessions.filter { renaming?.id != $0.id }
                 .map { ($0.id, false, LinuxSidebarPolicy.flaggedRowLabel(for: $0, in: store)) }
         }
-        for ws in store.visibleWorkspaces {
+        for (ws, sessions) in projection {
             if renaming?.id != ws.id { plan.append((ws.id, true, ws.name)) }
             guard ws.isExpanded else { continue }
-            plan += ws.sessions.filter { renaming?.id != $0.id }.map { ($0.id, false, $0.displayName) }
+            plan += sessions.filter { renaming?.id != $0.id }.map { ($0.id, false, $0.displayName) }
         }
         return plan
     }
@@ -136,27 +137,26 @@ extension AppController {
         workspaceListBoxes.removeAll()
         updateWorkspaceFilterButton()
 
-        if store.sidebarMode == .flagged {
-            appendSection("Flagged", store.flaggedSessions, settings: settings)
-            if store.flaggedSessions.isEmpty {
-                if let hint = op(gtk_label_new("No flagged sessions.\nRight-click a session → Flag.")) {
-                    gtk_label_set_justify(hint, GTK_JUSTIFY_CENTER)
-                    gtk_label_set_wrap(hint, 1)
-                    gtk_widget_set_margin_top(W(hint), 24)
-                    gtk_widget_add_css_class(W(hint), "dim-label")
-                    gtk_box_append(cast(sidebarBox), W(hint))
-                }
+        let projection = LinuxSidebarPolicy.workspaceProjection(
+            store, flaggedLayout: GhosttyApp.shared.flaggedViewLayout)
+        if let projection {
+            for (ws, sessions) in projection {
+                appendSection(ws.name, sessions, workspace: ws.id, settings: settings)
             }
         } else {
-            for ws in store.visibleWorkspaces {
-                appendSection(ws.name, ws.sessions, workspace: ws.id, settings: settings)
-            }
+            appendSection("Flagged", store.flaggedSessions, settings: settings)
+        }
+        if store.sidebarMode == .flagged, store.flaggedSessions.isEmpty,
+           let hint = op(gtk_label_new("No flagged sessions.\nRight-click a session → Flag.")) {
+            gtk_label_set_justify(hint, GTK_JUSTIFY_CENTER)
+            gtk_label_set_wrap(hint, 1)
+            gtk_widget_set_margin_top(W(hint), 24)
+            gtk_widget_add_css_class(W(hint), "dim-label")
+            gtk_box_append(cast(sidebarBox), W(hint))
         }
         // what the rows now show open, which `isCurrentWorkspaceCollapsed` reads instead of the persisted
-        // flag. Flagged mode renders no workspace rows, so the mirror empties with them.
-        store.noteSidebarExpansion(store.sidebarMode == .flagged
-            ? []
-            : Set(store.visibleWorkspaces.filter(\.isExpanded).map(\.id)))
+        // flag. The flat flagged list renders no workspace rows, so the mirror empties with them.
+        store.noteSidebarExpansion(Set((projection ?? []).map(\.workspace).filter(\.isExpanded).map(\.id)))
     }
 
     private func updateWorkspaceFilterButton() {
@@ -219,13 +219,16 @@ extension AppController {
             gtk_gesture_single_set_button(wsRightClick, 3)
             connect(wsRightClick, "pressed", unsafeBitCast(onWorkspaceRightClick as @convention(c) (OpaquePointer?, Int32, Double, Double, gpointer?) -> Void, to: GCallback.self), RAW(row))
             gtk_widget_add_controller(W(row), wsRightClick)
-            let wdrag = gtk_drag_source_new()
-            gtk_drag_source_set_actions(wdrag, GDK_ACTION_MOVE)
-            connect(wdrag, "prepare", unsafeBitCast(onHeaderDragPrepare as @convention(c) (OpaquePointer?, Double, Double, gpointer?) -> OpaquePointer?, to: GCallback.self))
-            gtk_widget_add_controller(W(row), wdrag)
-            let wdrop = gtk_drop_target_new(GType(64), GDK_ACTION_MOVE)
-            connect(wdrop, "drop", unsafeBitCast(onHeaderDrop as @convention(c) (OpaquePointer?, UnsafePointer<GValue>?, Double, Double, gpointer?) -> gboolean, to: GCallback.self))
-            gtk_widget_add_controller(W(row), wdrop)
+            // the flagged tree is a projection, not a reorderable tree
+            if store.sidebarMode == .tree {
+                let wdrag = gtk_drag_source_new()
+                gtk_drag_source_set_actions(wdrag, GDK_ACTION_MOVE)
+                connect(wdrag, "prepare", unsafeBitCast(onHeaderDragPrepare as @convention(c) (OpaquePointer?, Double, Double, gpointer?) -> OpaquePointer?, to: GCallback.self))
+                gtk_widget_add_controller(W(row), wdrag)
+                let wdrop = gtk_drop_target_new(GType(64), GDK_ACTION_MOVE)
+                connect(wdrop, "drop", unsafeBitCast(onHeaderDrop as @convention(c) (OpaquePointer?, UnsafePointer<GValue>?, Double, Double, gpointer?) -> gboolean, to: GCallback.self))
+                gtk_widget_add_controller(W(row), wdrop)
+            }
             let directoryDrop = gtk_drop_target_new(gdk_file_list_get_type(), GDK_ACTION_COPY)
             connect(directoryDrop, "drop", unsafeBitCast(onSidebarDirectoryDrop as @convention(c)
                 (OpaquePointer?, UnsafePointer<GValue>?, Double, Double, gpointer?) -> gboolean,
@@ -277,11 +280,13 @@ extension AppController {
             gtk_box_append(cast(box), W(lead))
         }
         let flaggedView = store.sidebarMode == .flagged
-        // The flagged row normally includes its workspace breadcrumb, but inline rename must edit only
+        let breadcrumb = LinuxSidebarPolicy.labelsSessionsWithWorkspace(
+            store, flaggedLayout: GhosttyApp.shared.flaggedViewLayout)
+        // The flat flagged row normally includes its workspace breadcrumb, but inline rename must edit only
         // the session's bare display name. Reuse the normal name widget for the active rename so the
         // entry is created and seeded without the breadcrumb.
-        let rowText = flaggedView ? LinuxSidebarPolicy.flaggedRowLabel(for: s, in: store) : s.displayName
-        let flaggedLabel: OpaquePointer? = flaggedView && renaming?.id != s.id
+        let rowText = breadcrumb ? LinuxSidebarPolicy.flaggedRowLabel(for: s, in: store) : s.displayName
+        let flaggedLabel: OpaquePointer? = breadcrumb && renaming?.id != s.id
             ? op(gtk_label_new(rowText))
             : nil
         // Middle ellipsis for the same reason as the palette rows: the trailing breadcrumb is what
@@ -293,7 +298,7 @@ extension AppController {
         gtk_widget_set_margin_top(W(label), 4)
         gtk_widget_set_margin_bottom(W(label), 4)
         gtk_widget_set_margin_start(W(label), 4)
-        if flaggedView { gtk_label_set_xalign(label, 0) }
+        if breadcrumb { gtk_label_set_xalign(label, 0) }
         gtk_box_append(cast(box), W(label))
         if let glyph = Self.makeStatusGlyph(
             s.agentIndicator, settings: linuxSettingsStore().load()

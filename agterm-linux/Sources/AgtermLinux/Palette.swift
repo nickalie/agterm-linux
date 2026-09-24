@@ -19,6 +19,8 @@ extension AppController {
         let paletteContext = PaletteContext(canRemoveWorkspace: store.canRemoveWorkspace,
                                             hasFlaggedSessions: !store.flaggedSessions.isEmpty,
                                             sidebarShowsWorkspaceTree: store.sidebarMode == .tree,
+                                            sidebarShowsWorkspaceRows: store.rendersWorkspaceRows(
+                                                flaggedLayout: GhosttyApp.shared.flaggedViewLayout),
                                             sidebarShowsFlaggedOnly: store.sidebarMode == .flagged,
                                             activeSessionFlagged: activeSession?.flagged ?? false,
                                             hasMarkedWorkspaces: !store.focusedWorkspaceIDs.isEmpty,

@@ -174,6 +174,7 @@ extension AppController {
             autoFollowMs: autoFollowCoordinator.timeoutMs,
             sidebarVisible: tree.sidebarVisible,
             sidebarMode: tree.sidebarMode,
+            sidebarFlaggedLayout: tree.sidebarFlaggedLayout,
             sidebarWidth: tree.sidebarWidth,
             workspaceFilter: tree.workspaceFilter,
             quickVisible: tree.quickVisible,
@@ -184,7 +185,8 @@ extension AppController {
             dashboardFontMode: tree.dashboardFontMode,
             pickPending: tree.pickPending,
             askPending: tree.askPending,
-            app: tree.app
+            app: tree.app,
+            liveReset: tree.liveReset
         )
     }
 

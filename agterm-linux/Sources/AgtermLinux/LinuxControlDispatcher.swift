@@ -38,7 +38,7 @@ struct LinuxControlDispatcher {
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand:
             return dispatchWorkspaceCommand(request)
         case .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .configReload, .notify,
-                .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
+                .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarFlaggedLayout, .sidebarExpand,
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
         case .version:
@@ -554,6 +554,11 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "invalid sidebar mode: \(request.args?.mode ?? "toggle")")
             }
             return actions.setSidebarViewMode(mode)
+        case .sidebarFlaggedLayout:
+            guard let mode = ControlFlaggedLayoutMode.parse(request.args?.mode) else {
+                return ControlResponse(ok: false, error: "invalid flagged layout: \(request.args?.mode ?? "toggle")")
+            }
+            return actions.setFlaggedViewLayout(mode)
         case .sidebarExpand:
             return actions.expandSidebar(window: request.args?.window)
         case .sidebarCollapse:
