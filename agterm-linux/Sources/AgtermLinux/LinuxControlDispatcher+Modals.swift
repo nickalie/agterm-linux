@@ -115,7 +115,7 @@ extension LinuxControlDispatcher {
         case .pane(let parsed): pane = parsed
         case .rejected(let response): return response
         }
-        switch parseHudSpec(request) {
+        switch Self.parseHudSpec(request) {
         case .rejected(let response): return response
         case .spec(let spec):
             return post(request.target, request.args?.window, spec,
@@ -128,21 +128,26 @@ extension LinuxControlDispatcher {
         case rejected(ControlResponse)
     }
 
-    /// Open and update take the same arguments and the same rejections — an update replaces the panel's
-    /// whole text rather than patching it.
-    func parseHudSpec(_ request: ControlRequest) -> HudSpecParse {
+    /// Mirrors the shared `ControlDispatcher.parseHudSpec`: open and update validate alike except for
+    /// `fontSize`, which only open takes, and an update replaces the whole spec rather than patching it.
+    static func parseHudSpec(_ request: ControlRequest) -> HudSpecParse {
         let args = request.args
-        guard let message = args?.message, !message.trimmingCharacters(in: .whitespaces).isEmpty else {
+        let markdown = args?.markdown ?? false
+        guard let message = args?.message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .rejected(ControlResponse(ok: false, error: "\(request.cmd.rawValue) requires a message"))
         }
-        guard !containsControlCharacters(message), !containsControlCharacters(args?.detail ?? "") else {
+        guard !containsHudControlCharacters(message, markdown: markdown),
+              !containsHudControlCharacters(args?.detail ?? "", markdown: false) else {
             return .rejected(ControlResponse(ok: false, error: "hud text must not contain control characters"))
         }
-        guard Self.hudTextLength(message) <= HudSpec.maxTextLength else {
-            return .rejected(ControlResponse(
-                ok: false, error: "hud message too long (max \(HudSpec.maxTextLength) characters)"))
+        let cap = markdown ? HudSpec.maxMarkdownLength : HudSpec.maxTextLength
+        guard hudTextLength(message) <= cap else {
+            return .rejected(ControlResponse(ok: false, error: "hud message too long (max \(cap) characters)"))
         }
-        guard Self.hudTextLength(args?.detail ?? "") <= HudSpec.maxTextLength else {
+        guard !markdown || HudMarkdown.rendersVisibleText(message) else {
+            return .rejected(ControlResponse(ok: false, error: "\(request.cmd.rawValue) requires a message"))
+        }
+        guard hudTextLength(args?.detail ?? "") <= HudSpec.maxTextLength else {
             return .rejected(ControlResponse(
                 ok: false, error: "hud detail too long (max \(HudSpec.maxTextLength) characters)"))
         }
@@ -152,9 +157,26 @@ extension LinuxControlDispatcher {
         if let textColor = args?.textColor, !WatermarkConfig.isValidColorHex(textColor) {
             return .rejected(ControlResponse(ok: false, error: "invalid text color: \(textColor) (#rrggbb)"))
         }
+        if let fontSize = args?.fontSize {
+            guard request.cmd == .sessionHudOpen else {
+                return .rejected(ControlResponse(
+                    ok: false, error: "session.hud.update: --font-size is fixed at open; reopen the hud to change it"))
+            }
+            guard HudSpec.isValidFontSize(fontSize) else {
+                let range = HudSpec.fontSizeRange
+                return .rejected(ControlResponse(
+                    ok: false,
+                    error: "session.hud.open: --font-size must be \(Int(range.lowerBound))...\(Int(range.upperBound)) points"))
+            }
+        }
         if let percent = args?.sizePercent, !(1...100).contains(percent) {
             return .rejected(ControlResponse(ok: false,
                                              error: "\(request.cmd.rawValue): --size-percent must be 1...100"))
+        }
+        if let hideAfter = args?.hideAfter, !HudSpec.isValidHideAfter(hideAfter) {
+            return .rejected(ControlResponse(
+                ok: false,
+                error: "\(request.cmd.rawValue): --hide-after must be 0...\(Int(HudSpec.maxHideAfter)) seconds"))
         }
         var position = HudPosition.defaultPosition
         if let raw = args?.position {
@@ -176,7 +198,17 @@ extension LinuxControlDispatcher {
         }
         return .spec(HudSpec(message: message, detail: args?.detail, spinner: spinner,
                              backgroundColor: args?.color, textColor: args?.textColor,
-                             sizePercent: args?.sizePercent, position: position))
+                             sizePercent: args?.sizePercent, position: position,
+                             hideAfter: args?.hideAfter, markdown: markdown, fontSize: args?.fontSize))
+    }
+
+    /// The helper prints these bytes into a live terminal, so any C0 control or DEL is refused, less the LF
+    /// and TAB markdown structure needs.
+    static func containsHudControlCharacters(_ text: String, markdown: Bool) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            if markdown, scalar == "\n" || scalar == "\t" { return false }
+            return scalar.value < 0x20 || scalar.value == 0x7f
+        }
     }
 
     /// `HudLayout.textLength`'s unit, which that module keeps internal: scalars of the precomposed form the

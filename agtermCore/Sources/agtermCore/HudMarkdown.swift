@@ -3,7 +3,7 @@ import Foundation
 /// HudMarkdown lays a markdown HUD message out for the painter: Foundation parses standard markdown, `lines`
 /// walks the parsed blocks into prefixed logical rows of styled runs, `rows` wraps them, `fitted` clips them
 /// to the panel's grid and `sgr` encodes each finished row.
-enum HudMarkdown {
+public enum HudMarkdown {
     struct Style: OptionSet, Hashable, Sendable {
         let rawValue: UInt8
         static let bold = Style(rawValue: 1)
@@ -70,7 +70,7 @@ enum HudMarkdown {
     }
 
     /// rendersVisibleText reports whether `source` lays out to at least one non-space cell.
-    static func rendersVisibleText(_ source: String) -> Bool {
+    public static func rendersVisibleText(_ source: String) -> Bool {
         rows(lines(source), width: HudLayout.maxColumns).contains { row in
             row.contains { run in run.text.unicodeScalars.contains { !$0.properties.isWhitespace } }
         }

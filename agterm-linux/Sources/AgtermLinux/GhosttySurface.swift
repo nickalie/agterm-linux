@@ -309,6 +309,8 @@ final class GhosttySurface: PaneRoleMutableSurface {
     func applyConfig(_ config: ghostty_config_t) {
         guard let surface else { return }
         ghostty_surface_update_config(surface, config)
+        // a HUD keeps its creation size: an included config's font-size can outrank one restated here
+        if let size = controller?.hudCreationFontSize(of: self) { performBindingAction("set_font_size:\(size)") }
         guard let clone = ghostty_config_clone(config) else { return }
         ownedConfigs.forEach { ghostty_config_free($0) }
         ownedConfigs = [clone]
@@ -341,14 +343,16 @@ final class GhosttySurface: PaneRoleMutableSurface {
         let watermark = oscBackgroundColorHex.map {
             BackgroundWatermark(kind: .color, colorHex: $0)
         } ?? session?.backgroundWatermark
-        guard force || watermark != nil || dashboardFontOverride != nil || session?.fontSize != nil else { return }
+        let hudFont = controller?.hudCreationFontSize(of: self)
+        guard force || watermark != nil || dashboardFontOverride != nil || session?.fontSize != nil || hudFont != nil
+        else { return }
         let resolvedImagePath = session.flatMap {
             WatermarkRenderer.materialize(watermark, sessionID: $0.id)
         }
         let effectiveWindowOpacity = windowOpacity ?? linuxSettingsStore().load().backgroundOpacity ?? 1
         let overlay = WatermarkConfig.overlayText(watermark: watermark,
                                                   resolvedImagePath: resolvedImagePath,
-                                                  fontSize: dashboardFontOverride ?? session?.fontSize ?? fontSize,
+                                                  fontSize: hudFont ?? dashboardFontOverride ?? session?.fontSize ?? fontSize,
                                                   windowOpacity: effectiveWindowOpacity)
         guard let config = GhosttyApp.shared.configWithOverlay(overlay, settings: settings) else { return }
         ghostty_surface_update_config(surface, config)
@@ -496,6 +500,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
             heightPixels: height
         )
         ghostty_surface_set_size(surface, viewport.width, viewport.height)
+        if role != .overlay { controller?.store.session(withID: sessionID)?.onHudGeometryChange?() }
     }
 
     /// Forward a GTK scroll event to libghostty. ghostty's convention is "positive = up,

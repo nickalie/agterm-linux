@@ -453,6 +453,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   expiry could not resolve it there and undo would restore a panel whose time was up; a panel with no
   auto-hide keeps the undo behaviour it always had. `tree`'s `hud.hideAfter` reads back the CONFIGURED
   seconds, 0 for persistent, never a countdown.
+  **Linux adapter:** `LinuxHudAutoHide` (`gHudAutoHide`) holds the timers app-wide through `MainTimer`, and
+  expiry closes through whichever window holds the session with `reconcile(focusActive: false)`.
+  Its geometry watch fires from a session pane's `GhosttySurface.resize` and `overlay.resize`, and re-applies
+  the floating frame before rewriting the body, since the GTK frame does not follow the deck by itself.
 - `hud.open` and `hud.update` accept `--pane` plus `--pane-id` with `session.restore`'s resolution rule: a
   live stable token wins over the role fallback, while an unknown token without a fallback errors. The
   resolved pane identity is stored, so swap and promotion move the HUD with its shell. A hidden target keeps

@@ -17,6 +17,17 @@ extension AppController {
 
     func openHud(_ target: String?, window: String?, spec: HudSpec,
                  placement: ControlHudPlacement) -> ControlResponse {
+        openHud(target, spec: spec, placement: placement, fallbackToSession: false)
+    }
+
+    /// A custom command's failure panel: an `--error-pane` that is hidden or gone falls back to the whole
+    /// session rather than dropping the panel.
+    func openCommandFailureHud(_ sessionID: UUID, spec: HudSpec, pane: OverlayPane?) -> ControlResponse {
+        openHud(sessionID.uuidString, spec: spec, placement: ControlHudPlacement(pane: pane), fallbackToSession: true)
+    }
+
+    private func openHud(_ target: String?, spec: HudSpec, placement: ControlHudPlacement,
+                         fallbackToSession: Bool) -> ControlResponse {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
@@ -30,22 +41,31 @@ extension AppController {
                                               requireVisible: true,
                                               invalidPaneError: "hud pane must be left or right") {
             case .resolved(let identity, let target): (paneIdentity, pane) = (identity, target)
-            case .rejected(let response): return response
+            case .rejected(let response):
+                guard fallbackToSession else { return response }
+                FileHandle.standardError.write(Data(
+                    "agterm: failure panel for \"\(spec.message)\" falls back to the whole session: \(response.error ?? "unknown placement error")\n".utf8))
+                (paneIdentity, pane) = (nil, nil)
             }
             let file = Self.hudBodyFile(for: id)
+            // resolved before measuring and stored only by the open: a replaced HUD's teardown clears the
+            // session's stored size, so reading it here would measure the predecessor's font.
+            let fontSize = spec.fontSize ?? session.fontSize ?? hudBaseFontSize()
             // measured ONCE and threaded through, so the sizing and the header describe the same panel.
-            let metrics = hudPaneMetrics(for: session, pane: pane)
+            let metrics = hudPaneMetrics(for: session, pane: pane, fontSize: fontSize)
             // open FIRST, write second: replacing a live HUD tears its surface down, and that teardown
             // deletes the body file at this same per-session path.
             guard store.openHud(id, command: command, spec: spec, file: file,
                                 size: HudLayout.panelSize(for: spec, pane: metrics),
-                                paneIdentity: paneIdentity) else {
+                                paneIdentity: paneIdentity, fontSize: fontSize) else {
                 return err("overlay already open")
             }
             guard writeHudBody(session, pane: metrics) else {
                 store.closeHud(id)
                 return err(OverlayHudError.writeFailed)
             }
+            watchHudGeometry(session)
+            armHudAutoHide(session, spec: spec)
             reconcile()
             return ok(id)
         }
@@ -72,15 +92,17 @@ extension AppController {
             case .rejected(let response): return response
             }
             let previousPaneIdentity = session.hudPaneIdentity
-            let metrics = hudPaneMetrics(for: session, pane: pane)
+            let metrics = hudPaneMetrics(for: session, pane: pane, fontSize: liveHudFontSize(session))
             store.updateHud(id, spec: spec, size: HudLayout.panelSize(for: spec, pane: metrics),
                             paneIdentity: paneIdentity)
             guard writeHudBody(session, pane: metrics) else {
+                // the panel still paints the old message, so it keeps the deadline that came with it
                 store.updateHud(id, spec: previous,
                                 size: HudPanelSize(widthPercent: previousSize, heightPercent: previousHeight),
                                 paneIdentity: previousPaneIdentity)
                 return err(OverlayHudError.writeFailed)
             }
+            armHudAutoHide(session, spec: spec)
             resizeFloatingOverlayFrame(for: id)
             return ok(id)
         }
@@ -96,17 +118,53 @@ extension AppController {
         }
     }
 
+    /// Arms `spec`'s auto-hide and publishes the panel with the deadline it now has; a spec with no
+    /// auto-hide only cancels. Expiry closes through the store of whichever window holds the session then,
+    /// and never grabs focus: the user may be typing elsewhere by now.
+    func armHudAutoHide(_ session: Session, spec: HudSpec) {
+        let deadline = gHudAutoHide.arm(session, spec: spec) { id in
+            guard let owner = gWindows.values.first(where: { $0.store.session(withID: id) != nil }),
+                  owner.store.closeHud(id) else { return }
+            owner.reconcile(focusActive: false)
+        }
+        store.publishHud(forSession: session.id, expiresAt: deadline, now: gHudAutoHide.now())
+    }
+
+    /// Coalesces the panel's size changes into one body rewrite per main-loop turn, so the header's grid
+    /// follows the frame: upstream's `watchHudGeometry`. `GhosttySurface.resize` of a pane in the session and
+    /// `session.overlay.resize` call it; `discardHudBody` clears it with the rest of the HUD state.
+    func watchHudGeometry(_ session: Session) {
+        let id = session.id
+        session.onHudGeometryChange = { [weak self] in
+            guard let self, gHudAutoHide.geometryPending.insert(id).inserted else { return }
+            MainTimer.schedule(after: 0) { [weak self] in
+                guard let self else { return }
+                gHudAutoHide.geometryPending.remove(id)
+                // the window may have closed in between; its GTK tree is gone even while the controller lives
+                guard gWindows[self.windowID] === self, let session = self.store.session(withID: id),
+                      session.hudActive else { return }
+                self.resizeFloatingOverlayFrame(for: id)
+                _ = self.writeHudBody(session, pane: self.hudPaneMetrics(for: session, pane: session.hudTargetPane,
+                                                                         fontSize: self.liveHudFontSize(session)))
+            }
+        }
+    }
+
+    /// The size the live HUD's surface was created at, which every later measurement uses.
+    func liveHudFontSize(_ session: Session) -> Double {
+        session.hudFontSize ?? session.fontSize ?? hudBaseFontSize()
+    }
+
     /// The area the panel is laid out over: one pane's live bounds when the caller scoped the HUD, else the
     /// deck overlay, which is also what sizes the floating frame, so the percentage the store resolved and
-    /// the widget's own size cannot disagree.
+    /// the widget's own size cannot disagree. The cell is measured at `fontSize`, the HUD surface's own.
     ///
     /// Padding is reported as ZERO rather than guessed. macOS reads its bundled `window-padding-x/y`;
     /// Linux ships neither, so the value is libghostty's own default and this layer does not know it.
     /// `PaneMetrics` documents zero as the honest answer, and the grid it yields is a column or two wide —
     /// inside the divergence the estimated cell already carries.
-    func hudPaneMetrics(for session: Session? = nil, pane: OverlayPane? = nil) -> PaneMetrics {
-        let cell = Self.hudCellSize(family: linuxSettingsStore().load().fontFamily,
-                                    size: hudBaseFontSize(),
+    func hudPaneMetrics(for session: Session? = nil, pane: OverlayPane? = nil, fontSize: Double) -> PaneMetrics {
+        let cell = Self.hudCellSize(family: linuxSettingsStore().load().fontFamily, size: fontSize,
                                     context: gtk_widget_get_pango_context(W(window)))
         var area = (width: 0.0, height: 0.0)
         if let session, let pane, let bounds = paneBoundsInDeck(session: session.id, pane: pane) {
@@ -116,6 +174,14 @@ extension AppController {
         }
         return PaneMetrics(cellWidth: cell.width, cellHeight: cell.height,
                            paneWidth: area.width, paneHeight: area.height)
+    }
+
+    /// The HUD surface's creation size while `surface` is a live HUD's painter, else nil. Every config
+    /// re-apply restores it, because the panel's grid was measured at it.
+    func hudCreationFontSize(of surface: GhosttySurface) -> Double? {
+        guard surface.role == .overlay, let session = store.session(withID: surface.sessionID),
+              session.hudActive, overlaySurfaces[session.id] === surface else { return nil }
+        return session.hudFontSize
     }
 
     /// A pane's allocation in the deck overlay's own coordinates, which is what `GtkOverlay` margins are
@@ -130,10 +196,9 @@ extension AppController {
                             width: Double(rect.size.width), height: Double(rect.size.height))
     }
 
+    /// The configured size a HUD inherits when neither the caller nor the session's zoom names one.
     private func hudBaseFontSize() -> Double {
-        let settings = linuxSettingsStore().load()
-        return store.selectedSessionID.flatMap { store.session(withID: $0)?.fontSize }
-            ?? settings.fontSize ?? DashboardLayout.ghosttyDefaultFontSize
+        linuxSettingsStore().load().fontSize ?? DashboardLayout.ghosttyDefaultFontSize
     }
 
     /// One cell of `family` at `size`, measured through Pango: the digit advance (every glyph advances the

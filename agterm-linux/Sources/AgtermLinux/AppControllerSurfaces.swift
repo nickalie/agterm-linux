@@ -197,7 +197,8 @@ extension AppController {
                                         command: "sh -c " + Self.singleQuoted(OverlayCapture.shellLine),
                                         env: ovlEnv, controller: self, waitAfterCommand: s.overlayWait,
                                         role: .overlay,
-                                        reportsPaneState: false)
+                                        reportsPaneState: false,
+                                        fontSize: s.hudActive ? s.hudFontSize ?? s.fontSize : s.fontSize)
                 let sid = s.id
                 let owner = windowID
                 ov.onExit = {

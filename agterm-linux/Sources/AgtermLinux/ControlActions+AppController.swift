@@ -939,6 +939,7 @@ extension AppController: ControlActions {
             // the surface stays mounted, so only the frame re-flows: a program never re-spawns and the HUD
             // helper repaints in place off the body file `writeHudBody` rewrote.
             resizeFloatingOverlayFrame(for: id)
+            store.session(withID: id)?.onHudGeometryChange?()
             return ok(id)
         }
     }

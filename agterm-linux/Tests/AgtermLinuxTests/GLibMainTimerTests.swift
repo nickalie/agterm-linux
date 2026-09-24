@@ -67,6 +67,19 @@ struct GLibMainTimerTests {
         }
     }
 
+    @Test func aHudAutoHideExpiresOnTheGLibLoop() {
+        withGLibMainTimer {
+            let timers = LinuxHudAutoHide()
+            let session = Session(initialCwd: "/tmp")
+            var expired: [UUID] = []
+            timers.arm(session, spec: HudSpec(message: "done", hideAfter: 0.01)) { expired.append($0) }
+            let deadline = Date().addingTimeInterval(2)
+            while expired.isEmpty, Date() < deadline { _ = g_main_context_iteration(nil, 0) }
+            #expect(expired == [session.id])
+            #expect(timers.entries.isEmpty)
+        }
+    }
+
     /// Installs the GLib seam for the duration of `body` and restores the previous one. Synchronous by
     /// type: `MainTimer.scheduleTimer` is a process-global static.
     private func withGLibMainTimer<R>(_ body: () throws -> R) rethrows -> R {
