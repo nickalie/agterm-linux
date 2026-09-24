@@ -44,15 +44,19 @@ enum LinuxNotificationRevealFocus: Sendable, Equatable {
 
 extension AppStore {
     @discardableResult
-    func recordTerminalNotification(_ record: TerminalNotificationRecord) -> NotificationDelivery? {
+    func recordTerminalNotification(_ record: TerminalNotificationRecord,
+                                    origin: NotificationOrigin = .terminal) -> NotificationDelivery? {
         guard let session = session(withID: record.sessionID) else { return nil }
         guard TerminalNotification.shouldDeliver(
             firingIsFocused: record.firingIsFocused,
             appActive: record.appActive
         ) else { return nil }
+        // the `notify` event `events.read` and hooks see, emitted exactly where macOS emits it
+        guard let title = recordNotificationEvent(forSession: record.sessionID, title: record.title,
+                                                  body: record.body, origin: origin) else { return nil }
         session.unseenCount += 1
         return NotificationDelivery(
-            title: record.title,
+            title: title,
             body: record.body,
             identity: TerminalNotification.identity(
                 windowID: record.windowID,

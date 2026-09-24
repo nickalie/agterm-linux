@@ -465,9 +465,8 @@ extension AppController: ControlActions {
         case .success(let id):
             guard let session = store.session(withID: id) else { return err("no such session") }
             guard let parsed = ControlToggleMode.parse(mode) else { return err("invalid scratch mode: \(mode ?? "toggle")") }
-            if parsed.desiredValue(current: session.scratchActive) != session.scratchActive {
-                store.toggleScratch(id)
-            }
+            store.applyScratchRequest(id, want: parsed.desiredValue(current: session.scratchActive),
+                                      command: command) { reconcile() }
             reconcile()
             updateToggleIcons()
             return ok(id)
@@ -619,16 +618,18 @@ extension AppController: ControlActions {
         } else {
             id = store.selectedSessionID
         }
+        var bannerTitle = title ?? ""
         if let id {
-            _ = store.recordTerminalNotification(TerminalNotificationRecord(sessionID: id, windowID: windowID, pane: .main,
-                                                                            title: title ?? "", body: body,
-                                                                            firingIsFocused: false,
-                                                                            appActive: false))
+            let delivery = store.recordTerminalNotification(TerminalNotificationRecord(sessionID: id, windowID: windowID,
+                                                                                       pane: .main, title: bannerTitle,
+                                                                                       body: body, firingIsFocused: false,
+                                                                                       appActive: false), origin: .control)
+            bannerTitle = delivery?.title ?? bannerTitle
             rebuildSidebar()
         }
         let notificationTarget = id.map { TerminalNotification.identity(windowID: windowID, sessionID: $0, pane: .main) }
         if NotificationManager.bannersEnabled {
-            NotificationManager.send(title: title ?? "", body: body, target: notificationTarget)
+            NotificationManager.send(title: bannerTitle, body: body, target: notificationTarget)
         }
         return ok(id)
     }
