@@ -176,7 +176,7 @@ final class ControlServer: @unchecked Sendable {
              .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
              .sessionOverlayCopy, .sessionOverlayText,
              .sessionHudOpen, .sessionHudUpdate, .sessionHudClose,
-             .sessionBackground, .sessionResize, .sessionText, .sessionContext, .sessionSwap, .notify,
+             .sessionBackground, .sessionResize, .sessionText, .sessionContext, .sessionSwap, .sessionLead, .notify,
              .fontInc, .fontDec, .fontReset:
             return routeOwningSession(req.target) ?? .controller(gController)
         case .workspaceRename, .workspaceDelete, .workspaceSelect, .workspaceMove, .workspaceFocus,
@@ -186,13 +186,14 @@ final class ControlServer: @unchecked Sendable {
             return routeOwningWorkspace(req.args?.workspace) ?? .controller(gController)
         case .tree, .eventsRead, .workspaceNew, .workspaceGo, .quick, .quickType, .quickText,
              .surfaceZoom, .surfaceCursor, .dashboard,
-             .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sidebarWidth, .workspaceFilter,
+             .sidebar, .sidebarMode, .sidebarFlaggedLayout, .sidebarExpand, .sidebarCollapse, .sidebarWidth,
+             .workspaceFilter, .hooksReload, .hooksList, .sessionOverlayJobRun,
              .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename, .windowDelete,
              .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
              .keymapReload, .keymapList, .configReload, .themeSet, .themeList,
              .pickOpen, .pickResult, .pickCancel, .askOpen, .askResult, .askCancel,
              .restoreClear, .restoreCapture, .restoreMode,
-             .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .version, .debugAppearance:
+             .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxPresent, .version, .debugAppearance:
             return .controller(gController)
         }
     }
