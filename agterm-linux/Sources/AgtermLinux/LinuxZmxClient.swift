@@ -173,33 +173,24 @@ final class LinuxZmxClient {
         FileHandle.standardError.write(Data("agterm: zmx \(message)\n".utf8))
     }
 
-    /// A blocking run with a hard deadline. `DispatchSemaphore` and the termination handler are safe here:
-    /// libdispatch owns its own threads, and only the GLib MAIN loop is the thing `MainTimer` exists for.
+    /// A blocking run with a hard deadline, drained while waiting: zmx writes the listing row by row, so a
+    /// few daemons fill the pipe before exit.
     private nonisolated static func run(_ invocation: Invocation) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: invocation.executablePath)
-        process.arguments = invocation.arguments
-        process.environment = invocation.environment
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        let finished = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in finished.signal() }
-        try process.run()
-        if finished.wait(timeout: .now() + invocation.timeout) == .timedOut {
-            process.terminate()
-            if finished.wait(timeout: .now() + terminationGrace) == .timedOut {
-                Glibc.kill(process.processIdentifier, SIGKILL)
-                process.waitUntilExit()
-            }
+        let output: LinuxProcessCapture.Output
+        do {
+            output = try LinuxProcessCapture.run(invocation.executablePath,
+                                                 arguments: [invocation.executablePath] + invocation.arguments,
+                                                 environment: invocation.environment,
+                                                 timeout: invocation.timeout, grace: terminationGrace)
+        } catch .launch(let detail) {
+            throw CommandError.failed(-1, detail)
+        } catch {
+            // a stalled output is a failed listing rather than a short one
             throw CommandError.timedOut
         }
-        let stdout = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw CommandError.failed(process.terminationStatus, stdout + stderr)
+        guard output.status == 0 else {
+            throw CommandError.failed(output.status, output.stdout + output.stderr)
         }
-        return stdout
+        return output.stdout
     }
 }

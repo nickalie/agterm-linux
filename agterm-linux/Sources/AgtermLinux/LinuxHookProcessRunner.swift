@@ -94,7 +94,9 @@ final class LinuxHookProcessRunner: HookLauncher {
 /// notice waits for EOF on a socket every descendant inherits: a hook that backgrounds a job would hold its
 /// slot until that job ended, not until the hook's own shell exited.
 enum HookSpawn {
-    static func spawn(_ path: String, arguments: [String], environment: [String: String], stdin: Int32) throws -> pid_t {
+    /// A nil stream reads or writes `/dev/null`.
+    static func spawn(_ path: String, arguments: [String], environment: [String: String], stdin: Int32?,
+                      stdout: Int32? = nil, stderr: Int32? = nil) throws -> pid_t {
         var attributes = posix_spawnattr_t()
         var actions = posix_spawn_file_actions_t()
         try check(posix_spawnattr_init(&attributes), "posix_spawnattr_init")
@@ -111,9 +113,14 @@ enum HookSpawn {
         try check(posix_spawnattr_setflags(&attributes, Int16(flags)), "posix_spawnattr_setflags")
         try check(posix_spawn_file_actions_init(&actions), "posix_spawn_file_actions_init")
         defer { posix_spawn_file_actions_destroy(&actions) }
-        try check(posix_spawn_file_actions_adddup2(&actions, stdin, STDIN_FILENO), "adddup2")
-        try check(posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0), "addopen")
-        try check(posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0), "addopen")
+        for (fd, target, mode) in [(stdin, STDIN_FILENO, O_RDONLY), (stdout, STDOUT_FILENO, O_WRONLY),
+                                   (stderr, STDERR_FILENO, O_WRONLY)] {
+            if let fd {
+                try check(posix_spawn_file_actions_adddup2(&actions, fd, target), "adddup2")
+            } else {
+                try check(posix_spawn_file_actions_addopen(&actions, target, "/dev/null", mode, 0), "addopen")
+            }
+        }
         // nothing of the app's (sockets, the GL context, other hooks' pipes) reaches the script
         try check(posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1), "addclosefrom_np")
 
