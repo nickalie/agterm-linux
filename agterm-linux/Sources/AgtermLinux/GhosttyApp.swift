@@ -277,7 +277,7 @@ final class GhosttyApp: @unchecked Sendable {
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
                 guard let w = Self.wrapper(fromTarget: target) else { return false }
                 guard w.shouldCloseOnChildExitAction else {
-                    w.leadExitHeld()
+                    w.exitHeld()
                     return false
                 }
                 guard let retained = w.surface.flatMap({ RetainedGhosttySurface(ghostty_surface_userdata($0)) }) else { return false }

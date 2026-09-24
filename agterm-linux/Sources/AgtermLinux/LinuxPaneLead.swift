@@ -106,10 +106,6 @@ struct PaneReattach: Equatable {
     }
 }
 
-/// What `zmx.attach` learned about each remote session, kept until presentation (`Session.remotePresentation`)
-/// carries the binding on Linux too. Read only to attach a pane again.
-@MainActor var gRemoteAttachBindings: [UUID: RemoteBinding] = [:]
-
 @MainActor
 extension AppController {
     /// A pane's `lead` read-back changed, or its cover must follow.
@@ -171,7 +167,7 @@ extension AppController {
                                                 environment: old.env, lead: lead)
                 .map { PaneReattach.local($0, workingDirectory: old.cwd) }
         }
-        guard let binding = session.remotePresentation?.binding ?? gRemoteAttachBindings[session.id],
+        guard let binding = session.remotePresentation?.binding,
               let command = PaneReattach.remoteCommand(binding, pane: identity, role: pane == .right ? .right : .left,
                                                        lead: lead) else { return nil }
         return PaneReattach(command: command, wait: true, environment: old.env, workingDirectory: old.cwd)

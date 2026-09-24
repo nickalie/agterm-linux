@@ -21,6 +21,9 @@ final class ControlServer: @unchecked Sendable {
     /// Set while another live instance owns `path`, so this one never serves it.
     private(set) var refused = false
 
+    /// Remote presentation for this server's streams; nil serves the app's own. Main-actor only.
+    var presentation: LinuxPresentationService?
+
     /// The socket path once actually bound (nil before bind / after a bind failure).
     var boundSocketPath: String? { listenFD >= 0 ? path : nil }
 
@@ -131,6 +134,7 @@ final class ControlServer: @unchecked Sendable {
         // `zmx tree <this machine>` would otherwise deadlock, the far side's own agtermctl waiting in the
         // backlog this connection is holding. The GLib loop drains no Swift Concurrency executor, so the
         // work blocks a thread of its own and hops to the GTK thread only for model access.
+        if Self.streams(req.cmd) { return handleStream(conn, req) }
         guard req.cmd == .zmxTree || req.cmd == .zmxAttach else {
             respond(conn, dispatchOnMain(req))
             return true
@@ -164,18 +168,20 @@ final class ControlServer: @unchecked Sendable {
         }
     }
 
-    private func respond(_ conn: Int32, _ response: ControlResponse) {
-        guard var data = try? JSONEncoder().encode(response) else { return }
+    @discardableResult
+    func respond(_ conn: Int32, _ response: ControlResponse) -> Bool {
+        guard var data = try? JSONEncoder().encode(response) else { return false }
         data.append(0x0A)
-        writeAll(conn, data)
+        return writeAll(conn, data)
     }
 
     /// Run the dispatch on the GTK main thread and block until it returns.
     private func dispatchOnMain(_ req: ControlRequest) -> ControlResponse {
         let sem = DispatchSemaphore(value: 0)
         let box = ResponseBox()
-        runOnMain {
+        runOnMain { [self] in
             MainActor.assumeIsolated {
+                (presentation ?? gPresentation).attach()
                 box.value = Self.route(for: req).response(for: req)
                 sem.signal()
             }
@@ -305,15 +311,16 @@ final class ControlServer: @unchecked Sendable {
         }
     }
 
-    private func writeAll(_ conn: Int32, _ data: Data) {
+    private func writeAll(_ conn: Int32, _ data: Data) -> Bool {
         data.withUnsafeBytes { raw in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
             var offset = 0
             while offset < data.count {
                 let n = write(conn, base + offset, data.count - offset)
-                if n <= 0 { return }
+                if n <= 0 { return false }
                 offset += n
             }
+            return true
         }
     }
 }

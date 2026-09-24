@@ -37,8 +37,7 @@ enum LinuxRemoteSessions {
             let remote = try RemoteTreeMerger.decode(stdout: result.stdout)
             // the far side cannot know which name reached it, so the destination we were given is stamped
             // here rather than self-reported there
-            return ControlResponse(ok: true, result: ControlResult(
-                remote: ControlRemoteTree(host: host, endpoint: remote.endpoint, sessions: remote.sessions)))
+            return ControlResponse(ok: true, result: ControlResult(remote: remote.stamped(host: host)))
         } catch let error as RemoteTreeMerger.MergeError {
             return ControlResponse(ok: false, error: error.message)
         } catch {
@@ -154,7 +153,7 @@ extension AppController {
             created.splitCommandWait = true
             store.setSplitVisibility(created.id, shown: true, axis: axis ?? .leftRight)
         }
-        attachment?.record(on: created)
+        attachment?.record(on: created, in: store)
         reconcile()
         (created.splitFocused ? splitSurfaces[created.id] : surfaces[created.id])?.grabFocus()
         return ControlResponse(ok: true, result: ControlResult(id: created.id.uuidString))
@@ -203,17 +202,16 @@ struct RemoteAttachment: Sendable {
     let leads = (left: ZmxLeadAttachment(claim: true), right: ZmxLeadAttachment(claim: true))
 
     @MainActor
-    func record(on session: Session) {
+    func record(on session: Session, in store: AppStore) {
         var daemons = [session.paneIdentity: left]
         ZmxLeadBook.shared.begin(leads.left, pane: session.paneIdentity)
         if let right, let local = session.splitPaneIdentity {
             daemons[local] = right
             ZmxLeadBook.shared.begin(leads.right, pane: local)
         }
-        gRemoteAttachBindings = gRemoteAttachBindings.filter { id, _ in
-            gWindows.values.contains { $0.store.session(withID: id) != nil }
-        }
-        gRemoteAttachBindings[session.id] = RemoteBinding(remoteSessionID: remoteSessionID, daemonsByLocalPane: daemons,
-                                                          presentationVersion: presentationVersion, origin: origin)
+        store.bindRemote(RemoteBinding(remoteSessionID: remoteSessionID, daemonsByLocalPane: daemons,
+                                       presentationVersion: presentationVersion, origin: origin), forSession: session.id)
+        // the row's created event fired inside `addSession`, before the binding existed
+        gPresentation.startRemotePresentation(for: session)
     }
 }
