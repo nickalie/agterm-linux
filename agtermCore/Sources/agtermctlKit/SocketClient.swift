@@ -123,8 +123,8 @@ struct SocketClient {
     }
 
     /// Whether a process holds the server's ownership lock on `<socketPath>.lock`, nil when that cannot be
-    /// answered. Darwin's `F_GETLK` observes a `flock` without competing for it; taking a shared lock to
-    /// test instead would fail a starting instance's own `LOCK_EX|LOCK_NB`.
+    /// answered. Darwin's `F_GETLK` and Linux's `/proc/locks` observe a `flock` without competing for it;
+    /// taking a shared lock to test instead would fail a starting instance's own `LOCK_EX|LOCK_NB`.
     private static func ownershipLockHeld(socketPath: String) -> Bool? {
         #if canImport(Darwin)
         let fd = open(ControlResolve.ownershipLockPath(forSocket: socketPath), O_RDONLY | O_CLOEXEC)
@@ -138,6 +138,9 @@ struct SocketClient {
         let queried = withUnsafeMutablePointer(to: &query) { fcntl(fd, F_GETLK, $0) }
         guard queried == 0 else { return nil }
         return query.l_type != Int16(F_UNLCK)
+        #elseif canImport(Glibc)
+        // Linux keeps flock and POSIX locks apart, so F_GETLK never sees the server's flock.
+        return ProcLocks.flockHeld(path: ControlResolve.ownershipLockPath(forSocket: socketPath))
         #else
         return nil
         #endif
