@@ -183,7 +183,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: agterm-linux/vendor/zmx
-          key: zmx-${{ hashFiles('linux/zmx.env', 'scripts/setup-linux-zmx.sh') }}
+          key: zmx-${{ hashFiles('linux/zmx.env', 'scripts/setup-linux-zmx.sh', 'scripts/zmx-patches/*.patch') }}
       - name: Test deterministic Ghostty resources
         run: scripts/test-linux-resources.sh
       - name: Build libghostty (skips if the cache restored it)

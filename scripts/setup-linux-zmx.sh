@@ -9,6 +9,8 @@
 #
 # The STAMP decides a rebuild, not the binary: a zmx built from another revision is indistinguishable
 # from a current one, so a ZMX_REV change costs exactly one rebuild and nobody keeps a stale one.
+# The shared scripts/zmx-patches are applied over the plain pin, and their digest is part of the stamp,
+# so editing one rebuilds zmx exactly as a ZMX_REV change does.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,8 +18,11 @@ VENDOR="$ROOT/agterm-linux/vendor/zmx"
 STAMP="$VENDOR/.zmx-build-stamp"
 # shellcheck source=../linux/zmx.env
 source "$ROOT/linux/zmx.env"
+PATCH_DIR="$ROOT/scripts/zmx-patches"
+PATCH_DIGEST="$(cat "$PATCH_DIR"/*.patch | sha256sum | cut -c1-16)"
+ZMX_STAMP="$ZMX_REV $PATCH_DIGEST"
 
-if [[ -x "$VENDOR/zmx" && -f "$VENDOR/LICENSE" && -f "$STAMP" && "$(cat "$STAMP")" == "$ZMX_REV" ]]; then
+if [[ -x "$VENDOR/zmx" && -f "$VENDOR/LICENSE" && -f "$STAMP" && "$(cat "$STAMP")" == "$ZMX_STAMP" ]]; then
   echo "pinned zmx already vendored at $VENDOR"
   exit 0
 fi
@@ -61,6 +66,10 @@ git -C "$BUILD_DIR" remote add origin "$ZMX_REPO"
 git -C "$BUILD_DIR" fetch -q --depth 1 origin "$ZMX_REV"
 git -C "$BUILD_DIR" -c advice.detachedHead=false checkout -q FETCH_HEAD
 [[ "$(git -C "$BUILD_DIR" rev-parse HEAD)" == "$ZMX_REV" ]]
+for zmx_patch in "$PATCH_DIR"/*.patch; do
+  echo "applying $(basename "$zmx_patch")..."
+  git -C "$BUILD_DIR" apply --whitespace=nowarn "$zmx_patch"
+done
 
 echo "building zmx..."
 # The same glibc floor the libghostty build targets, so one payload runs on every supported distribution.
@@ -68,9 +77,9 @@ echo "building zmx..."
 
 install -Dm755 "$BUILD_DIR/zig-out/bin/zmx" "$STAGE/zmx"
 install -Dm644 "$BUILD_DIR/LICENSE" "$STAGE/LICENSE"
-printf '%s\n' "$ZMX_REV" > "$STAGE/.zmx-build-stamp"
+printf '%s\n' "$ZMX_STAMP" > "$STAGE/.zmx-build-stamp"
 
 rm -rf "$VENDOR"
 mkdir -p "$(dirname "$VENDOR")"
 mv "$STAGE" "$VENDOR"
-echo "→ vendored zmx $ZMX_REV into $VENDOR"
+echo "→ vendored zmx $ZMX_STAMP into $VENDOR"
