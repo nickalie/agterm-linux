@@ -1344,6 +1344,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - XCUITest exemption: `zmx.present` needs a second app as its peer, and its effects on a viewer are the
   existing status, context, notification, HUD and pane paths those suites already cover. `ControlServerRemotePresentationTests`
   runs both roles in one process over the real bridge binary instead.
+  **Linux adapter:** `LinuxPresentationService` (`gPresentation`) holds both roles; `LinuxPresentationHost`
+  is its GTK seam, so `LinuxRemotePresentationTests` runs both over the real `agtermctl-linux` bridge with a
+  fake host. The two hand-offs leave the accept thread in `ControlServer+Streams`; the bridge and the helper
+  run on `HookSpawn`; the heartbeat and the clients' tick are `LinuxRepeatingTimer`s. A swap the origin's
+  layout asks for goes through `AppController.swapPanes` first, since the widgets move with the model.
+  A `gui` replica draws in the session-slot panel, and the disconnected row shows `network-offline-symbolic`.
 ## Pane lead
 
 - zmx keeps one leader per daemon and applies only its grid. Stock zmx moves the lead to whichever client
@@ -1444,7 +1450,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   and also to the zoom content overlay and each dashboard cell, whose paintable draws the terminal alone.
   The takeover key is claimed in `gKeyPressOwnership`; a Super chord is swallowed as Command is.
   `reattachPane` swaps the `GtkGLArea` inside its pane host or zoom overlay and reopens a dashboard showing
-  the pane. `zmx.attach` keeps its `RemoteBinding` in `gRemoteAttachBindings` until presentation binds it.
+  the pane.
   The AT-SPI suite cannot reach a covered pane: Live needs zsh as the account's login shell, and the
   container runs as root under bash, so `LinuxZmxDaemonTests` drives the patched zmx directly instead.
 

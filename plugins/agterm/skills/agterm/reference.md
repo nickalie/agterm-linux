@@ -1764,6 +1764,9 @@ Nothing has to be set up beyond the `agtermctl` PATH precondition above. What to
   and a running one keeps running and closes when its ssh ends. Nothing is handed back later.
 - While the stream is not up the row's indicator says so and names the host. It retries on its own;
   close and reattach the session to retry at once.
+- On the GTK Linux frontend that indicator is a disconnected-network glyph with the notice as its tooltip,
+  and a handed-over `gui` ask draws in the session's own panel, the one a `terminal` ask uses, because a
+  replica holds the session's slot rather than the window's. Linux and macOS peers interoperate either way.
 
 `agtermctl zmx present SESSION` is the plumbing behind it: it opens the stream on the local socket and
 bridges it to stdio as newline-delimited JSON. agterm runs it over ssh on the origin; it is not meant to

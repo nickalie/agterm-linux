@@ -74,6 +74,10 @@ that machine running agterm in Live sessions mode. The attach claims each pane's
 patched zmx on BOTH machines (the Linux payload bundles it); against an origin without it the attach
 follows until the first classified keystroke. A pane that does not lead is covered by a GTK panel, and a
 Super chord on it is swallowed the way a Command chord is on macOS.
+Every attach also opens a presentation stream (`ssh -T HOST agtermctl zmx present SESSION`), so the origin's
+status, context, `notify` notifications, HUD and split layout show here, and its asks and program overlays
+are handed to this machine. It interoperates with macOS peers from v0.32.0 in both directions; a row whose
+stream is down shows a disconnected-network glyph whose tooltip names the host, where macOS slashes the cloud.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces
