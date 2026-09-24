@@ -30,6 +30,8 @@ extension AppController {
 
     private func presentTerminalAsk(_ ask: PendingAsk, sessionID: UUID,
                                     placement: ControlAskPlacement, follow: Bool) -> ControlResponse {
+        if let response = gPresentation.presentAskRemotely(ask, in: store, sessionID: sessionID, placement: placement,
+                                                           windowID: windowID) { return response }
         guard let session = store.session(withID: sessionID) else { return err("no such session") }
         let identity: UUID?
         let pane: OverlayPane?
@@ -52,6 +54,8 @@ extension AppController {
                                placement: ControlAskPlacement, follow: Bool) -> ControlResponse {
         var anchor: AskAnchor?
         if let sessionID {
+            if let response = gPresentation.presentAskRemotely(ask, in: store, sessionID: sessionID, placement: placement,
+                                                               windowID: windowID) { return response }
             guard let session = store.session(withID: sessionID) else { return err("no such session") }
             guard store.selectedSessionID == sessionID, !dashboard.isOpen, terminalZoom.target == nil else {
                 return err("session not visible")

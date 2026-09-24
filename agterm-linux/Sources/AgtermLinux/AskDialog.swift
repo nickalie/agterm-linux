@@ -45,16 +45,21 @@ extension AppController {
     }
 
     func syncSessionAsks() {
-        for (id, frame) in askWidgets.sessionFrames where store.session(withID: id)?.askPending == nil {
+        for (id, frame) in askWidgets.sessionFrames where !drawsSessionAsk(store.session(withID: id)) {
             removeSessionAskFrame(id, frame: frame)
         }
         for workspace in store.workspaces {
-            for session in workspace.sessions where session.askPending != nil {
+            for session in workspace.sessions where drawsSessionAsk(session) {
                 if askWidgets.sessionFrames[session.id] == nil { buildSessionAskFrame(session) }
                 applySessionAskGeometry(session)
             }
         }
         updateSessionAskVisibility()
+    }
+
+    /// A viewer presenting the session draws an ask handed to it, so nothing of it is shown or answered here.
+    private func drawsSessionAsk(_ session: Session?) -> Bool {
+        session?.askPending != nil && session?.askPresentedRemotely == false
     }
 
     private func removeSessionAskFrame(_ id: UUID, frame: OpaquePointer) {
@@ -68,6 +73,11 @@ extension AppController {
               let frame = op(gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)) else { return }
         gtk_widget_add_css_class(W(frame), "agterm-ask")
         gtk_widget_set_focusable(W(frame), 1)
+        // a replica of an origin's ask arrives without the open that seeds its navigation
+        if askWidgets.navigations[ask.id] == nil {
+            askWidgets.navigations[ask.id] = AskNavigation(buttons: ask.buttons, defaultID: ask.defaultID,
+                                                           destructiveID: ask.destructiveID)
+        }
         applyTerminalAskStyle()
 
         if let title = op(gtk_label_new(ask.title)) {
@@ -133,7 +143,7 @@ extension AppController {
     }
 
     func sessionAskVisible(_ id: UUID) -> Bool {
-        guard let session = store.session(withID: id), session.askPending != nil,
+        guard let session = store.session(withID: id), drawsSessionAsk(session),
               store.selectedSessionID == id, !dashboard.isOpen, terminalZoom.target == nil else { return false }
         guard session.askPaneIdentity != nil else { return true }
         guard let pane = session.askTargetPane else { return false }
