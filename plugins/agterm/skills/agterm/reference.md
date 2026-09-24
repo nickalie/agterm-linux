@@ -1481,9 +1481,10 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
   pane the overlay covers, the one `{AGT_PANE}` names. Empty for a launcher fired with no session.
 - Plus the other `$AGT_*` context vars the runner exports.
 
-Linux runs custom commands detached with stdin, stdout, and stderr connected to `/dev/null`.
+Linux runs custom commands detached with stdin and stdout connected to `/dev/null`, and stderr too unless
+the command opts into `--error-hud`.
 A spawn error or non-zero exit appears as a transient toast only in the originating window while that
-controller incarnation remains open.
+controller incarnation remains open; an `--error-hud` command also posts its failure panel there.
 
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
 `open_directory`, `rename_session`, `duplicate_session`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
