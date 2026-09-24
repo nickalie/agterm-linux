@@ -150,11 +150,16 @@ final class OverlayJobRunner: @unchecked Sendable {
     /// suspended until that handoff is done. Its signal dispositions are reset to the defaults the helper
     /// changes. `eval` keeps the command's own exit status as the shell's.
     private static func spawn(environment: [String: String], cwd: String, suspended: Bool) throws -> pid_t {
+        #if canImport(Darwin)
         var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        #else
+        var actions = posix_spawn_file_actions_t()
+        var attributes = posix_spawnattr_t()
+        #endif
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addchdir_np(&actions, cwd)
-        var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
         var defaults = sigset_t()
@@ -166,9 +171,15 @@ final class OverlayJobRunner: @unchecked Sendable {
         posix_spawnattr_setsigmask(&attributes, &empty)
         posix_spawnattr_setpgroup(&attributes, 0)
         var flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETPGROUP
+        #if canImport(Darwin)
         if suspended { flags |= POSIX_SPAWN_START_SUSPENDED }
-        posix_spawnattr_setflags(&attributes, Int16(flags))
         let argv = ["/bin/sh", "-c", #"eval "$AGTERM_OVL_CMD""#]
+        #else
+        // glibc has no START_SUSPENDED: the shell stops itself before the command, and the wait below
+        // holds the handoff until it has
+        let argv = ["/bin/sh", "-c", (suspended ? "kill -STOP $$; " : "") + #"eval "$AGTERM_OVL_CMD""#]
+        #endif
+        posix_spawnattr_setflags(&attributes, Int16(flags))
         let env = environment.map { "\($0.key)=\($0.value)" }
         var pid: pid_t = 0
         let result = withCStrings(argv) { argvPointers in
@@ -177,6 +188,12 @@ final class OverlayJobRunner: @unchecked Sendable {
             }
         }
         guard result == 0 else { throw SocketClientError("could not start the program: \(String(cString: strerror(result)))") }
+        #if !canImport(Darwin)
+        if suspended {
+            var status: Int32 = 0
+            while waitpid(pid, &status, WUNTRACED) < 0, errno == EINTR {}
+        }
+        #endif
         return pid
     }
 

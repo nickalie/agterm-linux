@@ -165,7 +165,13 @@ public enum TerminfoInstall {
         // the child gets stdin from the pipe and inherits stdout and stderr, and nothing else: another
         // thread spawning between pipe() and close() would otherwise hand its child this pipe's write
         // end, and ssh would wait for an EOF that only arrives when that unrelated child exits
+        #if canImport(Darwin)
         var attributes: posix_spawnattr_t?
+        var actions: posix_spawn_file_actions_t?
+        #else
+        var attributes = posix_spawnattr_t()
+        var actions = posix_spawn_file_actions_t()
+        #endif
         try check(posix_spawnattr_init(&attributes), "posix_spawnattr_init")
         defer { posix_spawnattr_destroy(&attributes) }
         // the child also inherits the spawning thread's signal mask and ignored handlers; a caller that
@@ -176,14 +182,22 @@ public enum TerminfoInstall {
         sigfillset(&allSignals)
         try check(posix_spawnattr_setsigmask(&attributes, &noSignals), "posix_spawnattr_setsigmask")
         try check(posix_spawnattr_setsigdefault(&attributes, &allSignals), "posix_spawnattr_setsigdefault")
+        #if canImport(Darwin)
         let flags = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #else
+        let flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #endif
         try check(posix_spawnattr_setflags(&attributes, Int16(flags)), "posix_spawnattr_setflags")
-        var actions: posix_spawn_file_actions_t?
         try check(posix_spawn_file_actions_init(&actions), "posix_spawn_file_actions_init")
         defer { posix_spawn_file_actions_destroy(&actions) }
         try check(posix_spawn_file_actions_adddup2(&actions, readEnd, STDIN_FILENO), "posix_spawn_file_actions_adddup2")
+        #if canImport(Darwin)
         try check(posix_spawn_file_actions_addinherit_np(&actions, STDOUT_FILENO), "posix_spawn_file_actions_addinherit_np")
         try check(posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO), "posix_spawn_file_actions_addinherit_np")
+        #else
+        // glibc's counterpart of CLOEXEC_DEFAULT: everything past stderr closes in the child
+        try check(posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1), "posix_spawn_file_actions_addclosefrom_np")
+        #endif
 
         var arguments = try copyStrings(argv)
         defer { arguments.forEach { free($0) } }
@@ -193,7 +207,7 @@ public enum TerminfoInstall {
         let spawned = argv[0].withCString { path in
             arguments.withUnsafeMutableBufferPointer { args in
                 variables.withUnsafeMutableBufferPointer { vars in
-                    posix_spawnp(&pid, path, &actions, &attributes, args.baseAddress, vars.baseAddress)
+                    posix_spawnp(&pid, path, &actions, &attributes, args.baseAddress!, vars.baseAddress!)
                 }
             }
         }
@@ -202,7 +216,12 @@ public enum TerminfoInstall {
 
         // an ssh that fails before reading would otherwise SIGPIPE the CLI before it can report; the
         // EPIPE the write gets instead is dropped because ssh's own stderr and status say what happened
+        #if canImport(Darwin)
         _ = fcntl(writeEnd, F_SETNOSIGPIPE, 1)
+        #else
+        // Linux has no per-descriptor SIGPIPE switch; this runs in the one-shot CLI, which reports and exits
+        signal(SIGPIPE, SIG_IGN)
+        #endif
         source.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
