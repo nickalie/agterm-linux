@@ -777,12 +777,13 @@ extension AppController: ControlActions {
                 case .scratch: scratchSurfaces[id]
                 }
                 if let surface {
+                    let pane = options.pane ?? .left
+                    if let covered = coveredType(options.text, into: surface, session: id, pane: pane) { return covered }
                     surface.inject(text: options.text)
                     // the input a blocked agent was waiting for has arrived, so the block must not outlive
                     // it. A newline in the payload counts as Return, never as the Escape/Ctrl-C interrupt.
                     if !options.text.isEmpty {
-                        applyKeystrokeToStatus(id, pane: options.pane ?? .left,
-                                               keystroke: InterruptKeystroke.classify(text: options.text))
+                        applyKeystrokeToStatus(id, pane: pane, keystroke: InterruptKeystroke.classify(text: options.text))
                     }
                     return ok(id)
                 }
@@ -801,6 +802,7 @@ extension AppController: ControlActions {
             guard let surface = focusedSurface(for: id), surface.isRealized else {
                 return err("session not realized")
             }
+            if let refusal = coveredRefusal(surface) { return refusal }
             guard let text = surface.readSelection(), !text.isEmpty else {
                 return err("no selection")
             }
@@ -824,6 +826,7 @@ extension AppController: ControlActions {
             case .failure(let response): return response
             case .success(let surface):
                 guard surface.isRealized else { return err("session not realized") }
+                if let refusal = coveredRefusal(surface) { return refusal }
                 surface.performBindingAction(action)
                 return ok(id)
             }
@@ -857,8 +860,10 @@ extension AppController: ControlActions {
                 if searchSessionID == id { searchSurface?.endSearch() }
                 return ok(id)
             }
+            if let refusal = searchLeadRefusal(id, fallback: onScreenSurface(for: id)) { return refusal }
             selectSession(id, userInitiated: false)
             guard let owner = searchTargetSurface(for: id) else { return err("session not realized") }
+            if let refusal = searchLeadRefusal(id, fallback: owner) { return refusal }
             searchSurface = owner
             owner.startSearch()
             let hasQuery = text.map { !$0.isEmpty } ?? false
@@ -880,6 +885,7 @@ extension AppController: ControlActions {
                     usleep(3000)
                 }
             }
+            if let refusal = coveredRefusal(owner) { return refusal }
             let display = searchDisplayText()
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString,
                                                                    text: display.isEmpty ? nil : display,

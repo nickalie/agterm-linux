@@ -73,7 +73,7 @@ extension AppController {
         connect(exit, "clicked", unsafeBitCast(onTerminalZoomExit, to: GCallback.self))
         adw_header_bar_pack_end(header, W(exit))
         adw_toolbar_view_add_top_bar(host, W(header))
-        adw_toolbar_view_set_content(host, W(surface.glArea))
+        adw_toolbar_view_set_content(host, W(zoomContent(surface.glArea, target: target)))
         if linuxSettingsStore().load().effectiveToolbarMode == .hidden {
             gtk_widget_set_visible(W(header), 0)
         }
@@ -85,6 +85,16 @@ extension AppController {
         surface.refresh()
         g_object_unref(RAW(surface.glArea))
         return true
+    }
+
+    /// A pane's terminal is zoomed inside an overlay carrying its lead cover; other surfaces have no lead.
+    private func zoomContent(_ glArea: OpaquePointer, target: TerminalZoomTarget) -> OpaquePointer {
+        guard case .session(let id, let slot) = target, slot == .primary || slot == .split,
+              let content = op(gtk_overlay_new()) else { return glArea }
+        gtk_overlay_set_child(content, W(glArea))
+        LinuxPaneLeadCover.mount(on: content, windowID: windowID, sessionID: id,
+                                 placement: .zoom(slot == .primary ? .left : .right))
+        return content
     }
 
     func detach(_ widget: OpaquePointer, from target: TerminalZoomTarget) -> Bool {
@@ -121,6 +131,9 @@ extension AppController {
     private func restoreZoomedSurface(_ target: TerminalZoomTarget) {
         guard let surface = surface(for: target), let host = zoomHost, let deckOverlay else { return }
         _ = g_object_ref(RAW(surface.glArea))
+        if let content = op(adw_toolbar_view_get_content(host)), content != surface.glArea {
+            gtk_overlay_set_child(content, nil)
+        }
         adw_toolbar_view_set_content(host, nil)
         gtk_overlay_remove_overlay(deckOverlay, W(host))
         zoomHost = nil

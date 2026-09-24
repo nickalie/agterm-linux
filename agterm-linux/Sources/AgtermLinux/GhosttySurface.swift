@@ -14,23 +14,22 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// The key controller + a GtkIMContext for composed input (dead-keys / compose / CJK): key events are
     /// filtered through the IM, which commits the composed text via the `commit` signal.
     private var keyController: OpaquePointer?
-    private var imContext: OpaquePointer?
+    private(set) var imContext: OpaquePointer?
 
     /// The owning session's id (so the host can route close/title back to the model).
     let sessionID: UUID
-    fileprivate weak var controller: AppController?
+    private(set) weak var controller: AppController?
     /// Concrete host role; unlike a split boolean this distinguishes notification and focus behavior
     /// for main, split, overlay, scratch, and quick surfaces.
     private(set) var role: LinuxSurfaceRole
     var isSplitPane: Bool { role == .split }
     /// The shell's working directory.
-    private let cwd: String
+    let cwd: String
     /// Optional explicit command; nil runs the user's default login shell.
     private let command: String?
     /// Whether command surfaces should linger on ghostty's "press any key" prompt after exit.
     private let waitAfterCommand: Bool
-    /// Scratch/overlay/quick terminals are transient covers; their OSC title/PWD must not overwrite the
-    /// owning session's primary/split pane state.
+    /// Scratch/overlay/quick terminals are transient covers; their OSC title/PWD must not overwrite the pane's.
     private let reportsPaneState: Bool
     /// Per-session font-size override (points) to seed at creation, restoring a persisted ⌘+/⌘− zoom;
     /// nil uses the config default.
@@ -39,7 +38,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// runs INSIDE the shell so its exit returns to a prompt (unlike `command`).
     private let initialInput: String?
     /// `AGTERM_*` (and any other) env vars to inject into the spawned shell.
-    private let env: [String: String]
+    let env: [String: String]
     /// The last libghostty-requested pointer state. GTK may receive visibility, link-hover, and shape
     /// actions independently, so keep all three and re-apply their precedence instead of letting one
     /// callback accidentally reset another.
@@ -615,6 +614,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
 
     func keyPressed(keyval: UInt32, keycode: UInt32, state: UInt32, event: OpaquePointer?) -> Bool {
         guard let surface else { return false }
+        if let consumed = leadKeyGate(keyval: keyval, keycode: keycode, state: state, event: event) { return consumed }
         controller?.noteUserActivity()
 
         let baseScalar = Unicode.Scalar(gdk_keyval_to_unicode(gdk_keyval_to_lower(keyval)))
@@ -671,7 +671,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// release state still carries the released key's bit (X11 prior-state), so it is cleared via
     /// ModifierKeyMods before the event goes out.
     func modifierKeyReleased(keyval: UInt32, keycode: UInt32, state: UInt32) {
-        guard let surface else { return }
+        guard let surface, !leadCovered else { return }
         var ke = ghostty_input_key_s()
         ke.action = GHOSTTY_ACTION_RELEASE
         ke.keycode = keycode

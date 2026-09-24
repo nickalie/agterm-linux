@@ -29,6 +29,7 @@ extension AppController {
             return err("surface not available: \(resolved.controlID)")
         }
         guard surface.isRealized else { return err("surface not realized") }
+        if let covered = coveredCursor(surface, controlID: resolved.controlID) { return covered }
         guard let column = surface.readCursorColumn() else { return err("failed to read cursor position") }
         return ControlResponse(ok: true,
                                result: ControlResult(id: resolved.controlID, cursor: ControlCursor(column: column)))
@@ -98,6 +99,9 @@ extension AppController {
             case .left: surface = surfaces[id]
             case .right: surface = splitSurfaces[id]
             case .scratch: surface = scratchSurfaces[id]
+            }
+            if let surface, surface.isRealized, let covered = coveredText(surface, all: options.all, lines: options.lines) {
+                return covered
             }
             guard let text = surface?.readScreenText(all: options.all, lines: options.lines) else {
                 return err("session not realized")

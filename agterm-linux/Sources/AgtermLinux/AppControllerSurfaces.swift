@@ -32,6 +32,7 @@ extension AppController {
         live.formUnion(store.pendingHeldSessionIDs())
         for id in Array(surfaces.keys) where !live.contains(id) { removeSession(id) }
         reloadClosedEditorOverlays()
+        LinuxPaneLeadCover.syncAll()   // a pane overlay opening or closing hides or shows the deck's cover
         rebuildSidebar()
         showActive(focus: focusActive)
         updateTitle()
@@ -82,6 +83,7 @@ extension AppController {
         surf.onExit = { [weak self] in self?.closePrimaryPane(sid) }
         s.surface = surf
         surfaces[s.id] = surf
+        if let title = GhosttyApp.shared.staticTitle { surf.applyTitle(title) }
         gtk_paned_set_start_child(paned, W(paneHost(s.id, .left, child: surf.glArea) ?? surf.glArea))
         "main".withCString { _ = gtk_stack_add_named(stack, W(paned), $0) }
         gtk_widget_set_halign(W(stack), GTK_ALIGN_FILL)
@@ -130,6 +132,7 @@ extension AppController {
         gtk_widget_set_hexpand(W(host), 1)
         gtk_widget_set_vexpand(W(host), 1)
         gtk_overlay_set_child(host, W(child))
+        LinuxPaneLeadCover.mount(on: host, windowID: windowID, sessionID: sessionID, placement: .deck(host: host))
         paneHosts[sessionID, default: [:]][pane] = host
         return host
     }
@@ -346,6 +349,7 @@ extension AppController {
             split.onExit = { [weak self] in self?.closeSplitPane(sid) }
             s.splitSurface = split
             splitSurfaces[s.id] = split
+            if let title = GhosttyApp.shared.staticTitle { split.applyTitle(title) }
             gtk_paned_set_end_child(paned, W(paneHost(s.id, .right, child: split.glArea) ?? split.glArea))
         }
         if let split = splitSurfaces[s.id] {

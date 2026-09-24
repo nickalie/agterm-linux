@@ -17,6 +17,8 @@ final class LinuxZmxClient {
         let arguments: [String]
         let environment: [String: String]
         let timeout: TimeInterval
+        /// Written to the child's stdin, which is then closed. Nil leaves stdin inherited.
+        var input: Data?
     }
 
     enum CommandError: Error {
@@ -160,13 +162,38 @@ final class LinuxZmxClient {
         }
     }
 
-    private func invoke(_ arguments: [String], timeout override: TimeInterval? = nil) throws -> String {
+    /// The daemon's own screen for `name`, which always has the leader's layout. Nil when the read failed for
+    /// any reason, a zmx without the query included: a caller must not fall back to the pane's own surface,
+    /// whose layout is the thing in doubt.
+    func screen(name: String, all: Bool) -> ZmxScreen? {
+        do {
+            return ZmxScreen(output: try invoke(["screen", name] + (all ? ["--all"] : [])))
+        } catch {
+            log("screen failed for \(name): \(error)")
+            return nil
+        }
+    }
+
+    /// Queues `bytes` as typed input to `name` without taking the lead. True means the daemon queued them,
+    /// not that the program read them. Never retried: a second attempt after an unclear failure types twice.
+    func type(name: String, bytes: [UInt8]) -> Bool {
+        do {
+            _ = try invoke(["type", name], input: Data(bytes))
+            return true
+        } catch {
+            log("type failed for \(name): \(error)")
+            return false
+        }
+    }
+
+    private func invoke(_ arguments: [String], timeout override: TimeInterval? = nil,
+                        input: Data? = nil) throws -> String {
         var environment = ProcessInfo.processInfo.environment
         environment["ZMX_DIR"] = socketDirectory
         environment.removeValue(forKey: "ZMX_SESSION")
         environment.removeValue(forKey: "ZMX_SESSION_PREFIX")
         return try runner(Invocation(executablePath: executablePath, arguments: arguments,
-                                     environment: environment, timeout: override ?? timeout))
+                                     environment: environment, timeout: override ?? timeout, input: input))
     }
 
     private func log(_ message: String) {
@@ -175,13 +202,14 @@ final class LinuxZmxClient {
 
     /// A blocking run with a hard deadline, drained while waiting: zmx writes the listing row by row, so a
     /// few daemons fill the pipe before exit.
-    private nonisolated static func run(_ invocation: Invocation) throws -> String {
+    nonisolated static func run(_ invocation: Invocation) throws -> String {
         let output: LinuxProcessCapture.Output
         do {
             output = try LinuxProcessCapture.run(invocation.executablePath,
                                                  arguments: [invocation.executablePath] + invocation.arguments,
                                                  environment: invocation.environment,
-                                                 timeout: invocation.timeout, grace: terminationGrace)
+                                                 timeout: invocation.timeout, grace: terminationGrace,
+                                                 input: invocation.input)
         } catch .launch(let detail) {
             throw CommandError.failed(-1, detail)
         } catch {

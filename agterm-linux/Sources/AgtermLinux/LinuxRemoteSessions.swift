@@ -67,12 +67,16 @@ enum LinuxRemoteSessions {
         }
         let primary: String
         let split: String?
+        // attaching is the user asking for the session HERE, so every pane claims the lead at once
+        let attachment = RemoteAttachment(
+            remoteSessionID: remote.id, presentationVersion: remoteTree.presentation, left: left, right: byRole[.right],
+            origin: RemoteBinding.Origin(host: host, endpoint: remoteTree.endpoint, sessionName: remote.name))
         do {
-            primary = try RemoteSession.attachPaneCommand(host: host, endpoint: remoteTree.endpoint,
-                                                          daemon: left, session: remote.name, pane: .left)
+            primary = try RemoteSession.attachPaneCommand(host: host, endpoint: remoteTree.endpoint, daemon: left,
+                                                          session: remote.name, pane: .left, lead: attachment.leads.left)
             split = try byRole[.right].map {
                 try RemoteSession.attachPaneCommand(host: host, endpoint: remoteTree.endpoint, daemon: $0,
-                                                    session: remote.name, pane: .right)
+                                                    session: remote.name, pane: .right, lead: attachment.leads.right)
             }
         } catch {
             return ControlResponse(ok: false, error: "\(host) reported a session agterm cannot address")
@@ -81,7 +85,8 @@ enum LinuxRemoteSessions {
         // half-built row behind; ssh itself starts after insertion, as an ordinary pane on the held path
         return onMain(window: window) { controller in
             controller.insertRemoteSession(host: host, name: remote.name, primary: primary, split: split,
-                                           axis: remote.splitAxis.flatMap(SplitAxis.init(rawValue:)))
+                                           axis: remote.splitAxis.flatMap(SplitAxis.init(rawValue:)),
+                                           attachment: attachment)
         }
     }
 
@@ -134,7 +139,7 @@ enum LinuxRemoteSessions {
 extension AppController {
     /// Insert the attached session into this window's current workspace and focus it.
     func insertRemoteSession(host: String, name: String, primary: String, split: String?,
-                             axis: SplitAxis?) -> ControlResponse {
+                             axis: SplitAxis?, attachment: RemoteAttachment? = nil) -> ControlResponse {
         guard let workspace = store.currentWorkspaceID else {
             return ControlResponse(ok: false, error: "no window to attach into")
         }
@@ -149,6 +154,7 @@ extension AppController {
             created.splitCommandWait = true
             store.setSplitVisibility(created.id, shown: true, axis: axis ?? .leftRight)
         }
+        attachment?.record(on: created)
         reconcile()
         (created.splitFocused ? splitSurfaces[created.id] : surfaces[created.id])?.grabFocus()
         return ControlResponse(ok: true, result: ControlResult(id: created.id.uuidString))
@@ -184,5 +190,30 @@ extension AppController {
         } catch {
             return ControlResponse(ok: false, error: "the session list could not be built")
         }
+    }
+}
+
+/// What `zmx.attach` hands the new row: each pane's claiming attachment and what attaching it again takes.
+struct RemoteAttachment: Sendable {
+    let remoteSessionID: String
+    let presentationVersion: Int?
+    let left: String
+    let right: String?
+    let origin: RemoteBinding.Origin
+    let leads = (left: ZmxLeadAttachment(claim: true), right: ZmxLeadAttachment(claim: true))
+
+    @MainActor
+    func record(on session: Session) {
+        var daemons = [session.paneIdentity: left]
+        ZmxLeadBook.shared.begin(leads.left, pane: session.paneIdentity)
+        if let right, let local = session.splitPaneIdentity {
+            daemons[local] = right
+            ZmxLeadBook.shared.begin(leads.right, pane: local)
+        }
+        gRemoteAttachBindings = gRemoteAttachBindings.filter { id, _ in
+            gWindows.values.contains { $0.store.session(withID: id) != nil }
+        }
+        gRemoteAttachBindings[session.id] = RemoteBinding(remoteSessionID: remoteSessionID, daemonsByLocalPane: daemons,
+                                                          presentationVersion: presentationVersion, origin: origin)
     }
 }

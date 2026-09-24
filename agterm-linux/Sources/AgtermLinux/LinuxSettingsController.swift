@@ -50,6 +50,7 @@ extension AppController {
                 surface.queueRender()
             }
             controller.applyWindowThemeColors(for: activeTheme, resolvedColors: chromeColors)
+            if let title = GhosttyApp.shared.staticTitle { controller.applyStaticTitle(title) }
         }
         recordAppliedColorSchemeSide(side)
         return true

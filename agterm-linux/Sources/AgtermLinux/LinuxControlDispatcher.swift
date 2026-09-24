@@ -25,6 +25,11 @@ struct LinuxControlDispatcher {
             return dispatchSessionContext(request)
         case .sessionSwap:
             return dispatchSwapPanes(request)
+        case .sessionLead:
+            switch Self.parseSurfacePane(request.args?.pane) {
+            case .rejected(let response): return response
+            case .pane(let pane): return actions.takeSessionLead(request.target, window: request.args?.window, pane: pane)
+            }
         case .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom,
                 .surfaceCursor,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionOverlayOpen,

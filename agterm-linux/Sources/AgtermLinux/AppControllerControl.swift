@@ -31,8 +31,10 @@ extension AppController {
                 if searchSessionID == id { searchSurface?.endSearch() }
                 return ok(id)
             }   // close needs no counter
+            if let refusal = searchLeadRefusal(id, fallback: onScreenSurface(for: id)) { return refusal }
             selectSession(id, userInitiated: false)
             guard let owner = searchTargetSurface(for: id) else { return err("session not realized") }
+            if let refusal = searchLeadRefusal(id, fallback: owner) { return refusal }
             searchSurface = owner
             owner.startSearch()   // action fires inline -> search bar is shown synchronously
             let hasQuery = req.args?.text.map { !$0.isEmpty } ?? false
@@ -57,6 +59,7 @@ extension AppController {
                     usleep(3000)   // 3 ms; ~60 ms worst case
                 }
             }
+            if let refusal = coveredRefusal(owner) { return refusal }
             let display = searchDisplayText()
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString,
                                                                    text: display.isEmpty ? nil : display,

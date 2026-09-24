@@ -217,6 +217,9 @@ extension AppController {
             gtk_widget_set_vexpand(W(picture), 1)
             gtk_overlay_set_child(cell, W(picture))
             g_object_unref(RAW(paintable))
+            // the paintable draws the terminal alone, so the deck's cover never reaches the cell
+            LinuxPaneLeadCover.mount(on: cell, windowID: windowID, sessionID: member.session,
+                                     placement: .dashboard(member.surface == .split ? .right : .left))
             let sessionName = store.session(withID: member.session)?.displayName ?? "Session"
             let paneName = member.surface == .split ? "Right" : "Left"
             gtk_widget_set_tooltip_text(W(frame), "\(sessionName) · \(paneName)")

@@ -25,9 +25,11 @@ extension AppController {
     func paneLaunch(for session: Session, pane: StatusPane) -> LinuxPaneLaunch {
         let base = sessionEnv(for: session, pane: pane)
         let identity = pane == .right ? session.splitPaneIdentity : session.paneIdentity
+        // without the claim: a pane relaunched while another machine leads its daemon comes back covered
+        let lead = ZmxLeadAttachment(claim: false)
         let configuration = LinuxZmxLaunch.wrapsLocally(mode: gZmx.activeMode, session: session)
-            ? LinuxZmxLaunch.configuration(paneIdentity: identity,
-                                           pane: pane == .right ? "split" : "primary", environment: base)
+            ? LinuxZmxLaunch.configuration(paneIdentity: identity, pane: pane == .right ? "split" : "primary",
+                                           environment: base, lead: lead)
             : nil
         let disposition = LinuxZmxLaunch.disposition(requested: gZmx.requestedMode,
                                                      active: gZmx.activeMode, configuration: configuration)
@@ -39,6 +41,7 @@ extension AppController {
                                                         pane: pane, denylist: restoreDenylist()) else {
                 return plainLaunch(session: session, pane: pane, environment: base)
             }
+            if let identity { ZmxLeadBook.shared.begin(lead, pane: identity) }
             return LinuxPaneLaunch(command: seed.command, initialInput: seed.initialInput,
                                    waitAfterCommand: false, environment: configuration.environment,
                                    backedByZmx: true, paces: paces)

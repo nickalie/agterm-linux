@@ -24,27 +24,51 @@ enum LinuxProcessCapture {
     }
 
     /// Blocks the calling thread for up to `timeout` plus two `grace` periods. `arguments` starts with argv[0].
+    /// `input`, when given, is written to the child's stdin from a thread of its own and then closed.
     static func run(_ path: String, arguments: [String], environment: [String: String],
-                    timeout: TimeInterval, grace: TimeInterval) throws(Failure) -> Output {
-        let out = try pipePair()
-        let err: [Int32]
-        do {
-            err = try pipePair()
-        } catch {
-            out.forEach { close($0) }
-            throw error
+                    timeout: TimeInterval, grace: TimeInterval, input: Data? = nil) throws(Failure) -> Output {
+        var opened: [Int32] = []
+        func pair() throws(Failure) -> [Int32] {
+            do {
+                let fds = try pipePair()
+                opened += fds
+                return fds
+            } catch {
+                opened.forEach { close($0) }
+                throw error
+            }
         }
+        let out = try pair()
+        let err = try pair()
+        let inp = input == nil ? nil : try pair()
         let pid: pid_t
         do {
-            pid = try HookSpawn.spawn(path, arguments: arguments, environment: environment, stdin: nil,
+            pid = try HookSpawn.spawn(path, arguments: arguments, environment: environment, stdin: inp?[0],
                                       stdout: out[1], stderr: err[1])
         } catch {
-            (out + err).forEach { close($0) }
+            opened.forEach { close($0) }
             throw .launch((error as? LinuxHookProcessRunner.LaunchError)?.detail ?? "\(error)")
         }
         // EOF cannot arrive while the parent still holds the write ends
         close(out[1])
         close(err[1])
+        if let inp, let input {
+            close(inp[0])
+            let writeEnd = inp[1]
+            Thread.detachNewThread {
+                input.withUnsafeBytes { raw in
+                    guard let base = raw.baseAddress else { return }
+                    var offset = 0
+                    while offset < raw.count {
+                        let written = Glibc.write(writeEnd, base + offset, raw.count - offset)
+                        if written < 0, errno == EINTR { continue }
+                        if written <= 0 { break }
+                        offset += written
+                    }
+                }
+                close(writeEnd)
+            }
+        }
         let stdoutReader = PipeReader(fileDescriptor: out[0])
         let stderrReader = PipeReader(fileDescriptor: err[0])
         let exit = ExitWaiter(pid: pid)

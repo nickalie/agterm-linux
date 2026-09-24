@@ -43,13 +43,13 @@ enum LinuxZmxLaunch {
     }
 
     @MainActor
-    static func configuration(paneIdentity: UUID?, pane: String,
-                              environment base: [String: String]) -> ZmxSupport.Configuration? {
+    static func configuration(paneIdentity: UUID?, pane: String, environment base: [String: String],
+                              lead: ZmxLeadAttachment? = nil) -> ZmxSupport.Configuration? {
         guard let paneIdentity else {
             FileHandle.standardError.write(Data("agterm: no pane identity for the \(pane) pane; not wrapping\n".utf8))
             return nil
         }
-        switch configurationResult(paneIdentity: paneIdentity, baseEnvironment: base) {
+        switch configurationResult(paneIdentity: paneIdentity, baseEnvironment: base, lead: lead) {
         case .success(let configuration): return configuration
         case .failure(let reason):
             FileHandle.standardError.write(Data("agterm: zmx unavailable for the \(pane) pane: \(reason.message)\n".utf8))
@@ -97,7 +97,7 @@ enum LinuxZmxLaunch {
     }
 
     private static func configurationResult(
-        paneIdentity: UUID, baseEnvironment: [String: String],
+        paneIdentity: UUID, baseEnvironment: [String: String], lead: ZmxLeadAttachment? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         passwordDatabaseShell: String? = passwordDatabaseLoginShell()
     ) -> Result<ZmxSupport.Configuration, ZmxSupport.Rejection> {
@@ -111,7 +111,8 @@ enum LinuxZmxLaunch {
             stateDirectory: linuxStateDirectory().path,
             paneIdentity: paneIdentity,
             baseEnvironment: baseEnvironment,
-            inheritedZdotdir: environment["ZDOTDIR"]
+            inheritedZdotdir: environment["ZDOTDIR"],
+            lead: lead
         ))
     }
 }

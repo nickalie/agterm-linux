@@ -153,8 +153,26 @@ final class GhosttyApp: @unchecked Sendable {
         // `config-file` directives are silently ignored on Linux.
         ghostty_config_load_recursive_files(cfg)
         Self.forceUnsupportedShellFeaturesOff(cfg)
+        clearStaticTitle(cfg)
         ghostty_config_finalize(cfg)
         return cfg
+    }
+
+    /// The static `title` of the user's config, nil when unset. libghostty drops EVERY OSC title while that
+    /// key is set, the role reports a pane's zmx client sends as titles included, so the key is cleared in
+    /// every config build and agterm applies it instead: to a pane when it is built, in place of each title
+    /// a program sets, and on a reload.
+    private(set) var staticTitle: String?
+
+    private func clearStaticTitle(_ cfg: ghostty_config_t?) {
+        guard let cfg else { return }
+        let key = "title"
+        var value: UnsafePointer<CChar>?
+        let read = key.withCString { ghostty_config_get(cfg, &value, $0, UInt(key.utf8.count)) }
+        staticTitle = read ? value.map { String(cString: $0) }.flatMap { $0.isEmpty ? nil : $0 } : nil
+        guard staticTitle != nil, let path = Self.writeTempConf(["title ="]) else { return }
+        path.withCString { ghostty_config_load_file(cfg, $0) }
+        try? FileManager.default.removeItem(atPath: path)
     }
 
     /// Their ssh wrappers call a `ghostty` CLI the Linux payload does not carry, and enabling either broke
@@ -243,7 +261,14 @@ final class GhosttyApp: @unchecked Sendable {
                 return true
             case GHOSTTY_ACTION_SET_TITLE:
                 guard let w = Self.wrapper(fromTarget: target), let ptr = action.action.set_title.title else { return true }
-                w.applyTitle(String(cString: ptr))
+                let title = String(cString: ptr)
+                // the pane's zmx client reporting its role under the reserved prefix, never the pane's title.
+                // Deferred: taking the lead replaces this surface, which must not happen inside its callback.
+                if let notice = ZmxLeadNotice(title: title) {
+                    runOnMain { MainActor.assumeIsolated { w.reportLead(notice) } }
+                    return true
+                }
+                w.applyTitle(staticTitle ?? title)
                 return true
             case GHOSTTY_ACTION_PWD:
                 guard let w = Self.wrapper(fromTarget: target), let ptr = action.action.pwd.pwd else { return true }
@@ -251,7 +276,10 @@ final class GhosttyApp: @unchecked Sendable {
                 return true
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
                 guard let w = Self.wrapper(fromTarget: target) else { return false }
-                guard w.shouldCloseOnChildExitAction else { return false }
+                guard w.shouldCloseOnChildExitAction else {
+                    w.leadExitHeld()
+                    return false
+                }
                 guard let retained = w.surface.flatMap({ RetainedGhosttySurface(ghostty_surface_userdata($0)) }) else { return false }
                 runOnMain { MainActor.assumeIsolated {
                     retained.surface.handleProcessExit()
