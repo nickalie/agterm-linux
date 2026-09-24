@@ -69,7 +69,7 @@ final class LinuxHookController {
                                             home: FileManager.default.homeDirectoryForCurrentUser)
             },
             launcher: LinuxHookProcessRunner(socketProvider: {
-                gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath()
+                gControlServer.resolvedSocketPath
             }))
         controller.observe(library)
         controller.reload()

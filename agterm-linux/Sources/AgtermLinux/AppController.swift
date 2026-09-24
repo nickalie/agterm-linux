@@ -557,7 +557,7 @@ final class AppController {
     /// names the window it is drawn over.
     private func quickTerminalEnvironment() -> [String: String] {
         var env = SurfaceEnvironment.quickTerminal(
-            socketPath: gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath(),
+            socketPath: gControlServer.resolvedSocketPath,
             programVersion: LinuxAppMetadata.version)
         env["AGTERM_WINDOW_ID"] = windowID.uuidString
         return env

@@ -16,11 +16,26 @@ final class ControlServer: @unchecked Sendable {
     private static let maxLine = 1 << 20
     private static let readTimeoutMS: Int32 = 5_000
 
-    /// The socket path once actually bound (nil before bind / after a bind failure), so a spawned
-    /// shell's `AGTERM_SOCKET` only advertises a socket that exists. Mirrors macOS `boundSocketPath`.
+    /// The held `<path>.lock` fd, or -1 when this process does not own `path`.
+    private var lockFD: Int32 = -1
+    /// Set while another live instance owns `path`, so this one never serves it.
+    private(set) var refused = false
+
+    /// The socket path once actually bound (nil before bind / after a bind failure).
     var boundSocketPath: String? { listenFD >= 0 ? path : nil }
 
-    init() { path = Self.defaultSocketPath() }
+    static let unavailableSuffix = ".unavailable"
+
+    /// What spawned shells get as `AGTERM_SOCKET`: macOS `resolvedSocketPath`, which owns the contract.
+    /// A refused instance advertises a path nothing creates, so its shells cannot reach the owner.
+    var resolvedSocketPath: String { refused ? path + Self.unavailableSuffix : path }
+
+    /// Ownership is settled here, not in `start()`, as on macOS: a shell spawned before the bind must
+    /// already see the right `AGTERM_SOCKET`.
+    init(path: String = ControlServer.defaultSocketPath()) {
+        self.path = path
+        _ = acquireOwnership()
+    }
 
     static func defaultSocketPath() -> String {
         ControlResolve.socketPath(stateDir: ProcessInfo.processInfo.environment["AGTERM_STATE_DIR"],
@@ -28,10 +43,14 @@ final class ControlServer: @unchecked Sendable {
     }
 
     func start() {
+        guard listenFD < 0 else { return }
         signal(SIGPIPE, SIG_IGN)
+        guard path.utf8.count < 104 else { return }
+        // every failure below keeps the lock, as on macOS: releasing it would let another instance bind
+        // the path this one still advertises
+        guard lockFD >= 0 || acquireOwnership() else { return }
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
         guard fd >= 0 else { return }
-        guard path.utf8.count < 104 else { close(fd); return }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -54,6 +73,37 @@ final class ControlServer: @unchecked Sendable {
         listenFD = fd
         Thread.detachNewThread { [self] in acceptLoop(fd) }
         FileHandle.standardError.write(Data("agterm: control socket at \(path)\n".utf8))
+    }
+
+    func stop() {
+        defer { releaseOwnership() }
+        guard listenFD >= 0 else { return }
+        close(listenFD)
+        listenFD = -1
+        unlink(path)
+    }
+
+    private func acquireOwnership() -> Bool {
+        let lockPath = ControlResolve.ownershipLockPath(forSocket: path)
+        let fd = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return false }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd)
+            refused = true
+            FileHandle.standardError.write(
+                Data("agterm: control socket \(path) is already served by another instance — not binding\n".utf8))
+            return false
+        }
+        lockFD = fd
+        refused = false
+        return true
+    }
+
+    /// The lock FILE stays: unlinking it would let the next instance lock a fresh inode, excluding nobody.
+    private func releaseOwnership() {
+        guard lockFD >= 0 else { return }
+        close(lockFD)
+        lockFD = -1
     }
 
     private func acceptLoop(_ fd: Int32) {

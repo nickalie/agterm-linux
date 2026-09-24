@@ -45,7 +45,7 @@ extension AppController {
     func sessionEnv(for s: Session, pane: StatusPane? = nil) -> [String: String] {
         SurfaceEnvironment.session(sessionID: s.id, windowID: windowID,
                                    workspaceID: store.workspace(forSession: s.id)?.id,
-                                   socketPath: gControlServer.boundSocketPath ?? ControlServer.defaultSocketPath(),
+                                   socketPath: gControlServer.resolvedSocketPath,
                                    programVersion: LinuxAppMetadata.version, pane: pane,
                                    paneToken: pane == nil ? nil : UUID().uuidString)
     }

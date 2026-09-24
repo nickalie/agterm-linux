@@ -72,7 +72,7 @@ extension AppController {
                                      windowName: gLibrary.windows.first(where: { $0.id == windowID })?.name ?? "",
                                      pane: pane, paneID: s?.paneToken(for: pane) ?? "",
                                      selection: selectionSurface?.readSelection() ?? "",
-                                     socket: gControlServer.boundSocketPath ?? "")
+                                     socket: gControlServer.resolvedSocketPath)
         let controllerOrigin = customCommandOrigin
         let launcher = controllerOrigin.launcher
         // every spawn path counts, so the popover's most-used section sees chord and palette runs too
