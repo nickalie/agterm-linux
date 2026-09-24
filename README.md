@@ -563,6 +563,7 @@ Use `--allow-custom` to accept a query that does not match an item, `--window` t
 Typing matches item labels only; a subtitle is shown but never searched, so consequence text on one row cannot filter out its safer neighbour.
 An empty query lists the items in the order they were supplied, so the caller's first item is the one Return runs on open.
 `--query TEXT` prefills the field and filters immediately, which ranks by match score and therefore does not preserve that supplied order.
+`--select ID` opens the picker with that item highlighted and scrolled into view, so Return on an untouched list keeps the current choice; an id naming no supplied item refuses the open, and a `--query` that hides it leaves the first visible row highlighted.
 With `--allow-custom` the item list may be empty, which turns the picker into a plain text prompt: the custom row appears as soon as the query is nonblank, whether prefilled by `--query` or typed.
 An itemless call still reads stdin, so redirect it (`< /dev/null`) or it blocks.
 
@@ -570,6 +571,8 @@ An itemless call still reads stdin, so redirect it (`< /dev/null`) or it blocks.
 printf '%s\n' staging production | agtermctl pick --prompt "Deploy where?"
 
 agtermctl pick --allow-custom --query "$name" --prompt "Rename to" < /dev/null
+
+printf '%s\n' dev staging prod | agtermctl pick --select staging --prompt "Target"
 
 pick_id=$(printf '%s\n' alpha beta | agtermctl pick --no-block | jq -r '.id')
 agtermctl pick result "$pick_id"      # bare JSON result; exit 1 while pending, 2 when cancelled

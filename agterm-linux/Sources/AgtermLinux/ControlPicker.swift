@@ -6,6 +6,21 @@ struct LinuxControlPickRow {
     let item: ControlPickItem?
     let originalIndex: Int?
     let customQuery: String?
+
+    /// The row `pick --select` opens on: the item's index in the FIRST filtered list, nil when a `--query`
+    /// prefill hid it, which leaves the first visible row highlighted.
+    static func seededIndex(selection: String?, in rows: [LinuxControlPickRow]) -> Int? {
+        guard let selection else { return nil }
+        return rows.firstIndex { $0.item?.id == selection }
+    }
+}
+
+/// The row a seeded pick scrolls to once the list has been laid out.
+final class ControlPickScrollContext {
+    let index: Int
+    var frames = 0
+
+    init(index: Int) { self.index = index }
 }
 
 @MainActor
@@ -139,6 +154,14 @@ extension AppController {
             seeded.withCString { gtk_editable_set_text(entry, $0) }
         }
         filterControlPick(seeded)
+        if let index = LinuxControlPickRow.seededIndex(selection: pick.selection, in: controlPickRows),
+           let row = gtk_list_box_get_row_at_index(list, Int32(index)) {
+            gtk_list_box_select_row(list, row)
+            // the rows have no allocation until the window's first layout, so the scroll waits for it
+            _ = gtk_widget_add_tick_callback(W(list), onControlPickScrollTick,
+                                             Unmanaged.passRetained(ControlPickScrollContext(index: index)).toOpaque(),
+                                             releaseControlPickScrollContext)
+        }
         gtk_window_present(WIN(win))
         _ = gtk_widget_grab_focus(W(entry))
     }
@@ -282,6 +305,27 @@ extension AppController {
             self?.focusedSurface()?.grabFocus()
         }
     }
+}
+
+private let onControlPickScrollTick: @MainActor @convention(c)
+    (UnsafeMutablePointer<GtkWidget>?, OpaquePointer?, gpointer?) -> gboolean = { widget, _, data in
+        guard let widget, let data else { return 0 }
+        return MainActor.assumeIsolated {
+            let context = Unmanaged<ControlPickScrollContext>.fromOpaque(data).takeUnretainedValue()
+            let list = OpaquePointer(widget)
+            guard let row = gtk_list_box_get_row_at_index(list, Int32(context.index)) else { return 0 }
+            guard gtk_widget_get_height(W(OpaquePointer(row))) > 0 else {
+                context.frames += 1
+                return context.frames < 120 ? 1 : 0
+            }
+            controllerForWidget(list)?.scrollListBoxRowIntoView(list, toIndex: context.index)
+            return 0
+        }
+    }
+
+private let releaseControlPickScrollContext: GDestroyNotify = { data in
+    guard let data else { return }
+    Unmanaged<ControlPickScrollContext>.fromOpaque(data).release()
 }
 
 private let onControlPickSearch: @MainActor @convention(c)
