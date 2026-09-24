@@ -97,6 +97,13 @@ s=$(agtermctl zmx tree studio.local --json |
 The row is marked remote and carries `remoteHost` in the tree. Closing it ends only this side's connection,
 and it does not come back after a relaunch.
 
+Status, context, `notify` and HUD calls made by a program inside that session show on both Macs. Check the
+mirroring stream, which needs `agtermctl` on the far side's ssh PATH:
+
+```sh
+agtermctl tree --json | jq '.. | objects | select(.remoteHost) | {name, presentation}'
+```
+
 ## Read or change the local restore policy
 
 This is about THIS instance, not a remote one: `zmx attach` requires nothing of the local restore mode.
@@ -428,7 +435,8 @@ Outside agterm (`AGTERM_ENABLED` unset) there is no overlay — fall back to `op
 
 A persistent backdrop behind the terminal grid (distinct from `show-image.sh`, which is a transient
 overlay). An image or rasterized-text watermark (auto-fitting the window, re-fitting on resize), or a
-solid terminal background color — per session, surviving a relaunch.
+solid terminal background color — per session, or per pane with `--pane`. The session default and left/right
+pane labels survive a relaunch; a scratch label ends with its scratch terminal.
 
 ```bash
 # rasterized text watermark on this session, faint
@@ -442,6 +450,11 @@ agtermctl session background color '#3a0d0d' --target "$AGTERM_SESSION_ID"
 
 # remove it
 agtermctl session background clear --target "$AGTERM_SESSION_ID"
+
+# label each agent of a two-agent split; a pane override wins over the session default
+agtermctl session background text "DRIVER" --opacity 0.12 --pane left --target "$AGTERM_SESSION_ID"
+agtermctl session background text "PEER" --opacity 0.12 --pane right --target "$AGTERM_SESSION_ID"
+agtermctl session background clear --pane right --target "$AGTERM_SESSION_ID"   # back to the default
 ```
 
 `--opacity` is 0.0–1.0; `--fit` is `contain` (default) / `cover` / `stretch` / `none`; `--position` is
@@ -476,13 +489,16 @@ agtermctl tree --json | jq '.result.tree.quickVisible'  # is it open right now?
 
 ## Flag a working set and view just the flagged sessions
 
-Flag a few sessions across workspaces, then flip the sidebar to the flat flagged list (each row labeled
-`session : workspace`). The flag is durable (persisted per session); `sidebar mode` is per-window.
+Flag a few sessions across workspaces, then flip the sidebar to the flagged view: one flat list with each
+row labeled `session : workspace`, or, under the tree layout, the flagged sessions nested under their
+workspace rows. The flag is durable (persisted per session); `sidebar mode` is per-window; the layout is
+app-wide.
 
 ```bash
 agtermctl session flag on --target "$AGTERM_SESSION_ID"   # flag this session
 agtermctl session flag on --target a1b2                   # flag another (any workspace)
 agtermctl sidebar mode flagged                            # show only the flagged sessions
+agtermctl sidebar flagged-layout tree                     # nest them under workspace rows, in every window
 agtermctl session go --to next                            # in flagged mode, nav steps the flagged set only
 agtermctl sidebar mode tree                               # back to the full tree
 agtermctl session flag clear                              # unflag everything in the window
@@ -542,8 +558,9 @@ member with the whole tree still on screen and applied ONCE with `workspace filt
 filter off` suspends it WITHOUT losing the set, so peeking at everything and coming back costs one call
 each way. Membership reads back per workspace as `focused`, the flag as the tree-level
 `workspaceFilter`, and a workspace row renders iff
-`sidebarVisible && sidebarMode == "tree" && (!workspaceFilter || focused)` — no workspace row renders at
-all with the sidebar hidden or in `flagged` mode (that view is a flat flagged-session list); in `tree`
+`sidebarVisible && ((sidebarMode == "tree" && (!workspaceFilter || focused)) || (sidebarMode == "flagged" &&
+sidebarFlaggedLayout == "tree" && one of its sessions is flagged))` — no workspace row renders at
+all with the sidebar hidden or under the flat flagged list, and the flagged tree ignores the filter; in `tree`
 mode with the filter off the whole tree is on screen regardless of membership, and only with the filter
 on does visibility narrow to the members. `filter on` with nothing marked is refused, so an applied
 filter always has a visible member and the pair can never disagree with what is on screen.
@@ -574,7 +591,8 @@ if [ "$was" = "true" ]; then agtermctl workspace filter on; fi
 
 Open every workspace at once, or collapse all but the current one (the same resolution as
 `--target active`, which stays expanded and scrolled into view) to cut clutter. Defaults to the frontmost window; pass
-`--window` to target any open window. A no-op in flagged mode.
+`--window` to target any open window. A no-op under the flat flagged list. In either tree layout both
+apply to all workspaces, including those the view omits.
 
 ```bash
 agtermctl sidebar expand                                 # expand every workspace (frontmost window)
@@ -1029,6 +1047,33 @@ shared with `session overlay open`, which means a second `session hud` replaces 
 `session overlay open` replaces a HUD, and `session overlay result` over one errors
 `no overlay result: the slot holds a hud`. A HUD over
 a RUNNING program is refused instead: a message is replaceable, a program is not.
+
+### Keep a status board in a HUD
+
+A controller agent driving worker sessions can keep a short status board in a corner of its own session
+instead of printing it into its chat. Write the board to a file and post it with `--markdown`; `--font-size`
+keeps it small, and a later `update` replaces it in place:
+
+```bash
+cat > /tmp/status.md <<'EOF'
+## Workers
+- **api** refactor: tests green
+- **web** login page: waiting on review
+- **infra** migration: *blocked*, needs a token
+EOF
+
+agtermctl session hud --file /tmp/status.md --markdown --font-size 11 --position top-right \
+  --target "$AGTERM_SESSION_ID"
+
+# after rewriting the file
+agtermctl session hud update --file /tmp/status.md --markdown --position top-right \
+  --target "$AGTERM_SESSION_ID"
+```
+
+An update replaces the whole spec, so repeat `--markdown` and `--position`; the font stays what the panel
+opened with. A single newline inside a paragraph is a space, so keep entries as list items or end a line with
+two spaces. A board taller than the panel is clipped, its excess rows giving way to a dim `… N more`. The
+file is read once per command; nothing watches it, so push each change with an `update`.
 
 ## Navigate and manage windows
 

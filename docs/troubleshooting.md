@@ -126,7 +126,7 @@ Work down this list:
 1. **Read the diagnostics.** Open Settings ▸ Key Mapping. A malformed `command` line is listed there and skipped.
 2. **Chord conflict.** If your chord collides with a built-in shortcut or with another custom command, the binding is dropped and the command becomes palette-only. It still runs from the action palette (`⌃⇧P`), where it is listed with a `custom` tag. Pick a free chord, or run it from the palette.
 3. **Reserved chords.** `ctrl+tab` / `ctrl+shift+tab` (the session switcher), `ctrl+1` / `ctrl+2` (pane focus), and Linux `ctrl+,` (Preferences) are reserved and cannot be bound.
-4. **Modifier-less keys are rejected.** A custom chord needs at least one modifier so it cannot shadow a plain terminal key. `command "x" g …` is palette-only; `command "x" cmd+g …` binds.
+4. **Check the first chord.** A custom shortcut must start with a modifier or a function key (`f1` through `f20`). `command "x" g …` is palette-only; `command "x" cmd+g …` and `command "x" f5 …` bind.
 5. **Focus.** A custom chord fires only while a terminal pane holds keyboard focus. When the sidebar, the inline rename field, a Settings field, or a palette has focus, the chord passes through. Click into the terminal first.
 6. **The command runs in a plain `/bin/sh -c`, not your login shell.** It does not load `~/.zshrc` or `~/.bashrc`, so shell aliases and functions are not available and `PATH` may be shorter than in your terminal. Use absolute paths, or wrap the body in `$SHELL -lc '…'`.
 7. **Exit status.** A non-zero exit posts a failure banner with the code. No banner and no effect usually means the chord never fired (causes above). A banner means it ran and failed, which points at the command itself, its `PATH`, or its arguments.
@@ -156,7 +156,7 @@ A reload applies most keys to your open terminals right away — colors, theme, 
 - **Layout keys** — `window-padding-x`, `window-padding-y`, and other size-affecting keys — do not re-apply to an open pane. libghostty re-derives a surface's padding only when it is first laid out, so a reload (and even resizing the window) leaves existing panes on their old padding. Open a new session or new window to pick up the change; the panes that were already open need a relaunch.
 - **Spawn-time keys** — `term` and `shell-integration-features` — are read once when the shell starts, so a reload cannot change them for a shell that is already running. Open a new session, whose shell is spawned fresh, to apply them.
 
-The full ghostty key reference is at <https://ghostty.org/docs/config>. One pair of values in it does not apply to agterm: the `ssh-env` and `ssh-terminfo` values of `shell-integration-features`. Ghostty implements both by replacing your `ssh` with a wrapper that calls the `ghostty` command-line tool absent from agterm's bundle, so in agterm the wrapper would fail on every connection. agterm forces those two values back off and keeps the rest of your `shell-integration-features` flags, so `ssh` stays the real `ssh`. If you need agterm's terminfo entry on a remote host, install it there once with `infocmp -x xterm-ghostty | ssh <host> 'tic -x -'`.
+The full ghostty key reference is at <https://ghostty.org/docs/config>. One pair of values in it does not apply to agterm: the `ssh-env` and `ssh-terminfo` values of `shell-integration-features`. Ghostty implements both by replacing your `ssh` with a wrapper that calls the `ghostty` command-line tool absent from agterm's bundle, so in agterm the wrapper would fail on every connection. agterm forces those two values back off and keeps the rest of your `shell-integration-features` flags, so `ssh` stays the real `ssh`. If you need agterm's terminfo entry on a remote host, install it there once with `agtermctl terminfo install <host>`, which dumps the bundled entry and compiles it into that account's `~/.terminfo` over one interactive ssh connection; `-p`, `-i`, `-J` and `-F` are passed through, other connection settings belong in `~/.ssh/config` under a host alias, and the settings that decide how the command runs (no pty, stdin kept, no `RemoteCommand`) are the installer's own.
 
 ## Copy/paste and shortcuts on a non-Latin or alternative layout
 
@@ -337,6 +337,29 @@ To tell a privacy denial from ordinary permission bits, run `/bin/ls -la ~/Downl
 against the folder itself, rather than a replacement such as `eza`. A privacy denial usually reads as
 `Operation not permitted` and ordinary permission bits as `Permission denied`, and some replacements print
 the same wording for both.
+
+## An Accessibility permission you granted stops working after an update
+
+A tool that needs Accessibility is denied in a session, while agterm's toggle in System Settings ▸ Privacy
+& Security ▸ Accessibility still shows it enabled. It can follow an update, or granting the permission to a
+copy you built yourself.
+
+macOS stores each grant with a code requirement the app must satisfy. When agterm was granted while signed
+ad-hoc, that requirement is a bare code hash, so the grant is frozen to that one build; a different build,
+or an installed release, has another hash and no longer satisfies it. The row stays and the toggle stays
+on, but macOS matches the running app against the stored requirement, finds no match, and denies it with
+nothing pointing at the cause. A grant made against the Developer-ID release stores its signing identity
+instead, which later releases keep satisfying.
+
+To recover the Accessibility grant, remove the stale row and grant the installed release fresh:
+
+```
+tccutil reset Accessibility com.umputun.agterm
+```
+
+Then open System Settings ▸ Privacy & Security ▸ Accessibility, remove any lingering agterm entry with the
+minus button, add `/Applications/agterm.app` with the plus button, and switch it on. Grant the release you
+run, so the stored requirement is its Developer-ID signature and later updates satisfy the same requirement.
 
 ## "agterm would like to access data from other apps" keeps coming back
 

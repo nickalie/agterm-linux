@@ -41,7 +41,13 @@ final class GhosttyCallbacks: @unchecked Sendable {
             // OSC 0/1/2 title, often from PROMPT_COMMAND or SSH; displayName prefers it to the cwd basename.
             guard let view = surfaceView(from: target), let ptr = action.action.set_title.title else { return true }
             let title = String(cString: ptr)
-            DispatchQueue.main.async { view.applyTitle(title) }
+            // the pane's zmx client reporting its role under the reserved prefix, never the pane's title
+            if let notice = ZmxLeadNotice(title: title) {
+                DispatchQueue.main.async { PaneLead.report(notice, from: view) }
+                return true
+            }
+            // a static `title` in the user's config stands in for every title a program sets
+            DispatchQueue.main.async { view.applyTitle(GhosttyApp.shared.staticTitle ?? title) }
             return true
         case GHOSTTY_ACTION_CELL_SIZE:
             // the cell pixel size changed (cmd +/- font size, or DPI): a trigger only — the view reads the
@@ -61,7 +67,11 @@ final class GhosttyCallbacks: @unchecked Sendable {
             // ghostty prints its "Process exited. Press any key to close" fallback unless the host consumes
             // this action: an overlay that should vanish returns true to suppress the prompt; a wait-opt-in
             // overlay (and every other surface) returns false, so the prompt shows and close_surface_cb closes.
-            guard let view = surfaceView(from: target), view.shouldCloseOnChildExitAction else { return false }
+            guard let view = surfaceView(from: target) else { return false }
+            guard view.shouldCloseOnChildExitAction else {
+                DispatchQueue.main.async { view.onExitHeld?() }
+                return false
+            }
             DispatchQueue.main.async { view.handleProcessExit() }
             return true
         case GHOSTTY_ACTION_START_SEARCH:

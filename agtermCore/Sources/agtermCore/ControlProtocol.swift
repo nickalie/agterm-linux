@@ -31,6 +31,7 @@ public enum Command: String, Codable, Sendable {
     case sessionSplit = "session.split"
     case sessionSplitClose = "session.split.close"
     case sessionSwap = "session.swap"
+    case sessionLead = "session.lead"
     case sessionScratch = "session.scratch"
     case sessionFocus = "session.focus"
     case sessionResize = "session.resize"
@@ -56,6 +57,7 @@ public enum Command: String, Codable, Sendable {
     case quickText = "quick.text"
     case sidebar
     case sidebarMode = "sidebar.mode"
+    case sidebarFlaggedLayout = "sidebar.flagged-layout"
     case sidebarExpand = "sidebar.expand"
     case sidebarCollapse = "sidebar.collapse"
     case sidebarWidth = "sidebar.width"
@@ -77,6 +79,8 @@ public enum Command: String, Codable, Sendable {
     case windowMinimize = "window.minimize"
     case keymapReload = "keymap.reload"
     case keymapList = "keymap.list"
+    case hooksReload = "hooks.reload"
+    case hooksList = "hooks.list"
     case configReload = "config.reload"
     case themeSet = "theme.set"
     case themeList = "theme.list"
@@ -96,6 +100,9 @@ public enum Command: String, Codable, Sendable {
     case zmxReset = "zmx.reset"
     case zmxTree = "zmx.tree"
     case zmxAttach = "zmx.attach"
+    case zmxPresent = "zmx.present"
+    /// A viewer's helper claiming a remote overlay job; after an ok reply the connection carries job frames.
+    case sessionOverlayJobRun = "session.overlay.job.run"
     /// UI-TEST-ONLY: forces the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
     /// simulate a macOS light/dark flip; with NO name it READS the side the last config feed applied, so a
     /// test can assert the flip drove the reload. Refused outside an XCUITest launch, and EXEMPT from the
@@ -149,6 +156,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var select: Bool?
     /// Mode for `session.split` (`on|off|toggle`), `quick`/`surface.zoom` (`show|hide|toggle`),
     /// `session.flag` (`on|off|toggle|clear`), `sidebar.mode` (`tree|flagged|toggle`),
+    /// `sidebar.flagged-layout` (`flat|tree|toggle`),
     /// `workspace.focus` (`on|off|toggle|add`), `workspace.filter`/`window.minimize` (`on|off|toggle`),
     /// `session.background` (`image|text|color|clear`), `session.restore` (`set|none|clear` — pin
     /// `command`, pin nothing, or drop the pin), and `session.context` (`set|clear`).
@@ -278,6 +286,13 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// style or nothing and the dispatcher has one thing to validate.
     /// The box reserves the glyph's cells either way, so toggling it cannot rewrap the message.
     public var spinner: String?
+    /// Seconds after which a HUD takes itself down, for `session.hud.open`/`.update`; nil/omitted or 0 leaves
+    /// it up until something closes it. Each successful open or update restarts the interval, so an update
+    /// that omits it cancels the previous one, exactly as omitting `detail` drops the second line.
+    public var hideAfter: Double?
+    /// markdown renders the HUD message as markdown for `session.hud.open`/`.update`; nil/omitted is plain.
+    /// An update omitting it returns the panel to plain text, the whole spec being replaced.
+    public var markdown: Bool?
     /// The finished caller-provided choices for `pick.open`.
     public var items: [ControlPickItem]?
     /// Optional placeholder text for `pick.open`'s query field.
@@ -286,6 +301,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var query: String?
     /// Whether `pick.open` accepts the current query as a custom result.
     public var allowCustom: Bool?
+    /// The item id `pick.open` highlights on open; distinct from `select`, the Bool behind
+    /// `session.type --select`.
+    public var selection: String?
     /// buttons are the caller-ordered choices for ask.open.
     public var buttons: [ControlAskButton]?
     /// defaultButton identifies the initially highlighted ask button.
@@ -332,7 +350,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// exclusive with targets (the ids to open) and with the font flags — closing takes no other argument.
     public var close: Bool?
     /// The absolute cell font size in points for `dashboard` (the CLI's `--font-size`); must be positive.
-    /// Mutually exclusive with `autoSize`.
+    /// Mutually exclusive with `autoSize`. Also the HUD panel's point size for `session.hud.open`, nil to
+    /// inherit the session's, within `HudSpec.fontSizeRange`; `session.hud.update` rejects it because the
+    /// surface reads it once at creation.
     public var fontSize: Double?
     /// For `dashboard`, size the cells RELATIVE to the Settings default font size, shrinking as the grid
     /// grows so dense grids stay readable (the CLI's `--auto-size`). Mutually exclusive with `fontSize`.
@@ -350,8 +370,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 text: String? = nil, select: Bool? = nil, mode: String? = nil, axis: String? = nil,
                 command: String? = nil, wait: Bool? = nil, sizePercent: Int? = nil, full: Bool? = nil,
                 follow: Bool? = nil, message: String? = nil, detail: String? = nil, spinner: String? = nil,
+                hideAfter: Double? = nil, markdown: Bool? = nil,
                 items: [ControlPickItem]? = nil, prompt: String? = nil,
-                query: String? = nil, allowCustom: Bool? = nil,
+                query: String? = nil, allowCustom: Bool? = nil, selection: String? = nil,
                 buttons: [ControlAskButton]? = nil, defaultButton: String? = nil,
                 destructiveButton: String? = nil, style: String? = nil, align: String? = nil, window: String? = nil,
                 pane: String? = nil, paneID: String? = nil, to: String? = nil,
@@ -389,10 +410,13 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.message = message
         self.detail = detail
         self.spinner = spinner
+        self.hideAfter = hideAfter
+        self.markdown = markdown
         self.items = items
         self.prompt = prompt
         self.query = query
         self.allowCustom = allowCustom
+        self.selection = selection
         self.buttons = buttons
         self.defaultButton = defaultButton
         self.style = style
@@ -508,6 +532,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var events: ControlEventBatch?
     /// The resolved keymap plus the live menu key equivalents, for `keymap.list`.
     public var keymap: ControlKeymap?
+    /// The hook definitions and their live state, for `hooks.list`.
+    public var hooks: ControlHooks?
     /// The current or terminal picker outcome for `pick.result`.
     public var pick: ControlPickResult?
     /// ask is the current or terminal dialog outcome for ask.result.
@@ -532,7 +558,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
                 sidebarWidth: Double? = nil, pane: String? = nil,
                 sync: Bool? = nil, light: String? = nil, dark: String? = nil,
-                events: ControlEventBatch? = nil, keymap: ControlKeymap? = nil,
+                events: ControlEventBatch? = nil, keymap: ControlKeymap? = nil, hooks: ControlHooks? = nil,
                 pick: ControlPickResult? = nil, ask: ControlAskResult? = nil, cursor: ControlCursor? = nil,
                 app: AppIdentity? = nil, restore: ControlRestoreStatus? = nil,
                 zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil,
@@ -561,6 +587,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.dark = dark
         self.events = events
         self.keymap = keymap
+        self.hooks = hooks
         self.pick = pick
         self.ask = ask
         self.cursor = cursor
@@ -573,6 +600,14 @@ public struct ControlResult: Codable, Sendable, Equatable {
 public enum OverlayResultError {
     public static let stillRunning = "overlay still running"
     public static let noResult = "no overlay result"
+    /// An overlay a viewer showed that ended without an exit code: `launch-failed`, `canceled`, `unknown`.
+    public static func ended(_ outcome: String) -> String { "overlay ended: \(outcome)" }
+    /// The overlay runs on another Mac's surface, so this Mac has nothing to read or copy.
+    public static let shownElsewhere = "overlay is shown on another Mac"
+    /// The stream the overlay was handed to is gone, so nothing can reach the surface to resize it.
+    public static let viewerGone = "the viewer showing this overlay is gone"
+    /// The command and its environment exceed what the helper reads in one frame.
+    public static let tooLarge = "overlay command too large to show on another Mac"
 }
 
 /// Error strings for `session.overlay.*` aimed at a session whose overlay slot holds a HUD. The slot is

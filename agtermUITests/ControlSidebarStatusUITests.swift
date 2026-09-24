@@ -95,6 +95,38 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
         XCTAssertTrue((bad["error"] as? String ?? "").contains("invalid sidebar mode"), "should report invalid mode: \(bad)")
     }
 
+    func testFlaggedLayoutCommandSwitchesTheRenderedRowsAndReadsBack() throws {
+        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 10), "seeded session row")
+        let seeded = try sendCommand(#"{"cmd":"tree"}"#)
+        let seededTree = try XCTUnwrap((seeded["result"] as? [String: Any])?["tree"] as? [String: Any])
+        XCTAssertEqual(seededTree["sidebarFlaggedLayout"] as? String, "flat", "the layout reads back under the ordinary tree")
+        let ws = try XCTUnwrap((seededTree["workspaces"] as? [[String: Any]])?.first, "should have a workspace")
+        let seededID = try XCTUnwrap((ws["sessions"] as? [[String: Any]])?.first?["id"] as? String)
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.rename","target":"\#(seededID)","args":{"name":"flagme"}}"#)["ok"] as? Bool, true)
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.flag","target":"\#(seededID)","args":{"mode":"on"}}"#)["ok"] as? Bool, true)
+        XCTAssertEqual(try sendCommand(#"{"cmd":"sidebar.mode","args":{"mode":"flagged"}}"#)["ok"] as? Bool, true)
+        XCTAssertTrue(sessionRowValueExists(containing: "flagme : workspace 1"), "the flat list labels the row with its workspace")
+        XCTAssertFalse(app.staticTexts["workspace 1"].exists, "the flat list has no workspace row")
+
+        let toTree = try sendCommand(#"{"cmd":"sidebar.flagged-layout","args":{"mode":"tree"}}"#)
+        XCTAssertEqual(toTree["ok"] as? Bool, true, "sidebar.flagged-layout tree should succeed: \(toTree)")
+        XCTAssertEqual((toTree["result"] as? [String: Any])?["text"] as? String, "tree", "the command echoes the resulting layout")
+        XCTAssertTrue(app.staticTexts["workspace 1"].waitForExistence(timeout: 10), "the tree layout renders the workspace row")
+        XCTAssertTrue(sessionRowValueExists(containing: "flagme"), "the flagged session stays under it")
+        XCTAssertFalse(sessionRowValueExists(containing: "flagme : workspace 1"), "the tree layout drops the workspace suffix")
+        let after = try sendCommand(#"{"cmd":"tree"}"#)
+        let afterTree = try XCTUnwrap((after["result"] as? [String: Any])?["tree"] as? [String: Any])
+        XCTAssertEqual(afterTree["sidebarFlaggedLayout"] as? String, "tree")
+
+        let toggled = try sendCommand(#"{"cmd":"sidebar.flagged-layout"}"#)
+        XCTAssertEqual((toggled["result"] as? [String: Any])?["text"] as? String, "flat", "a bare command toggles")
+        XCTAssertTrue(app.staticTexts["workspace 1"].waitForNonExistence(timeout: 10), "back to the flat list")
+
+        let bad = try sendCommand(#"{"cmd":"sidebar.flagged-layout","args":{"mode":"grid"}}"#)
+        XCTAssertEqual(bad["ok"] as? Bool, false, "an invalid layout should error: \(bad)")
+        XCTAssertTrue((bad["error"] as? String ?? "").contains("invalid flagged layout"), "should report the invalid layout: \(bad)")
+    }
+
     // orthogonal to the flagged view: the flat list ignores the marked set entirely.
     func testWorkspaceFocusHidesOtherWorkspaces() throws {
         XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 10), "seeded session row")
@@ -613,7 +645,7 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
         XCTAssertNil(node["statusShape"], "a status set without --shape should clear the shape read-back")
     }
 
-    func testSessionStatusChangedAtRefreshesOnEveryNonIdleSetAndClearsOnIdle() throws {
+    func testSessionStatusChangedAtRefreshesOnEverySetIncludingIdle() throws {
         let seeded = try activeSessionID()
 
         let first = try sendCommand(#"{"cmd":"session.status","target":"\#(seeded)","args":{"status":"active"}}"#)
@@ -622,9 +654,6 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
         let stamped = try XCTUnwrap(node["statusChangedAt"] as? Double,
                                     "a non-idle status should stamp the change time: \(node)")
 
-        // the stock hooks re-push `active` on every tool event, so an unchanged status must still move the
-        // stamp — that is what makes "now minus statusChangedAt" the agent's liveness rather than its last
-        // state change.
         let again = try sendCommand(#"{"cmd":"session.status","target":"\#(seeded)","args":{"status":"active"}}"#)
         XCTAssertEqual(again["ok"] as? Bool, true, "re-pushing the same status should succeed: \(again)")
         node = try sessionNode(id: seeded)
@@ -636,7 +665,15 @@ final class ControlSidebarStatusUITests: ControlAPITestCase {
         XCTAssertEqual(cleared["ok"] as? Bool, true, "session.status idle should succeed: \(cleared)")
         node = try sessionNode(id: seeded)
         XCTAssertNil(node["status"], "idle should clear the status read-back")
-        XCTAssertNil(node["statusChangedAt"], "idle draws no glyph, so it must report no change time")
+        let idleStamp = try XCTUnwrap(node["statusChangedAt"] as? Double)
+        XCTAssertGreaterThan(idleStamp, refreshed)
+
+        let idleAgain = try sendCommand(#"{"cmd":"session.status","target":"\#(seeded)","args":{"status":"idle"}}"#)
+        XCTAssertEqual(idleAgain["ok"] as? Bool, true)
+        node = try sessionNode(id: seeded)
+        XCTAssertNil(node["status"])
+        let repeatedIdleStamp = try XCTUnwrap(node["statusChangedAt"] as? Double)
+        XCTAssertGreaterThan(repeatedIdleStamp, idleStamp)
     }
 
     // there is no visibility gate: the icon shows on the selected session too.

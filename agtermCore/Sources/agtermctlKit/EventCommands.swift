@@ -14,7 +14,7 @@ struct EventStreamDependencies {
 
     static func live(socketPath: String) -> EventStreamDependencies {
         EventStreamDependencies(
-            send: { request in try SocketClient(path: socketPath).send(request) },
+            send: { request in try SocketClient(path: socketPath).send(request).response },
             sleep: Thread.sleep(forTimeInterval:),
             writeLine: { line in
                 FileHandle.standardOutput.write(Data((line + "\n").utf8))
@@ -67,6 +67,7 @@ enum EventFormatter {
         switch event.kind {
         case .status:
             var parts = [time, event.kind.rawValue, name, event.payload.status ?? "idle"]
+            if let previous = event.payload.previous { parts.append("previous=\(previous)") }
             if let pane = event.payload.pane { parts.append("pane=\(pane)") }
             if event.payload.blink == true { parts.append("blink") }
             if let color = event.payload.color { parts.append("color=\(color)") }
@@ -76,6 +77,10 @@ enum EventFormatter {
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.title ?? name): \(event.payload.body ?? "")"
         case .sessionCreated, .sessionClosed, .treeChanged:
             return "\(time) \(event.kind.rawValue) \(name)"
+        case .paneSplit, .paneScratch:
+            return "\(time) \(event.kind.rawValue) \(name) \(event.payload.status ?? "")"
+        case .remoteOpened, .remoteClosed:
+            return "\(time) \(event.kind.rawValue) \(name) host=\(event.payload.host ?? "")"
         }
     }
 }

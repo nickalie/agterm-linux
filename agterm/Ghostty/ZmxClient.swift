@@ -15,6 +15,10 @@ final class ZmxClient {
         let arguments: [String]
         let environment: [String: String]
         let timeout: TimeInterval
+        // kill needs stderr diagnostics; list must exclude stderr notices.
+        let mergesStderr: Bool
+        /// Written to the child's stdin, which is then closed. Nil leaves stdin inherited.
+        var input: Data?
     }
 
     enum CommandError: Error {
@@ -160,7 +164,7 @@ final class ZmxClient {
         var outcomes: [String: KillOutcome] = [:]
         for name in Set(names) {
             do {
-                outcomes[name] = Self.outcome(of: try invoke(["kill", name]), name: name)
+                outcomes[name] = Self.outcome(of: try invoke(["kill", name], mergesStderr: true), name: name)
             } catch {
                 Self.logger.error("zmx kill failed for \(name, privacy: .public): \(String(describing: error), privacy: .public)")
                 outcomes[name] = .failed(String(describing: error))
@@ -169,11 +173,7 @@ final class ZmxClient {
         return outcomes
     }
 
-    /// Classifies a kill by EXACT output line, because zmx exits zero on more than the two happy answers:
-    /// a non-refused connect failure prints `is unresponsive` and succeeds, and a broken pipe after the
-    /// kill was sent returns with nothing printed at all. Anything unrecognized is a failure, so a daemon
-    /// whose fate is unknown is never reported as gone — and a substring test would let a line merely
-    /// CONTAINING `killed session <name>` count as a confirmation.
+    /// Exit zero can mean an unreachable daemon; require an exact confirmation line.
     static func outcome(of output: String, name: String) -> KillOutcome {
         let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
         if lines.contains("killed session \(name)") { return .killed }
@@ -189,7 +189,7 @@ final class ZmxClient {
     /// zero after merely unlinking a socket it could not reach, and that daemon may still be running.
     func killConfirmed(name: String) -> KillOutcome {
         do {
-            return Self.outcome(of: try invoke(["kill", name, "--force"]), name: name)
+            return Self.outcome(of: try invoke(["kill", name, "--force"], mergesStderr: true), name: name)
         } catch {
             Self.logger.error("zmx kill failed for \(name, privacy: .public): \(String(describing: error), privacy: .public)")
             return .failed(String(describing: error))
@@ -201,7 +201,7 @@ final class ZmxClient {
         let unique = names.filter { seen.insert($0).inserted }
         guard !unique.isEmpty else { return true }
         do {
-            _ = try invoke(["kill"] + unique + ["--force"], timeout: timeout)
+            _ = try invoke(["kill"] + unique + ["--force"], timeout: timeout, mergesStderr: true)
             return true
         } catch {
             Self.logger.error("zmx kill failed for \(unique.joined(separator: ","), privacy: .public): \(String(describing: error), privacy: .public)")
@@ -209,40 +209,79 @@ final class ZmxClient {
         }
     }
 
-    private func invoke(_ arguments: [String], timeout timeoutOverride: TimeInterval? = nil) throws -> String {
+    /// The daemon's own screen for `name`, which always has the leader's layout. Nil when the read
+    /// failed for any reason, a zmx without the query included: a caller must not fall back to a pane's
+    /// own surface, whose layout is the thing in doubt.
+    func screen(name: String, all: Bool) -> ZmxScreen? {
+        do {
+            return ZmxScreen(output: try invoke(["screen", name] + (all ? ["--all"] : [])))
+        } catch {
+            Self.logger.error("zmx screen failed for \(name, privacy: .public): \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    /// Queues `bytes` as input to `name` without taking the lead. True means the daemon queued them, not
+    /// that the program read them. Never retried: a second attempt after an unclear failure types twice.
+    func type(name: String, bytes: [UInt8]) -> Bool {
+        do {
+            _ = try invoke(["type", name], input: Data(bytes))
+            return true
+        } catch {
+            Self.logger.error("zmx type failed for \(name, privacy: .public): \(String(describing: error), privacy: .public)")
+            return false
+        }
+    }
+
+    private func invoke(_ arguments: [String], timeout timeoutOverride: TimeInterval? = nil,
+                        mergesStderr: Bool = false, input: Data? = nil) throws -> String {
         var environment = ProcessInfo.processInfo.environment
         environment["ZMX_DIR"] = socketDirectory
         environment.removeValue(forKey: "ZMX_SESSION")
         environment.removeValue(forKey: "ZMX_SESSION_PREFIX")
-        return try runner(Invocation(executablePath: executablePath, arguments: arguments,
-                                     environment: environment, timeout: timeoutOverride ?? timeout))
+        return try runner(Invocation(executablePath: executablePath, arguments: arguments, environment: environment,
+                                     timeout: timeoutOverride ?? timeout, mergesStderr: mergesStderr, input: input))
     }
 
-    private nonisolated static func run(_ invocation: Invocation) throws -> String {
+    nonisolated static func run(_ invocation: Invocation) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: invocation.executablePath)
         process.arguments = invocation.arguments
         process.environment = invocation.environment
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
+        // drained while waiting: zmx writes the listing row by row, so a few daemons fill the pipe before exit
+        let capture = try ProcessOutputCapture(attachingTo: process)
+        let stdin = invocation.input.map { _ in Pipe() }
+        if let stdin { process.standardInput = stdin }
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            capture.cancel()
+            throw error
+        }
+        capture.didLaunch()
+        if let stdin, let input = invocation.input {
+            try? stdin.fileHandleForWriting.write(contentsOf: input)
+            try? stdin.fileHandleForWriting.close()
+        }
         if finished.wait(timeout: .now() + invocation.timeout) == .timedOut {
             process.terminate()
             if finished.wait(timeout: .now() + terminationGrace) == .timedOut {
                 Darwin.kill(process.processIdentifier, SIGKILL)
                 process.waitUntilExit()
             }
+            capture.cancel()
             throw CommandError.timedOut
         }
-        let stdout = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw CommandError.failed(process.terminationStatus, stdout + stderr)
+        // EOF is due once the child has exited, unless a write end leaked to another process; a miss is a
+        // failed listing rather than a short one.
+        guard let output = capture.collect(until: .now() + terminationGrace) else {
+            throw CommandError.timedOut
         }
-        return stdout
+        guard process.terminationStatus == 0 else {
+            throw CommandError.failed(process.terminationStatus, output.stdout + output.stderr)
+        }
+        return invocation.mergesStderr ? output.stdout + output.stderr : output.stdout
     }
 }

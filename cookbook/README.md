@@ -18,6 +18,7 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [project-launcher](project-launcher/) | pick a project anywhere — or type "project + prompt" — and get a session in its workspace | 0.19.0, jq |
 | [project-switcher](project-switcher/) | show only one project's workspaces in the sidebar | 0.18.0, jq |
 | [window-per-project](window-per-project/) | park every other window in the Dock and raise one | 0.17.1, jq |
+| [window-switcher](window-switcher/) | jump to a window by number, or pick one with its waiting sessions in view | 0.28.0, jq |
 | [workspace-sets](workspace-sets/) | switch the sidebar between named groups of workspaces, one chord each | 0.18.0, jq |
 
 ### Sessions across restarts
@@ -45,9 +46,11 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [copilot-agent-status](copilot-agent-status/) | Copilot CLI sessions report active, blocked, and completed onto their sidebar row | 0.7.1, Copilot CLI |
 | [kimi-agent-status](kimi-agent-status/) | Kimi Code sessions report agent status onto their sidebar row | 0.3.1, Kimi Code |
 | [kiro-agent-status](kiro-agent-status/) | Kiro CLI sessions report active, blocked, and completed onto their sidebar row | 0.7.1, Kiro CLI |
+| [long-commands-status](long-commands-status/) | wrap any long shell command so the row reports active while it runs and completed or blocked when it finishes | 0.17.0 |
 | [remote-claude-session](remote-claude-session/) | one chord runs Claude Code in a tmux session on a remote host, reconnecting and reporting status onto its own tab | 0.22.0, jq, ssh, tmux, Claude Code |
 | [session-context-nudge](session-context-nudge/) | Claude Code keeps the title bar saying what the session is working on | 0.26.0, jq, Claude Code |
 | [status-announcer](status-announcer/) | demo: speak agent status changes from a dedicated session | 0.16.0, jq |
+| [truthful-agent-lights](truthful-agent-lights/) | the row reports what is still running after the turn ends, and stops claiming work that is gone | 0.17.0, jq, Claude Code |
 | [two-agent-chat](two-agent-chat/) | let Claude Code and Codex talk to each other in one split | 0.24.0, python3, Claude Code, Codex |
 
 ### Panes, pickers and input
@@ -58,6 +61,7 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [fzf-path-picker](fzf-path-picker/) | pick a path with fzf and type it into the shell | 0.8.0, fzf, fd, zsh |
 | [native-dir-picker](native-dir-picker/) | pick a directory in the native picker and type it into the shell | 0.19.0, fd, jq |
 | [overlay-and-split](overlay-and-split/) | keymap lines: a stateful split toggle and TUI overlays | 0.10.0, jq |
+| [remote-image-paste](remote-image-paste/) | copy a screenshot to a remote session's Mac so ctrl+v there pastes it | 0.31.0 |
 | [remote-session-picker](remote-session-picker/) | pick a session running on another Mac and attach it here | 0.26.0, jq |
 | [same-dir](same-dir/) | sync working directory to target split pane | 0.10.0, jq, zsh |
 | [sqlite-browser](sqlite-browser/) | pick one of the repo's SQLite databases and browse it in an overlay | 0.22.0, python3, tabiew |

@@ -4,6 +4,51 @@ import os
 
 private let logger = Logger(subsystem: "com.umputun.agterm", category: "CustomCommandRunner")
 
+/// How the runner shows a failed command: posts the panel and answers nil, or the reason it did not open,
+/// such as the slot holding a running program, which is never evicted for a message. Taking it down again
+/// is the panel's own auto-hide.
+struct FailureHud {
+    let open: (_ sessionID: String, _ spec: HudSpec, _ pane: OverlayPane?) -> String?
+}
+
+/// A command's stderr, captured to a temp file so a failure can say what it printed.
+///
+/// A FILE rather than a pipe: a pipe's read end lives only as long as agterm, so a background process a
+/// chord started would take SIGPIPE on its next write once the app quit, where inheriting `/dev/null` let it
+/// run on. A file also needs no reader, so nothing can block on a full buffer and nothing of ours outlives
+/// the command.
+private struct StderrFile: @unchecked Sendable {
+    let url: URL
+    let handle: FileHandle
+
+    /// Nil when the file cannot be created; the caller then sends stderr to `/dev/null` as before.
+    init?() {
+        url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agterm-command-\(UUID().uuidString).err")
+        guard FileManager.default.createFile(atPath: url.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: url) else { return nil }
+        self.handle = handle
+    }
+
+    /// The last `CommandFailure.tailLimit` bytes the command wrote, after which the file is removed. The cap
+    /// is on the READ: the file itself holds everything written to it, and a background descendant that
+    /// inherited it keeps growing the unlinked inode, whose space returns only when that process exits.
+    func consume() -> [UInt8] {
+        defer {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: url)
+        }
+        guard let reader = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? reader.close() }
+        let size = (try? reader.seekToEnd()) ?? 0
+        // read the sampled interval, not to the end: a descendant appending between the two would otherwise
+        // hand back everything it wrote as well.
+        let wanted = min(size, UInt64(CommandFailure.tailLimit))
+        try? reader.seek(toOffset: size - wanted)
+        return [UInt8]((try? reader.read(upToCount: Int(wanted))) ?? Data())
+    }
+}
+
 /// Drives user-defined custom commands: an app-wide `NSEvent` local key monitor turns key presses into
 /// chords, a `CustomCommandEngine` resolves them (simple chords and leader sequences like `ctrl+a > g`), and
 /// a fired command runs detached as `/bin/sh -c` with the session's context in `{AGT_X}` tokens and `$AGT_X`
@@ -20,51 +65,69 @@ final class CustomCommandRunner {
     private let settings: SettingsModel
     private let actions: AppActions
     private let socketProvider: () -> String
+    /// Posts the failure panel over the session a command fired in; the panel's own auto-hide takes it down.
+    /// Injected rather than reached for: the control server owns the HUD path, and a test supplies a recorder.
+    private let failureHud: FailureHud?
 
     private var commandEngine = CustomCommandEngine(commands: [])
 
     private var keyMonitor: Any?
     private var leaderTimer: Timer?
     private var keymapObserver: NSObjectProtocol?
+    private var menuActionObserver: NSObjectProtocol?
+    private var consumedKeyCodes: Set<UInt16> = []
 
     /// How long a half-typed leader sequence waits for its next chord before abandoning (kitty-style).
     private static let leaderTimeout: TimeInterval = 1.5
+
+    /// How long a failure panel stays up: long enough to read a line, short enough that a message about a
+    /// command that has already finished is not still sitting over the session minutes later.
+    static let failureHudSeconds: TimeInterval = 10
 
     /// Run counts behind the title-bar popover's most-used section; every spawn path records into it.
     let usage: CustomCommandUsageStore
 
     init(library: WindowLibrary, settings: SettingsModel, actions: AppActions, usage: CustomCommandUsageStore,
-         socketProvider: @escaping () -> String) {
+         socketProvider: @escaping () -> String, failureHud: FailureHud? = nil) {
         self.library = library
         self.settings = settings
         self.actions = actions
         self.usage = usage
         self.socketProvider = socketProvider
+        self.failureHud = failureHud
     }
 
-    /// Install the local `.keyDown` monitor (idempotent), build the keybind map, observe `.agtermKeymapChanged`.
+    /// Install the local key monitor (idempotent), build the keybind map, observe `.agtermKeymapChanged`.
     func start() {
         guard keyMonitor == nil else { return }
         rebuild()
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             guard let self else { return event }
             // returning nil consumes the event (it never reaches the terminal); event passes it through.
-            return self.handleKeyDown(event) ? nil : event
+            return self.handleKeyEvent(event, in: NSApp.keyWindow) ? nil : event
         }
         keymapObserver = NotificationCenter.default.addObserver(
             forName: .agtermKeymapChanged, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.rebuild() }
         }
+        menuActionObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.willSendActionNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recordMenuKeyPress(NSApp.currentEvent) }
+        }
     }
 
-    /// Remove the monitor, the keymap observer, and any pending leader timer.
+    /// Remove the key monitor, observers, and pending leader timer.
     func stop() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         if let keymapObserver { NotificationCenter.default.removeObserver(keymapObserver) }
         keymapObserver = nil
+        if let menuActionObserver { NotificationCenter.default.removeObserver(menuActionObserver) }
+        menuActionObserver = nil
         cancelLeaderTimer()
+        consumedKeyCodes.removeAll()
     }
 
     /// Rebuild the matcher from the current keymap — custom commands plus the built-in monitor binds — skipping
@@ -81,6 +144,13 @@ final class CustomCommandRunner {
     /// through `namedKey(forKeyCode:)`.
     private static let escapeKeyCode: UInt16 = 53
 
+    /// Own an F-key only after AppKit chooses a menu action, without predicting from a stale keymap.
+    func recordMenuKeyPress(_ event: NSEvent?) {
+        guard let event, event.type == .keyDown, !event.isARepeat,
+              let key = namedKey(forKeyCode: event.keyCode), bindableFunctionKeys.contains(key) else { return }
+        consumedKeyCodes.insert(event.keyCode)
+    }
+
     /// Feed one key event to the matcher; returns whether it was consumed (so the caller drops it). Esc while
     /// armed resets, `.fired` runs a command, `.firedBuiltin` runs a built-in action, `.armed` arms the leader
     /// timer, and `toggle_fullscreen`'s chord toggles full screen without reaching the matcher at all — all
@@ -90,16 +160,21 @@ final class CustomCommandRunner {
     /// the key window is an agterm terminal window whose focus is NOT on a text field — including one emptied
     /// to zero sessions. Passes through for a focused text field (Settings editor, inline rename, palette
     /// search) so a bound chord never eats those keystrokes, and for an auxiliary window focused off a text
-    /// field. A key repeat is ignored, so a held-down shortcut spawns one process, not one per OS repeat.
-    private func handleKeyDown(_ event: NSEvent) -> Bool {
-        guard let keyWindow = NSApp.keyWindow else { return false }
-        return handleKeyDown(event, in: keyWindow)
+    /// field. Repeats and releases of consumed presses stay consumed without firing again.
+    func handleKeyEvent(_ event: NSEvent, in keyWindow: NSWindow?) -> Bool {
+        // ownership lasts through release, even if the action changes focus or a leader times out.
+        if event.type == .keyUp { return consumedKeyCodes.remove(event.keyCode) != nil }
+        guard event.type == .keyDown else { return false }
+        if event.isARepeat { return consumedKeyCodes.contains(event.keyCode) }
+        // a release may have occurred outside the app; a fresh press starts new ownership for this key.
+        consumedKeyCodes.remove(event.keyCode)
+        guard let keyWindow else { return false }
+        let consumed = handleKeyDown(event, in: keyWindow)
+        if consumed { consumedKeyCodes.insert(event.keyCode) }
+        return consumed
     }
 
-    /// Everything after the key-window lookup, split out so a test can supply the window: a hosted test's
-    /// own window never becomes `NSApp.keyWindow` (the app is not active), so `handleKeyDown(_:)` returns at
-    /// that guard and none of this runs. Internal for that reason alone, like
-    /// `ControlServer.collectKeyEquivalents`.
+    /// Dispatch a fresh press in a supplied window, also used by hosted tests whose window never becomes key.
     func handleKeyDown(_ event: NSEvent, in keyWindow: NSWindow) -> Bool {
         guard !event.isARepeat else { return false }
         let responder = keyWindow.firstResponder
@@ -321,7 +396,9 @@ final class CustomCommandRunner {
 
     /// Resolve every `{AGT_X}` token for the given session: ids + cwd + remote host from the model, names
     /// from the owning workspace/window, the selection from `selectionSurface`, the fired-from pane from the
-    /// caller (`left`|`right`|`scratch`), the socket from the control server.
+    /// caller (`left`|`right`|`scratch`) with the token of the surface in that slot, the socket from the
+    /// control server. The token is read from the slot, not from `selectionSurface`: for an overlay chord
+    /// that view is the overlay itself, which has no token, while `pane` names the terminal underneath.
     private func context(for session: Session, in store: AppStore, selectionSurface: GhosttySurfaceView?,
                          pane: CommandContext.Pane) -> CommandContext {
         let workspace = store.workspace(forSession: session.id)
@@ -337,6 +414,7 @@ final class CustomCommandRunner {
             windowID: windowID?.uuidString ?? "",
             windowName: windowName,
             pane: pane,
+            paneID: session.paneToken(for: pane),
             selection: selectionSurface?.readSelection() ?? "",
             socket: socketProvider()
         )
@@ -354,7 +432,7 @@ final class CustomCommandRunner {
     /// Spawn the expanded command as a detached `/bin/sh -c`, exporting `$AGT_*` over the app environment and
     /// running in `cwd` (nil for a sessionless launch, which inherits the app's). `PATH` is widened first
     /// (`CommandPath`): the app's own is launchd's, and `sh -c` runs no profile, so a bare `agtermctl` would
-    /// exit 127. A spawn error or non-zero exit posts a failure banner; no output capture, no success banner.
+    /// exit 127. Only commands opting into failure panels capture stderr; a clean exit reports nothing.
     private func spawn(_ command: CustomCommand, context: CommandContext, cwd: String?) {
         let line = context.expand(command.command)
         let process = Process()
@@ -365,26 +443,51 @@ final class CustomCommandRunner {
                                                   bundledCLIDirectory: CLIInstaller.bundledTool?
                                                       .deletingLastPathComponent().path)
         process.environment = environment
-        // fire-and-forget: pin stdio to /dev/null rather than inherit the app's fds, which vary by launch.
+        // detached commands must not inherit the app's launch-dependent stdio.
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let capture = command.errorHud ? StderrFile() : nil
+        process.standardError = capture?.handle ?? FileHandle.nullDevice
+        if command.errorHud, capture == nil {
+            logger.error("custom command \"\(command.name, privacy: .public)\": stderr capture unavailable")
+        }
         if let cwd, !cwd.isEmpty {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
         }
         let name = command.name
+        let sessionID = context.sessionID
         process.terminationHandler = { proc in
-            guard proc.terminationStatus != 0 else { return }
             let status = proc.terminationStatus
-            // the handler fires on an arbitrary queue; hop to the main actor to post the banner.
-            DispatchQueue.main.async { NotificationManager.shared.notifyCommandFailure(name: name, detail: "exit \(status)") }
+            // read and remove the file whatever the status, or a successful command leaks one per run.
+            let detail = capture.map { CommandFailure.detail(fromTail: $0.consume()) } ?? nil
+            guard status != 0 else { return }
+            // the handler fires on an arbitrary queue; hop to the main actor to post.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.report(command: command, reason: "exit \(status)", detail: detail, sessionID: sessionID)
+                }
+            }
         }
         do {
             try process.run()
             usage.record(command)
         } catch {
+            _ = capture?.consume()
             logger.error("custom command \"\(name, privacy: .public)\" failed to spawn: \(error.localizedDescription, privacy: .public)")
-            NotificationManager.shared.notifyCommandFailure(name: name, detail: error.localizedDescription)
+            // a command that never started has no exit status and no output of its own, so the launch error
+            // is the whole diagnosis.
+            report(command: command, reason: error.localizedDescription, detail: nil, sessionID: sessionID)
+        }
+    }
+
+    /// Banners keep their notification preference; the panel is per-command opt-in.
+    private func report(command: CustomCommand, reason: String, detail: String?, sessionID: String) {
+        NotificationManager.shared.notifyCommandFailure(name: command.name, detail: reason)
+        guard command.errorHud, let failureHud, !sessionID.isEmpty else { return }
+        let spec = HudSpec(message: CommandFailure.message(name: command.name, reason: reason), detail: detail,
+                           position: command.errorPosition, hideAfter: Self.failureHudSeconds)
+        if let refusal = failureHud.open(sessionID, spec, command.errorPane) {
+            logger.notice("custom command \"\(command.name, privacy: .public)\" failed (\(reason, privacy: .public)); no failure panel: \(refusal, privacy: .public)")
         }
     }
 }

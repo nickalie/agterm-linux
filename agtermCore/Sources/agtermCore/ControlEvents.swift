@@ -7,6 +7,10 @@ public enum ControlEventKind: String, Codable, CaseIterable, Sendable, Equatable
     case sessionCreated = "session.created"
     case sessionClosed = "session.closed"
     case treeChanged = "tree.changed"
+    case paneSplit = "pane.split"
+    case paneScratch = "pane.scratch"
+    case remoteOpened = "remote.opened"
+    case remoteClosed = "remote.closed"
 }
 
 /// Kind-specific event data. Optional fields keep the encoded payload compact while preserving one
@@ -20,20 +24,29 @@ public struct ControlEventPayload: Codable, Sendable, Equatable {
     /// The `status` event's per-call glyph silhouette (a `StatusShape` raw value), nil when the glyph uses the
     /// Settings shape / default plain circle. A shape-only change emits a `status` event, unexplainable without it.
     public var shape: String?
+    /// The `status` event's status before the accepted write, so a consumer sees the transition without
+    /// keeping state. Equal to `status` when only shape, color, pane or blink changed.
+    public var previous: String?
     public var title: String?
     public var body: String?
+    /// The `remote.opened` / `remote.closed` ssh destination the row is attached to, as `zmx attach` was
+    /// given it.
+    public var host: String?
 
     public init(name: String? = nil, status: String? = nil, pane: String? = nil,
                 blink: Bool? = nil, color: String? = nil, shape: String? = nil,
-                title: String? = nil, body: String? = nil) {
+                previous: String? = nil, title: String? = nil, body: String? = nil,
+                host: String? = nil) {
         self.name = name
         self.status = status
         self.pane = pane
         self.blink = blink
         self.color = color
         self.shape = shape
+        self.previous = previous
         self.title = title
         self.body = body
+        self.host = host
     }
 }
 

@@ -11,6 +11,14 @@ public enum ToolbarMode: String, Codable, Sendable, CaseIterable {
     case hidden
 }
 
+/// How the sidebar's flagged view arranges its sessions: `flat` is one list labelled `session : workspace`,
+/// `tree` nests them under their workspace rows. App-wide, not per window. Raw-stored, resolved by
+/// `effectiveFlaggedViewLayout`.
+public enum FlaggedViewLayout: String, Codable, Sendable, CaseIterable {
+    case flat
+    case tree
+}
+
 /// How a delivered notification bounces the Dock icon (`requestUserAttention`): `off`, `once` (one
 /// `.informationalRequest`), or `untilFocused` (a `.criticalRequest` bouncing until agterm activates).
 /// Raw-stored, resolved by `effectiveDockBounce`. Named `off`, not `none`, to dodge the `Optional.none`
@@ -28,6 +36,7 @@ public enum DockBounce: String, Codable, Sendable, CaseIterable {
 public enum InterfaceElement: String, Codable, Sendable, CaseIterable {
     // title bar
     case sidebarToggle
+    case workspaceName
     case sessionName
     case windowName
     case remoteHost
@@ -57,12 +66,13 @@ public enum InterfaceElement: String, Codable, Sendable, CaseIterable {
     }
 
     /// Whether the element starts hidden, so its toggle reads off until the user opts in.
-    public var hiddenByDefault: Bool { self == .customCommands }
+    public var hiddenByDefault: Bool { self == .customCommands || self == .workspaceName }
 
     /// The human-facing toggle label shown in the Interface settings tab.
     public var displayName: String {
         switch self {
         case .sidebarToggle: return "Sidebar toggle"
+        case .workspaceName: return "Workspace name"
         case .sessionName: return "Session name"
         case .windowName: return "Window name"
         case .remoteHost: return "Remote host"
@@ -314,6 +324,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// `Session.displayName` consults. On, a remote host over SSH names the row — and so does any TUI that
     /// titles the terminal after its own state.
     public var sessionNameFromTerminalTitle: Bool?
+    /// Raw `FlaggedViewLayout` for the sidebar's flagged view; nil = flat. Resolved by
+    /// `effectiveFlaggedViewLayout`.
+    public var flaggedViewLayout: String?
     /// Whether the first-launch pointer at the Help menu extras has been shown; nil/false = not yet.
     /// Written once, by the launch that shows it. See `FirstRunWelcome`.
     public var welcomeShown: Bool?
@@ -340,7 +353,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 autoFollowStayOnActive: Bool? = nil, sidebarFontSize: Double? = nil,
                 interfaceFontSize: Double? = nil, quickTerminalSizePercent: Int? = nil,
                 hiddenInterfaceElements: [String]? = nil, shownInterfaceElements: [String]? = nil,
-                autoHideSidebarInactiveWindows: Bool? = nil,
+                autoHideSidebarInactiveWindows: Bool? = nil, flaggedViewLayout: String? = nil,
                 sessionNameFromTerminalTitle: Bool? = nil, welcomeShown: Bool? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
@@ -388,6 +401,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.shownInterfaceElements = shownInterfaceElements
         self.autoHideSidebarInactiveWindows = autoHideSidebarInactiveWindows
         self.sessionNameFromTerminalTitle = sessionNameFromTerminalTitle
+        self.flaggedViewLayout = flaggedViewLayout
         self.welcomeShown = welcomeShown
     }
 
@@ -418,6 +432,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// `compactToolbar` mapping. The single read point.
     public var effectiveToolbarMode: ToolbarMode {
         toolbarMode.flatMap(ToolbarMode.init(rawValue:)) ?? (compactToolbar == false ? .normal : .compact)
+    }
+
+    /// The resolved flagged-view layout: the explicit `flaggedViewLayout` when a KNOWN raw value, else `flat`.
+    public var effectiveFlaggedViewLayout: FlaggedViewLayout {
+        flaggedViewLayout.flatMap(FlaggedViewLayout.init(rawValue:)) ?? .flat
     }
 
     /// The resolved status-reset mode: the explicit `statusReset` when a KNOWN raw value, else `firstKey`.

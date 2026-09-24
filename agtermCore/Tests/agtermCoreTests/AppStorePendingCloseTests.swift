@@ -159,4 +159,37 @@ struct AppStorePendingCloseTests {
 
         #expect(drops.identities == [session.paneIdentity])
     }
+
+    @Test func aRemoteRowReportsLeavingOnSoftCloseAndReturningOnUndo() throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        var edges: [Bool] = []
+        store.onRemoteRowVisibility = { _, shown in edges.append(shown) }
+        let remote = try #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp", remoteHost: "buildbox"))
+        let local = try #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp"))
+        #expect(edges == [true])
+
+        #expect(store.softCloseSession(remote.id))
+        #expect(edges == [true, false])
+        #expect(store.undoPendingClose())
+        #expect(edges == [true, false, true])
+
+        #expect(store.softCloseSession(local.id))
+        #expect(edges == [true, false, true], "a local row is none of the presentation client's business")
+    }
+
+    @Test func aRemoteRowReportsReturningWhenItsWorkspaceIsRestored() throws {
+        let store = makeStore()
+        _ = store.addWorkspace(name: "keep")
+        let ws = store.addWorkspace(name: "work")
+        var edges: [Bool] = []
+        store.onRemoteRowVisibility = { _, shown in edges.append(shown) }
+        _ = try #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp", remoteHost: "buildbox"))
+
+        #expect(store.softRemoveWorkspace(ws.id))
+        #expect(edges == [true, false])
+        #expect(store.undoPendingClose())
+
+        #expect(edges == [true, false, true])
+    }
 }

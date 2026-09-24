@@ -28,6 +28,30 @@ public enum RemoteSession {
         return sshArguments(host: host, connectTimeout: connectTimeout, interactive: false) + [remote]
     }
 
+    /// One ssh invocation carrying `session`'s presentation stream, for as long as the row is shown.
+    ///
+    /// `-T` because frames travel on plain stdio and a pty would mangle them, and no lifetime deadline:
+    /// the stream is meant to stay up. `exec` so the far-side shell does not linger between ssh and the
+    /// bridge, which would keep a dead bridge's stdio open.
+    public static func presentCommand(host: String, session: String, connectTimeout: Int = 5) throws -> [String] {
+        try validate(host: host)
+        guard isPlain(session) else { throw InvocationError.invalidSession }
+        let chain = cliPathPrefix + " && exec agtermctl zmx present " + CommandRestore.shellQuotedLine([session])
+        let remote = CommandRestore.shellQuotedLine(["/bin/sh", "-c", chain])
+        return sshArguments(host: host, connectTimeout: connectTimeout, interactive: false) + [remote]
+    }
+
+    /// One ssh invocation running the helper for `job`, an overlay the origin handed to this Mac, for as long
+    /// as the overlay is up. `-tt` because the program is the user's and reads the pty; `exec` so the helper's
+    /// hangup check sees the ssh session's own pty close.
+    public static func runJobCommand(host: String, job: String, connectTimeout: Int = 5) throws -> [String] {
+        try validate(host: host)
+        guard isPlain(job) else { throw InvocationError.invalidSession }
+        let chain = cliPathPrefix + " && exec agtermctl session overlay run-job " + CommandRestore.shellQuotedLine([job])
+        let remote = CommandRestore.shellQuotedLine(["/bin/sh", "-c", chain])
+        return sshArguments(host: host, connectTimeout: connectTimeout, interactive: true) + [remote]
+    }
+
     /// sshd runs a remote command with `/usr/bin:/bin:/usr/sbin:/sbin` and a non-interactive shell reads no
     /// profile, so an installed CLI is otherwise not found and every command exits 127. `CommandPath` owns
     /// where it can live; APPENDED, so a user's own `agtermctl` earlier on PATH still wins.
@@ -48,7 +72,11 @@ public enum RemoteSession {
     /// `env` and `sh` are spelled absolutely because they are implementation primitives. The remote
     /// `agtermctl` in `treeCommand` is deliberately PATH-resolved instead — that one IS the user's
     /// installed CLI.
+    ///
+    /// `lead` opts the far zmx client into explicit leadership; an origin whose zmx predates it ignores
+    /// the two variables and the pane behaves as it did before.
     public static func attachCommand(host: String, endpoint: ControlZmxEndpoint, daemon: String,
+                                     lead: ZmxLeadAttachment? = nil,
                                      connectTimeout: Int = 5) throws -> [String] {
         try validate(host: host)
         guard ZmxSupport.isDaemonName(daemon) else { throw InvocationError.invalidSession }
@@ -61,8 +89,9 @@ public enum RemoteSession {
             // `ZMX_SESSION` makes attach SWITCH session instead, never reaching the create-only guard,
             // and an inherited prefix resolves a name agterm never created.
             "/usr/bin/env", "ZMX_SESSION=", "ZMX_SESSION_PREFIX=", "ZMX_NO_DETACH_KEY=1",
-            "ZMX_DIR=" + endpoint.socketDirectory, endpoint.executable,
-            "attach", daemon, "/bin/sh", "-c", guardScript,
+            "ZMX_DIR=" + endpoint.socketDirectory,
+        ] + (lead?.assignments ?? []) + [
+            endpoint.executable, "attach", daemon, "/bin/sh", "-c", guardScript,
         ])
         return sshArguments(host: host, connectTimeout: connectTimeout, interactive: true) + [remote]
     }
@@ -74,9 +103,11 @@ public enum RemoteSession {
     /// agterm's to say: the picker is a keymap custom command the user supplies.
     public static func attachPaneCommand(host: String, endpoint: ControlZmxEndpoint, daemon: String,
                                          session: String, pane: ZmxPaneRole,
+                                         lead: ZmxLeadAttachment? = nil,
                                          connectTimeout: Int = 5) throws -> String {
         let attach = CommandRestore.shellQuotedLine(
-            try attachCommand(host: host, endpoint: endpoint, daemon: daemon, connectTimeout: connectTimeout))
+            try attachCommand(host: host, endpoint: endpoint, daemon: daemon, lead: lead,
+                              connectTimeout: connectTimeout))
         let label = CommandRestore.shellQuotedLine(
             ["agterm: \(session) (\(pane.rawValue)) on \(host) disconnected, exit"])
         // the pane must exit with SSH's status, not printf's zero, or a failed connection reads as a

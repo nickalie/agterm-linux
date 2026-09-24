@@ -187,6 +187,55 @@ final class AppStoreEventTests {
         #expect(batch.items[0].payload.body == "tests passed")
     }
 
+    @MainActor
+    private final class NotifySink: PresentationSink {
+        var notifies: [PresentationNotify] = []
+        func offer(_ frame: PresentationFrame) -> Bool {
+            if case .notify(let notify) = frame.body { notifies.append(notify) }
+            return true
+        }
+        func close(_ reason: PresentationHub.CloseReason) {}
+    }
+
+    @Test func onlyAControlNotificationReachesAViewerAndThePublicEventIsTheSameForEveryOrigin() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        let hub = PresentationHub(staleTimeout: 30)
+        store.presentationHub = hub
+        let sink = NotifySink()
+        try hub.subscribe(session: session.id, hello: PresentationHello(version: 1, kinds: ["notify"], mode: .mirror),
+                          sink: sink) { store.presentationSnapshot(forSession: session.id) }
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        for origin in [NotificationOrigin.terminal, .control, .mirrored] {
+            store.recordNotificationEvent(forSession: session.id, title: "build", body: "done", origin: origin)
+        }
+
+        #expect(sink.notifies == [PresentationNotify(title: "build", body: "done", pane: nil, source: "control")])
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.notify], limit: 100
+        )))
+        #expect(batch.items.count == 3)
+        #expect(Set(batch.items.map { $0.payload.title }) == ["build"])
+        #expect(Set(batch.items.map { $0.payload.body }) == ["done"])
+    }
+
+    @Test func aControlNotificationWithNoTitleTravelsWithTheEffectiveOne() throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = try #require(store.addSession(toWorkspace: ws.id, cwd: "/repo", name: "api"))
+        let hub = PresentationHub(staleTimeout: 30)
+        store.presentationHub = hub
+        let sink = NotifySink()
+        try hub.subscribe(session: session.id, hello: PresentationHello(version: 1, kinds: ["notify"], mode: .mirror),
+                          sink: sink) { store.presentationSnapshot(forSession: session.id) }
+
+        store.recordNotificationEvent(forSession: session.id, title: "", body: "done", origin: .control)
+
+        #expect(sink.notifies.map(\.title) == ["api"])
+    }
+
     @Test func addSoftCloseUndoAndGraceFinalizationEmitVisibleMembershipEdgesOnly() throws {
         let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
         let store = try #require(library.activeStore)
@@ -480,6 +529,213 @@ final class AppStoreEventTests {
             kinds: [.sessionCreated, .sessionClosed], limit: 100
         )))
         #expect(batch.items.map(\.kind) == [.sessionClosed, .sessionCreated])
+    }
+
+    @Test func observerSeesEverySequencedEventIncludingDebouncedTreeChanges() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        library.flushTreeEvents()
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+        var observed: [ControlEvent] = []
+        library.onControlEvent = { observed.append($0) }
+
+        store.setAgentIndicator(AgentIndicator(status: .active), forSession: session.id)
+        _ = store.addWorkspace(name: "one")
+        #expect(observed.map(\.kind) == [.status])
+        library.flushTreeEvents()
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: nil, limit: 100
+        )))
+        #expect(observed == batch.items)
+        #expect(observed.map(\.kind) == [.status, .treeChanged])
+    }
+
+    @Test func statusEventsCarryThePreviousStatus() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.setAgentIndicator(AgentIndicator(status: .active), forSession: session.id)
+        store.setAgentIndicator(AgentIndicator(status: .blocked), forSession: session.id)
+        store.setAgentIndicator(AgentIndicator(status: .blocked, shape: .star), forSession: session.id)
+        store.setAgentIndicator(AgentIndicator(status: .blocked, shape: .star), forSession: session.id)
+        store.setAgentIndicator(AgentIndicator(), forSession: session.id)
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.status], limit: 100
+        )))
+        #expect(batch.items.map { $0.payload.status } == ["active", "blocked", "blocked", "idle"])
+        #expect(batch.items.map { $0.payload.previous } == ["idle", "active", "blocked", "blocked"])
+    }
+
+    @Test func splitEventsFollowRealVisibilityTransitionsOnly() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let session = try #require(store.activeSession)
+        session.surface = SpySurface()
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.setSplitVisibility(session.id, shown: true)
+        session.splitSurface = SpySurface()
+        store.setSplitVisibility(session.id, shown: true)
+        store.toggleSplit(session.id, axis: .topBottom)
+        store.setSplitVisibility(session.id, shown: false)
+        store.closeSplit(session.id)
+        store.toggleSplit(session.id)
+        session.splitSurface = SpySurface()
+        store.closeSplitPane(session.id)
+        store.toggleSplit(session.id)
+        session.splitSurface = SpySurface()
+        store.closePrimaryPane(session.id)
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.paneSplit], limit: 100
+        )))
+        #expect(batch.items.map { $0.payload.status } == ["shown", "hidden", "shown", "hidden", "shown", "hidden"])
+        #expect(batch.items.allSatisfy { $0.session == session.id.uuidString })
+        #expect(batch.items.allSatisfy { $0.workspace == workspace.id.uuidString })
+        #expect(batch.items.allSatisfy { $0.payload.name == session.displayName })
+    }
+
+    @Test func scratchTeardownAndReshowCanSuppressTheirVisibilityEvents() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        store.toggleScratch(session.id)
+        session.scratchSurface = SpySurface()
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        #expect(store.closeScratch(session.id, emitVisibility: false))
+        store.toggleScratch(session.id, emitVisibility: false)
+        #expect(session.scratchActive)
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.paneScratch], limit: 100
+        )))
+        #expect(batch.items.isEmpty)
+    }
+
+    @Test func promotingTheSurvivorOfAHiddenSplitEmitsNoSplitEvent() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        session.surface = SpySurface()
+        store.setSplitVisibility(session.id, shown: true)
+        let survivor = SpySurface()
+        session.splitSurface = survivor
+        store.setSplitVisibility(session.id, shown: false)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.closePrimaryPane(session.id)
+
+        #expect(session.surface === survivor)
+        #expect(session.splitSurface == nil)
+        #expect(!session.hasSplit)
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.paneSplit], limit: 100
+        )))
+        #expect(batch.items.isEmpty)
+    }
+
+    @Test func scratchEventsFollowRealVisibilityTransitionsOnly() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let session = try #require(store.activeSession)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        #expect(!store.closeScratch(session.id))
+        store.toggleScratch(session.id)
+        session.scratchSurface = SpySurface()
+        store.toggleScratch(session.id)
+        #expect(store.closeScratch(session.id))
+        store.toggleScratch(session.id)
+        session.scratchSurface = SpySurface()
+        #expect(store.closeScratch(session.id))
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: [.paneScratch], limit: 100
+        )))
+        #expect(batch.items.map { $0.payload.status } == ["shown", "hidden", "shown", "hidden"])
+        #expect(batch.items.allSatisfy { $0.session == session.id.uuidString })
+    }
+
+    @Test func remoteRowEdgesRideCreatedAndClosedForRemoteSessionsOnly() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+        let local = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", name: "local"))
+        let remote = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", name: "far",
+                                                   remoteHost: "buildbox"))
+
+        #expect(store.softCloseSession(remote.id, grace: 60))
+        #expect(store.undoPendingClose())
+        #expect(store.softCloseSession(remote.id, grace: 60))
+        store.finalizeAllPendingCloses()
+        store.closeSession(local.id)
+
+        let all = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next), kinds: nil, limit: 100
+        )))
+        let remoteEdges = all.items.filter { $0.kind == .remoteOpened || $0.kind == .remoteClosed }
+        #expect(remoteEdges.map(\.kind) == [.remoteOpened, .remoteClosed, .remoteOpened, .remoteClosed])
+        #expect(remoteEdges.allSatisfy { $0.session == remote.id.uuidString && $0.workspace == workspace.id.uuidString })
+        #expect(remoteEdges.allSatisfy { $0.payload.name == "far" && $0.payload.host == "buildbox" })
+        for edge in remoteEdges {
+            let sessionEdge = try #require(all.items.first { $0.seq == edge.seq - 1 })
+            #expect(sessionEdge.kind == (edge.kind == .remoteOpened ? .sessionCreated : .sessionClosed))
+            #expect(sessionEdge.session == remote.id.uuidString)
+        }
+        #expect(all.items.filter { $0.session == local.id.uuidString }.allSatisfy { $0.payload.host == nil })
+    }
+
+    @Test func remoteWorkspaceUndoThroughRecentClosedReopensTheRow() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let doomed = store.addWorkspace(name: "doomed")
+        _ = store.addWorkspace(name: "keep")
+        _ = try #require(store.addSession(toWorkspace: doomed.id, cwd: "/tmp", name: "local"))
+        let remote = try #require(store.addSession(toWorkspace: doomed.id, cwd: "/tmp", name: "far",
+                                                   remoteHost: "buildbox"))
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        #expect(store.softRemoveWorkspace(doomed.id, grace: 60))
+        let recent = try #require(library.recentClosedItems.first { $0.workspace?.snapshot.id == doomed.id })
+        #expect(library.reopenRecentClosed(recent.id, into: store))
+        #expect(store.session(withID: remote.id)?.remoteHost == "buildbox")
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next),
+            kinds: [.remoteOpened, .remoteClosed], limit: 100
+        )))
+        #expect(batch.items.map(\.kind) == [.remoteClosed, .remoteOpened])
+        #expect(batch.items.allSatisfy { $0.session == remote.id.uuidString && $0.payload.host == "buildbox" })
+    }
+
+    @Test func closingARemoteSplitAloneEmitsNoRemoteEdge() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let remote = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", name: "far",
+                                                   remoteHost: "buildbox"))
+        remote.surface = SpySurface()
+        store.setSplitVisibility(remote.id, shown: true)
+        remote.splitSurface = SpySurface()
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.setSplitVisibility(remote.id, shown: false)
+        store.closeSplit(remote.id)
+
+        let batch = try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next),
+            kinds: [.remoteOpened, .remoteClosed], limit: 100
+        )))
+        #expect(batch.items.isEmpty)
+        #expect(store.session(withID: remote.id) != nil)
     }
 
     private func eventBatch(_ response: ControlResponse) throws -> ControlEventBatch {

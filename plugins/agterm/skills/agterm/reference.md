@@ -33,10 +33,11 @@ With no cursor, the first read subscribes from now: it returns an empty batch an
 tail, and the CLI prints only later events. The app keeps a non-destructive ring of the latest 4,096
 events for its current process run. Independent readers do not consume one another's events.
 
-The five event kinds and payloads are:
+The event kinds and payloads are:
 
-- `status`: `name`, normalized `status` (`idle`|`active`|`blocked`|`completed`), a `blink` boolean,
-  and optional `pane`, `color` and `shape` (the last two being the per-call `--color`/`--shape`
+- `status`: `name`, normalized `status` (`idle`|`active`|`blocked`|`completed`), `previous` (the
+  status before the write, equal to `status` when only blink, pane, color or shape changed), a `blink`
+  boolean, and optional `pane`, `color` and `shape` (the last two being the per-call `--color`/`--shape`
   overrides). An event fires whenever the whole indicator changes, not just the state name — so a
   change to `blink`, `pane`, `color` or `shape` alone is a real event you can watch, while re-asserting
   an identical indicator emits nothing. Clearing emits `idle`.
@@ -48,6 +49,14 @@ The five event kinds and payloads are:
 - `tree.changed`: an empty payload and the affected window id. Name, membership, and ordering changes
   are coalesced for 100 ms per window, as is a `session context` set or clear that changes the value.
   Read `tree --json` for the current snapshot.
+- `pane.split` / `pane.scratch`: session `name` and a `status` of `shown` or `hidden`, emitted only on a
+  real visibility change: showing or hiding the split or scratch, closing the split, the primary pane
+  exiting with a split promoted, or the scratch shell exiting. An axis change while shown emits nothing.
+- `remote.opened` / `remote.closed`: session `name` and the ssh destination of a local row created by
+  `zmx attach` as `host`, emitted beside `session.created` / `session.closed` for that session only. They describe the row's
+  presence in the local tree, never the ssh connection: undo re-emits `remote.opened`, and an ssh that
+  died leaves the row holding its exit line until it is closed. Closing a remote split pane alone emits
+  neither.
 
 Every event has `seq` (app-wide sequence), `ts` (Unix timestamp), `kind`, optional
 `window`/`workspace`/`session` ids, and `payload`. Human mode prints one compact line. `--json` emits
@@ -134,6 +143,14 @@ split; these describe attribution, not permission grants; the GTK Linux frontend
 omits both),
 `remoteHost` (the machine an attached session came from — the read side of `zmx attach`; omitted for a
 local session, and never present after a relaunch because a remote session is never written to disk),
+`presentation` (on an attached session only: `state` is `connecting`, `connected`, `unsupported` for an
+origin too old to stream, or `failed` with the reason in `error`, and `mode` is `presenter` when this
+row's stream holds the presenter role (see Remote sessions) or `mirror` when it does not; it says whether the stream is up,
+never whether the panes' ssh connections are),
+`presenters` (on an origin session: `mirrors`, how many streams mirror it without presenting, one per
+attached row and not per Mac, and `presenter: true` when one presents it; omitted when none does),
+`remoteOverlays` (on an origin session: the overlay slots a presenting Mac holds, each `{pane?,
+sizePercent?}`, while the session itself stays uncovered here; omitted when none is held),
 `hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
 read THIS to decide whether a session has a split, because a hidden split reports `split: false` while
 its pane stays alive, and it is present exactly when `splitRatio`/`splitFocused` can be),
@@ -158,8 +175,9 @@ to restore the exact size),
 independently of the session-wide `overlay` flag, which a pane overlay never sets),
 `hud` (the message panel occupying the session-wide overlay slot — the read side of `session hud`; omitted
 when none is up. A
-`{message, detail?, spinner, backgroundColor?, textColor?, sizePercent?, heightPercent?, position, pane?}`
-object: `detail`, `backgroundColor` and `textColor` are omitted when the caller set none, `sizePercent` is the EFFECTIVE
+`{message, detail?, spinner, backgroundColor?, textColor?, sizePercent?, heightPercent?, position, pane?, hideAfter,
+markdown, fontSize?}` object: `markdown` is always present, and `fontSize` is the `--font-size` the panel was
+opened with, omitted when it uses the session's; `detail`, `backgroundColor` and `textColor` are omitted when the caller set none, `sizePercent` is the EFFECTIVE
 10–80 share of the pane's WIDTH the panel takes (the app's measurement of the message, or the caller's
 `--size-percent` override, either way bounded so a message never covers the session; always present for a
 live HUD), `heightPercent` is the effective share of its HEIGHT, always measured from the message's rows
@@ -173,10 +191,11 @@ tracks the latest update. `spinner` names the STYLE, a string, so a static panel
 session-wide placement omits it. `hud` and `overlay` are mutually exclusive because they share one slot, and a HUD reports `overlay`
 FALSE with `overlaySizePercent` omitted, so a poll for "is a program covering this session" cannot mistake
 a message for one. No event announces a HUD; poll `tree` for it),
-`ask` (the pending terminal question as `{id, pane?}`, with `pane` omitted for session-wide placement;
-omitted when no terminal ask is pending), `scratch` (scratch shown), `flagged` (in the
-flagged working-set), `context` (what the session is about — the `session context` value, persisted and
-omitted when unset), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
+`ask` (the session's pending question as `{id, pane?, remote?, replica?}` (a terminal question, or one of
+either style handed over for a remote session), with `pane` omitted for session-wide placement, `remote: true` on an origin while the Mac presenting the session draws it, and
+`replica: true` on that Mac for the copy it draws; omitted when the session ask slot is empty), `scratch` (scratch shown), `flagged` (in the
+flagged working-set), `context` (what the session is about — the `session context` value, or on an attached row without
+one the origin's mirrored context; omitted when neither is set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
 idle), `statusPane` (which pane set that status — `left` (main) | `right` (split) | `scratch` — the
 `--pane` value from `session status`, omitted when unset or idle; gated on the same non-idle condition
 as `status`, so it is never reported without a `status`), `statusBlink` (`true` when the status glyph is
@@ -186,11 +205,11 @@ glyph-tint override — the `--color` value; omitted when idle or using the conf
 `circle`|`square`|`triangle`|`diamond`|`capsule`|`star`; omitted when idle or using the configured shape.
 Like `statusColor` it reports the PER-CALL override only, so a shape picked in Settings reads back as
 absent), `statusChangedAt` (when the status was last SET, in epoch seconds — the same clock an event's
-`ts` carries, so the two compare directly; omitted when idle. It is stamped on every ACCEPTED non-idle
+`ts` carries, so the two compare directly; omitted before any set. It is stamped on every ACCEPTED
 `session status` — a call refused by the pane-precedence rule below stamps nothing — not only on a
 change of state, so a hook re-pushing `active` refreshes it and
-`now - statusChangedAt` reads as how long ago the status was last WRITTEN — the age of the glyph.
-Normally that write is the agent's own push; a pane promotion re-tags the indicator and also counts.
+`now - statusChangedAt` reads as how long ago the status was last WRITTEN, including idle.
+Automatic and manual clears and pane promotion also count.
 Ephemeral like `unseen`: never persisted, so it is absent after a restart even for a restored session),
 `foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt, and also for a
@@ -208,16 +227,21 @@ other program),
 command string = the shell line that runs on the next launch; reported from persisted state, so a read
 after the override already fired still reports what is pinned), `background` (the
 background spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
-position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set), `unseen`
+position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set),
+`paneBackgrounds` (the per-pane overrides set via `session background --pane`, a `{left?, right?,
+scratch?}` object of the same specs; an absent pane inherits `background`; never the effective value;
+omitted when no pane has one), `unseen`
 (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session seen` — omitted
 when zero), `fontSize`/`splitFontSize`/`scratchFontSize` (the LIVE font size in points of each pane —
 the read side of `font --pane`; each omitted when that pane isn't realized. `fontSize` tracks the
 default/left target (the main pane, or the promoted split survivor once the primary exits — the same pane
 `font --pane left` writes); only the main pane's size survives a relaunch, so the split/scratch sizes and a
 promoted survivor are live-only — read them back here rather than from the snapshot), and `surfaces` (array
-of `{id, kind, active, visible, backedByZmx?}` where `kind` is
+of `{id, kind, active, visible, backedByZmx?, lead?}` where `kind` is
 `left`|`right`|`scratch`|`overlay`|`overlay-left`|`overlay-right`).
-Primary/split surfaces report `backedByZmx`; scratch and overlays omit it.
+Primary/split surfaces report `backedByZmx`; scratch and overlays omit it. `lead` is `leader`, `follower`
+or `unowned`: whether this Mac's window size is the one the pane's program sees. A pane that does not
+lead is covered. Absent until the pane's terminal reports one (see Remote sessions).
 The surface `id` is the address for `surface zoom`; hidden-but-alive split/scratch surfaces are included
 so a script can zoom them without changing split/scratch visibility first. Caveat: `active`/`visible`
 derive from the session's own flags, not from zoom — and `visible` reads false for a pane behind a
@@ -227,11 +251,12 @@ from the top-level `zoomedSurface`. Workspace nodes carry
 set — the read side of `workspace focus`, distinct from `active` the SELECTED workspace; omitted on
 non-members, and absent entirely when nothing is marked. Membership is reported INDEPENDENTLY of whether
 the filter is applied, so a marked-but-not-filtering set reads back too; a workspace ROW RENDERS in the
-sidebar iff `sidebarVisible && sidebarMode == "tree" && (!workspaceFilter || focused)`, every term on the
-same tree response — the sidebar hidden renders nothing, `flagged` mode renders a flat flagged-session
-list with NO workspace rows whatever the filter says, `tree` mode with the filter OFF renders the whole
-tree regardless of membership, and only `tree` mode with the filter ON narrows visibility to the
-members), and `collapsed` (whether this workspace is COLLAPSED in the sidebar tree — the read side of
+sidebar iff `sidebarVisible && ((sidebarMode == "tree" && (!workspaceFilter || focused)) || (sidebarMode == "flagged" &&
+sidebarFlaggedLayout == "tree" && one of its sessions is flagged))`, every term on the
+same tree response — the sidebar hidden renders nothing, `flagged` mode renders NO workspace rows under
+the flat layout and, under the tree layout, the workspaces holding a flagged session whatever the filter
+says, `tree` mode with the filter OFF renders the whole tree regardless of membership, and only `tree`
+mode with the filter ON narrows visibility to the members), and `collapsed` (whether this workspace is COLLAPSED in the sidebar tree — the read side of
 `workspace collapse`/`workspace expand` and `workspace new --collapsed`; `true` when collapsed, omitted
 when expanded, so an all-expanded tree carries no `collapsed` keys).
 
@@ -241,7 +266,9 @@ timeout in milliseconds, omitted when the setting is Disabled), `sidebarVisible`
 window's sidebar is currently shown — the read side of the write-only `sidebar` command, so a script
 can restore it, e.g. a tmux-style zoom that hides the sidebar and must re-show it only when it was
 visible before), `sidebarMode` (`tree` or `flagged` — the sidebar view mode, the read side of
-`sidebar mode`), `sidebarWidth` (the sidebar divider position in points, the read side of
+`sidebar mode`), `sidebarFlaggedLayout` (`flat` or `tree` — how the flagged view is arranged, the read side
+of `sidebar flagged-layout`; app-wide, so every window reports the same value, under the ordinary tree
+too), `sidebarWidth` (the sidebar divider position in points, the read side of
 `sidebar width`, reported here and nowhere else), `workspaceFilter` (whether the window's workspace focus filter is currently APPLIED —
 the flag half of the focus set, whose member half is each workspace node's `focused`; the read side of
 `workspace filter`, so a script can record the filter state, restore it, or make the toggle idempotent),
@@ -293,7 +320,8 @@ buys nothing. A caller with no tree uses `version`.
   workspace id. A workspace's COLLAPSED state does not affect it — a folded workspace is stepped into
   like any other. While the focus filter is applied, stepping is confined to the marked workspaces, the
   same scoping `session go` gets. Errors with `no other workspace to navigate to` when there is nowhere
-  to step: the flagged flat list (which renders no workspace rows), or a single visible workspace.
+  to step: flagged mode under either layout (stepping follows the focus projection, which the flagged
+  tree does not render), or a single visible workspace.
 - `workspace move --to up|down|top|bottom [--target] [--window W]` — reorder among siblings. Missing
   or invalid `--to` errors. Note: `--target active` resolves to the current workspace — a
   foreground-created workspace that still holds the target, else the selected session's, else
@@ -307,7 +335,7 @@ buys nothing. A caller with no tree uses `version`.
   into the set leaving the filter flag EXACTLY as it was. `add` never switches the filter on: that is
   what makes a multi-workspace set buildable, since a mark that narrowed the tree would hide the rows
   still to be marked, so mark several and apply once with `workspace filter on`.
-  Per-window and persisted; orthogonal to `sidebar mode` (the flagged flat list ignores the filter).
+  Per-window and persisted; orthogonal to `sidebar mode` (the flagged view ignores the filter in both layouts).
   While the filter is applied, `session go` navigation is scoped to the marked workspaces' sessions (and
   to the flagged set in flagged mode); an explicit `session select` of a session outside the set switches
   the filter OFF while KEEPING the set, so re-applying it costs one `workspace filter on`.
@@ -326,7 +354,8 @@ buys nothing. A caller with no tree uses `version`.
   `session flag clear` never does (it empties the list), and neither does `session new --no-select`, so
   the view can hold a row with nothing selected until one of the listed commands runs.
   Nor does a plain `session new` or a `session select` in FLAGGED mode: both make the fresh or chosen
-  session active while the flagged view renders no row for it, leaving the sidebar unselected.
+  session active while the flagged view renders no row for it, leaving the sidebar unselected. New Session
+  from a flagged-tree workspace row, or its hover +, is the same case.
   A script that changes what is visible should re-read `tree` before using the default `active` target.
   A workspace
   created while the filter is applied joins the set, so it is visible without breaking the filter — except
@@ -529,6 +558,9 @@ error keeps those names for compatibility.
   Works when the split is shown or hidden and under zoom/dashboard. Errors when there is no split or a
   surface is not ready. The new primary supplies `tree`'s `cwd`/`title`/`foreground`/`restoreCommand`/
   `commandWait`; the other side supplies `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
+- `session lead [--pane left|right] [--target] [--window W]`: take the lead of a pane for this Mac, as a
+  key press on its cover does; the pane is then covered on the other Mac. Ok when it already leads,
+  `pane has no lead to take` when its terminal reports none. Read back `surfaces[].lead`.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
@@ -552,9 +584,9 @@ error keeps those names for compatibility.
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
 - `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--shape circle|square|triangle|diamond|capsule|star] [--pane left|right|scratch] [--pane-id TOKEN] [--target] [--window W]` —
-  set the sidebar agent-status glyph. Every ACCEPTED non-idle call stamps the session node's
-  `statusChangedAt`, including one that re-pushes the status already showing, so a poller can tell a fresh
-  glyph from a stale one without keeping state of its own; a call refused by the pane-precedence rule
+  set the sidebar agent-status glyph. Every ACCEPTED call stamps the session node's
+  `statusChangedAt`, including idle and one that re-pushes the same status, so a poller can read the last
+  set time without keeping state of its own; a call refused by the pane-precedence rule
   changes nothing, the stamp included. `--blink` requests an attention pulse; macOS Reduce Motion
   suppresses the repeating sidebar and dashboard animation while keeping the status visible, and the
   pulse resumes when Reduce Motion is disabled. `--auto-reset` clears it back to idle once the session
@@ -611,8 +643,8 @@ error keeps those names for compatibility.
 - `session flag [on|off|toggle|clear] [--target] [--window W]` — flag/unflag a session for the flagged
   working-set view (a durable, persisted membership). `on`/`off`/`toggle` act on `--target` (default
   `active`) and are idempotent; `clear` ignores the target and unflags every session in the window.
-  Pair with `sidebar mode flagged` to see just the flagged sessions as a flat `session : workspace`
-  list. Unknown mode errors. The tree's `flagged` flag tracks membership.
+  Pair with `sidebar mode flagged` to see just the flagged sessions, arranged by
+  `sidebar flagged-layout` (a flat `session : workspace` list by default). Unknown mode errors. The tree's `flagged` flag tracks membership.
 - `session context <TEXT|--clear> [--target] [--window W]` — set or clear what the session is ABOUT, shown
   in the title bar — a PR number, an issue, the task in hand. It is set from OUTSIDE the session, so a
   hook or an orchestrator can say what a session it just created is for. Exactly one of TEXT or `--clear`, enforced at parse time and again server-side: a blank
@@ -620,8 +652,10 @@ error keeps those names for compatibility.
   trimmed of outer spaces and rejected if empty, over 256 UTF-8 bytes, or carrying any control character or
   line/paragraph separator; a rejected call leaves the previous context standing. It states durable purpose,
   not current activity: it persists across quit, relaunch and restore, and nothing expires it. A duplicated
-  session starts without one. A set or clear that CHANGES the value emits `tree.changed`; re-setting the
-  same value emits nothing. The tree's `context` field is the read side, omitted when unset. In the title
+  session starts without one. A set or clear that changes the SHOWN value emits `tree.changed`; re-setting
+  the same value emits nothing. The tree's `context` field is the read side, omitted when unset. A session
+  attached from another Mac also shows that Mac's context when it has none of its own (see Remote
+  sessions); that mirrored value is never persisted, and setting the text it already shows emits nothing. In the title
   bar it takes line two in normal mode (replacing the cwd/terminal-title detail) and follows the session and
   window names on line one in compact mode, where a long value tail-truncates before the names do. Settings
   ▸ Interface ▸ Title Bar ▸ "Session context" hides it without clearing it.
@@ -691,11 +725,15 @@ error keeps those names for compatibility.
   the requested presentation returns when Reduce Transparency is disabled. Errors on a malformed color
   (must be a `#rrggbb` hex value).
 - `session background clear [--target] [--window W]` — remove the session's background.
-  Per session (applies to the session's pane(s)); persisted, so it survives a relaunch. An image/text
-  watermark makes the pane render OPAQUE, overriding window translucency (an image is invisible at 0
-  background-opacity); a `color` instead honors the Settings window translucency. Read the current
-  background back from a session's `background` field in `tree --json` (a `{kind, colorHex, …}` object,
-  omitted when none).
+  An image/text watermark makes the pane render OPAQUE, overriding window translucency (an image is
+  invisible at 0 background-opacity); a `color` instead honors the Settings window translucency.
+- All four take `--pane left|right|scratch` (aliases `primary`/`top`, `split`/`bottom`): set or clear that
+  pane's own override instead of the persisted session default. A pane without one inherits the default;
+  `clear --pane` returns it to inheriting; set/clear without `--pane` never touch overrides. The override
+  follows its terminal (`session swap`, a closed left pane promoting the right); left/right persist, a
+  scratch override ends with that scratch terminal. Errors `session has no split pane` / `session has no
+  scratch terminal` when the pane does not exist, and `--pane must be left, right, or scratch` on a bad
+  name. Read the default from `background` and pane overrides from `paneBackgrounds` in `tree --json`.
 - `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--follow] [--pane left|right] [--target] [--window W]`
   — run `command` in an ephemeral terminal on top of the session; it closes when the command exits.
   `command` runs through `sh -c` (so shell operators DO work here) but with the app's GUI `PATH` (no
@@ -737,7 +775,8 @@ error keeps those names for compatibility.
   overlay in place. Exactly one of `--size-percent N` (1–100, makes it a floating framed panel) or
   `--full` (switches it back to the full-pane overlay that hides the session) is required; passing both
   or neither, or a percent outside 1–100, is an error. The overlay program keeps running across the
-  resize — it is a layout re-flow, never a re-spawn. Errors `no overlay` when none is open. Returns the
+  resize — it is a layout re-flow, never a re-spawn. Errors `no overlay` when none is open, and
+  `the viewer showing this overlay is gone` for an overlay shown on another Mac whose stream has dropped. Returns the
   session id. It has no `--pane`: pane overlays are always full-pane, and passing one errors. Against a
   HUD a percent is accepted and re-flows its WIDTH (the panel re-flows and its `hud.sizePercent` reports the
   new value; `hud.heightPercent` does not move, the text wrapping at a fixed 60 columns rather than at the
@@ -746,20 +785,28 @@ error keeps those names for compatibility.
   re-centres on its new grid within a tick — no `session hud update` is needed to correct the placement.
 - `session overlay close [--pane left|right] [--target] [--window W]` — close (destroy) the overlay.
   `--pane` closes that split pane's overlay; omit it for the session-wide one. It also takes a HUD down,
-  as a courtesy — the slot is the same one.
+  as a courtesy — the slot is the same one. For an overlay shown on another Mac (see Remote sessions) the
+  reply means the cancel was REQUESTED, not that the program ended; `session overlay result` reports how
+  it ended.
 - `session overlay result [--pane left|right] [--target] [--window W]` — returns `result.exitCode` once
   the overlay has closed. Errors `overlay still running` while up, `no overlay result` if none ran.
   `--pane` reads that pane's overlay; omit it for the session-wide one. A HUD runs the app's own painter,
   not a caller's program, so there is no status to report and the session-wide arm errors
   `no overlay result: the slot holds a hud`; the `--pane` arm still reads the separate pane-overlay slot,
-  since HUD pane scope changes placement without changing slot ownership.
+  since HUD pane scope changes placement without changing slot ownership. For an overlay shown on another
+  Mac the result is readable once its job ends, even while a held `--wait` surface there keeps the slot or
+  a HUD opened here during the run holds it. A job with no exit code errors `overlay ended: launch-failed`,
+  `overlay ended: canceled` or `overlay ended: unknown` (its helper stopped reporting, which does not prove
+  the program stopped), and `open --block` exits 1 for it. `--block` polls the slot, so an overlay
+  opened on it before the next poll answers for it.
 - `session overlay copy [--pane left|right] [--target] [--window W]` — returns `result.text` with the
   selection made INSIDE the overlay. `session copy` cannot reach it: that one addresses the pane the overlay
   covers, so a selection the user made in the overlay reads as `no selection` there. Does NOT touch the
   system clipboard. `--pane` reads that pane's overlay; omit it for the session-wide one. Errors
   `no overlay` with nothing in the slot, `overlay not realized` in the moment after `open` before its
   terminal is up, `no selection` when nothing is selected, and
-  `no overlay to read: the slot holds a hud` for a HUD, whose text is agterm's own.
+  `no overlay to read: the slot holds a hud` for a HUD, whose text is agterm's own, and
+  `overlay is shown on another Mac` for one a presenting Mac draws.
 - `session overlay text [--all] [--lines N] [--pane left|right] [--target] [--window W]` — returns
   `result.text` with the overlay's terminal buffer. `session text` reads the surface UNDERNEATH — its
   `--pane right` returns the shell, not the program drawn over it. `--all` and `--lines N` mean what they do
@@ -768,7 +815,7 @@ error keeps those names for compatibility.
   file. Errors `no overlay`, `overlay not realized` and `no overlay to read: the slot holds a hud` as
   `session overlay copy` does, plus `failed to read surface buffer` on a real read failure. It has no
   `no selection`: a blank realized screen is `ok` with an empty string.
-- `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--pane P] [--pane-id ID] [--target] [--window W]`
+- `session hud [open] <message>|--file FILE [--markdown] [--font-size PT] [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS] [--pane P] [--pane-id ID] [--target] [--window W]`
   — post a PASSIVE message panel over the session and return its id. It occupies the same session-wide slot
   as `session overlay open`, but carries a message rather than a program: it takes no input, the session
   keeps first responder and stays typable, and the terminal behind it is neither dimmed nor click-blocked.
@@ -784,6 +831,14 @@ error keeps those names for compatibility.
   the nine `top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right`
   (default `center`), the same anchors `session background` takes; every anchor off center holds a fixed
   margin off that pane edge on each axis it names, so a panel at the largest allowed size never overhangs.
+  `--hide-after SECONDS` makes the panel take itself down; omitted or 0 leaves it up until something closes
+  it, and anything outside `0...86400` is refused rather than clamped. Every successful open or update restarts the interval and an omitted value cancels it, like every other
+  option an update replaces rather than patches, while a refused write leaves the live panel's own deadline
+  alone. The clock is elapsed lifetime rather than viewing time: it runs while the session is unselected, its
+  pane hidden or its window minimized, and expiry closes the panel without selecting anything. A session
+  closed with undo still pending takes a TIMED panel down with it; one posted without `--hide-after` comes
+  back with the session. `hud.hideAfter` reads back the configured seconds, 0 for a panel that stays, never
+  a countdown.
   `--pane primary|left|top|split|right|bottom` makes the selected pane the bounds for measurement, explicit
   size, anchor, and margin. `--pane-id` takes the shell's stable `$AGTERM_PANE_ID`; a live token overrides
   `--pane`, while an unknown token uses that role as fallback or errors without one. The stored identity follows
@@ -791,7 +846,7 @@ error keeps those names for compatibility.
   without stopping its helper, and showing it restores the panel. Destroying the target closes the HUD.
   A corner is what keeps a long-lived panel out of the text the user is reading. The bare `top`/`bottom`
   this argument shipped with are still accepted for `top-center`/`bottom-center`, and `hud.position` reports
-  the canonical anchor whichever spelling was sent. The panel is measured from the message against the session's terminal font on BOTH
+  the canonical anchor whichever spelling was sent. The panel is measured from the message against its own font on BOTH
   axes separately — width from the longest wrapped line, height from the number of them — so a title and a
   subtitle give a wide, short panel rather than a square one. `--size-percent N` (1–100) overrides the WIDTH
   only; the height always follows the message, since a caller-set height could only strand it in an empty
@@ -802,9 +857,30 @@ error keeps those names for compatibility.
   background, rides the panel's body file, so an update can change it. Both read back, as
   `hud.backgroundColor` and `hud.textColor`. Message and detail are capped at 256 characters and
   reject control characters — newline included, since the panel prints straight into a live terminal and
-  `--detail` is the second line on offer. Errors `session.hud.open requires a message` on a missing or
+  `--detail` is the second line on offer.
+  `--markdown` renders the message as standard markdown (CommonMark plus GFM tables): headings, bold, italic,
+  strikethrough, nested lists, code blocks, block quotes, rules and tables; a link shows its label, an image its
+  alt text, and raw HTML stays literal. It raises the message cap to 4096 characters and allows newlines and tabs
+  in it; every other control character is still refused and the detail keeps the plain rules. Markdown
+  semantics apply: a single newline inside a paragraph is a space, so end a line with two spaces or a
+  backslash, or use list items, to keep rows apart; lists always render tight. Text wraps at 60 columns while
+  table rows stay intact, and the rows sit left-aligned as one block. What does not fit the panel is clipped:
+  a row too wide ends in `…`, and rows past the panel's height give way to a dim `… N more`, itself clipped
+  in a narrow panel. A table is framed in box-drawing borders with a rule under its header; trailing
+  all-empty table rows and an all-empty header row are not shown, the latter leaving no header rule.
+  A markdown message that renders nothing visible is refused like an empty one.
+  `--file FILE` reads the message from a UTF-8 file instead of the argument, exactly one of the two, once per
+  command (nothing watches the file), dropping one trailing newline. `agtermctl` reads it before sending and
+  fails there with `cannot read --file <path>: <reason>` or `--file <path> is not valid UTF-8`; passing both or
+  neither fails with `MESSAGE and --file are mutually exclusive` or `provide MESSAGE or --file`, and every cap
+  still applies to what is sent. `--font-size PT` (6–72) sets the
+  panel's own font, used for its surface and its measurement; it is fixed for the panel's life, and omitting
+  it uses the session's size at open. A window resize or divider drag re-measures the panel by itself.
+  Errors `session.hud.open requires a message` on a missing or
   empty message, `hud text must not contain control characters`, `hud message too long (max 256
-  characters)` / `hud detail too long (max 256 characters)`, `invalid color: <value> (#rrggbb)`,
+  characters)` (4096 with `--markdown`) / `hud detail too long (max 256 characters)`,
+  `font-size must be 6...72 points` from the CLI (`session.hud.open: --font-size must be 6...72 points` from
+  the raw protocol), `invalid color: <value> (#rrggbb)`,
   `invalid text color: <value> (#rrggbb)`,
   `invalid position: <value> (top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right|top|bottom)`,
   `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)`,
@@ -813,7 +889,7 @@ error keeps those names for compatibility.
   and `session.hud.open: --size-percent must be 1...100`.
   A second `hud` replaces the first; a `session overlay open` replaces a HUD, while a HUD over a RUNNING
   program is refused with `overlay already open` — a message is replaceable, a program is not.
-- `session hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--text-color #rrggbb] [--size-percent N] [--pane P] [--pane-id ID] [--target] [--window W]`
+- `session hud update <message>|--file FILE [--markdown] [--detail T] [--spinner] [--spinner-style S] [--position P] [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS] [--pane P] [--pane-id ID] [--target] [--window W]`
   — repaint the live panel in place: no re-spawn, no blink, the panel does not flicker. It REPLACES the
   whole spec rather than patching it, so `--detail`, the spinner, `--position`, `--text-color`, and pane selectors must be
   repeated to survive and an omitted one drops. `--spinner-style` may name a DIFFERENT style than the panel
@@ -822,7 +898,10 @@ error keeps those names for compatibility.
   validation. Pane lifecycle differs: update accepts a hidden target, while a missing split errors
   `session has no split` instead of `pane not visible`. There is no `--background-color`: the surface reads
   that once at creation, so only a fresh `session hud` can change it, and `tree` keeps reporting the creation
-  color across updates. Errors `no hud` when none is up.
+  color across updates. The same holds for the font: `update` takes no `--font-size`, and a raw protocol
+  update carrying `fontSize` is refused with
+  `session.hud.update: --font-size is fixed at open; reopen the hud to change it`. `--markdown` must be repeated
+  like every other option, or the panel returns to plain text. Errors `no hud` when none is up.
 - `session hud close [--target] [--window W]` — take the panel down and delete its message file. Errors
   `no hud` when none is up, so it is not idempotent. A program overlay in the same slot is left alone;
   `session overlay close`, ⌘W, and closing the session or its window also tear a HUD down and delete that
@@ -1040,7 +1119,7 @@ Invalid invocations error (rejected at the CLI and re-checked server-side): `--f
 
 ## pick
 
-`agtermctl pick [--prompt TEXT] [--query TEXT] [--allow-custom] [--follow] [--window W] [--no-block]`
+`agtermctl pick [--prompt TEXT] [--query TEXT] [--select ID] [--allow-custom] [--follow] [--window W] [--no-block]`
 reads choices from stdin and opens a native fuzzy picker in the target window. `pick` defaults to the open
 subcommand, so `agtermctl pick open` is not required. Stdin is read unconditionally, so a call that supplies
 no items needs `< /dev/null` or it blocks.
@@ -1056,11 +1135,15 @@ list it parsed, empty or not.
 
 The query matches item labels only; a subtitle is displayed but never searched, so consequence text on one
 row cannot filter out its safer neighbour. An empty query lists the items in the order the caller supplied
-them, so the first item is the one Return runs on open.
+them, so without `--select` the first item is the one Return runs on open.
 
 `--prompt` sets the query field's placeholder text. `--query` prefills it and filters on open, which ranks
 by match score and so does not preserve the supplied order; the seeded text opens selected, so the first
-keystroke replaces it rather than appending. `--allow-custom` adds a row for a nonmatching
+keystroke replaces it rather than appending. `--select ID` opens with that item highlighted and scrolled
+into view, so Return on an untouched picker runs it and Up/Down read relative to it; the id must name a
+supplied item (`pick select must name an item id` otherwise, an `--allow-custom` empty list included), and a
+`--query` that filters it out leaves the first visible row highlighted. The seed is consumed at open and
+has no tree read-back; the result's `id` and `index` report what was picked. `--allow-custom` adds a row for a nonmatching
 query and returns it as a custom result; with an empty item list that row is the only possible one, and it
 appears as soon as the query is nonblank, prefilled or typed; whitespace and newlines are trimmed first.
 A background `--window` target is raised only with `--follow`. Pick shares its window modal slot with
@@ -1134,8 +1217,9 @@ including `{"result":"pending"}` with exit 1. `ask cancel ID [--window W]` cance
 returns `ok`; cancelling a retained finished result is a successful no-op. Both commands use the exact
 global id and reject a mismatched explicit window.
 
-Session nodes expose terminal asks as `ask: {id, pane?}`; `pane` follows the current left/right role and
-is omitted for session-wide placement. Top-level `askPending` is GUI-only. Resolution removes the field
+Session nodes expose terminal asks as `ask: {id, pane?}`, plus a handed-over ask of either style with
+`remote` or `replica` (see Remote sessions); `pane` follows the current left/right role and is omitted for
+session-wide placement. Top-level `askPending` is the window's GUI slot. Resolution removes the field
 for that slot. The raw open reply echoes `result.pane` for pane placement. The latest 32 finished results
 are retained across both styles, including after owner closure; pending requests are never evicted.
 App shutdown can interrupt polling. Ask emits no events.
@@ -1177,24 +1261,34 @@ like `quick type`. Errors with `quick terminal not open` (never shown), `failed 
 the ⌃⇧P palette "Toggle Sidebar", and the ⌃⌘S keymap action (`toggle_sidebar`).
 
 `agtermctl sidebar mode [tree|flagged|toggle]` — flip the frontmost window's sidebar VIEW between the
-workspace tree and the flat flagged working-set list (the durable per-session `flag`; each flagged row
-is labeled `session : workspace`, even across workspaces). `toggle` is the default; idempotent
+workspace tree and the flagged working set (the durable per-session `flag`; in the default flat layout
+each flagged row is labeled `session : workspace`, even across workspaces). `toggle` is the default; idempotent
 (delta-computed); an unknown mode is an error, and `no open window` when none is open. Persisted
 per-window. While in `flagged` mode, `session go` navigation (and the Ctrl-Tab MRU switcher) is scoped
 to the flagged sessions only; back in `tree` it spans the marked workspaces' sessions (while the focus
 filter is applied) or all sessions. The GUI half is the bottom-bar flag button, View ▸ Show Flagged / Show All, and the
 ⌃⇧P palette. Use with `session flag` to build and view a cross-workspace working set.
 
+`agtermctl sidebar flagged-layout [flat|tree|toggle]` — pick how the flagged view arranges its sessions.
+`flat` is one list labeled `session : workspace`; `tree` nests the flagged sessions under their workspace
+rows and leaves out workspaces holding none. `toggle` is the default; an unknown layout is an error.
+APP-WIDE, the same setting as Settings ▸ General ▸ Flagged view layout: no `--window`, no open window
+needed, and every window's flagged view follows at once. Setting it never enters flagged mode and never
+moves the selection. Returns the resulting layout in `result.text`; read back as the tree's top-level
+`sidebarFlaggedLayout`, reported under the ordinary tree too. The tree layout shares each workspace's
+collapse state with the ordinary tree, ignores the focus filter, and keeps `workspace go` unavailable.
+
 `agtermctl sidebar expand [--window W]` — expand every workspace row in a window's sidebar tree.
 Defaults to the frontmost window; `--window` (id / prefix / `active`) targets any OPEN window, so a
 script can expand a background window's tree. Idempotent (a clean no-op when all are already expanded);
-a graceful no-op in `flagged` mode (no workspace rows); a named-but-closed window errors, and `no open
+a graceful no-op under the flat flagged list (no workspace rows). In either tree layout it applies to
+all workspaces, including those the view omits. A named-but-closed window errors, and `no open
 window` when none is open. The GUI half (frontmost only) is View ▸ Expand Workspaces and the ⌃⇧P palette
 "Expand Workspaces".
 
 `agtermctl sidebar collapse [--window W]` — collapse every workspace EXCEPT the current one (the same
 resolution as `--target active`), which stays expanded and is scrolled into view. Same `--window`
-selector and defaults as `expand`. Idempotent; a graceful no-op in `flagged` mode; a named-but-closed
+selector and defaults as `expand`. Idempotent; a graceful no-op under the flat flagged list; a named-but-closed
 window errors, and `no open window` when none is open. The GUI half (frontmost only) is View ▸ Collapse
 Workspaces and the ⌃⇧P palette "Collapse Workspaces".
 
@@ -1233,8 +1327,9 @@ For agentic attention (waiting on input, or a finished result), prefer `session 
 and OSC 9/777. The two overlap, either can raise an "I need you" signal, but a notification is a
 one-shot banner and badge with no lasting state, while `session status` is a typed, persistent state
 (`active`/`blocked`/`completed`) that stays on the row until acted on, is more precise, and drives the
-attention list, the title-bar bell, and attention navigation (`session go --to next-attention`). Keep
-`notify` for a one-off nudge that needs no follow-up.
+attention list, the title-bar bell, and attention navigation (`session go --to next-attention`). The list
+and the bell span every open window; attention navigation steps within the window. Keep `notify` for a
+one-off nudge that needs no follow-up.
 
 ## font
 
@@ -1263,7 +1358,9 @@ parse diagnostics (0 = clean). App-global (no `--window`).
   has none), and `overridden: true` when a `map` line moved it off its shipped default. Every action is
   listed, bound or not, so you can also see which chords are free.
 - `commands[]` — the custom commands: `name`, and `shortcut` omitted for a palette-only one. A shortcut
-  holding alternatives is one `|`-joined string, in the file's own spelling.
+  holding alternatives is one `|`-joined string, in the file's own spelling. `errorHud` is always a boolean,
+  `errorPosition` is the canonical position (default `center`), and `errorPane` is `left` or `right`,
+  omitted for session-wide placement. The human listing shows error options for opted-in commands.
 - `diagnostics[]` — `line` + `message` per parse problem (`keymap.reload` returns only the count).
 - `menu[]` — the key equivalents the menu bar carries: `chord`, the owning `menu`, the item `title`, its
   `selector`, and `enabled: false` when the item is disabled. agterm's own items report `menuAction:`;
@@ -1294,39 +1391,65 @@ The file lives at `<config dir>/keymap.conf` (default `~/.config/agterm`; the di
 Key Mapping). Three verbs, line-based; blank lines and `#` comments ignored:
 
 - `map <chord> <action>` — rebind a built-in menu action.
-- `command "<name>" [chord] <shell...>` — define a custom shell command, listed in the action palette
+- `command "<name>" [chord] [error options] <shell...>` — define a custom shell command, listed in the action palette
   marked `custom`. The quoted name may contain spaces. The post-name token is the chord only if it
-  parses AND carries a modifier (a bare modifier-less key is rejected). A custom chord may be a leader
-  sequence (chords joined by `>`, e.g. `ctrl+a>g`). No chord → palette-only.
+  parses and starts with a modifier or a function key (`f1` through `f20`).
+  A custom chord may be a leader sequence (chords joined by `>`, e.g. `ctrl+a>g`). No chord → palette-only.
 - `global-hotkey <chord>` — bind ONE system-wide chord that summons the quick terminal while any
   application is frontmost. Unset unless the line is present. Exactly one chord: no alternatives, no
-  leader sequence, and it must carry a modifier. A second line replaces the first. macOS registers it
-  by physical key position, so it survives a layout switch. It is registered with the OS rather than
+  leader sequence, and it needs a modifier unless it is a function key.
+  A second line replaces the first.
+  macOS registers it by physical key position, so it survives a layout switch.
+  It is registered with the OS rather than
   agterm's own monitor, so it takes NO part in the collision rules below — it may share a chord with a
-  menu item, and whichever application is frontmost decides who gets the key.
+  menu item, but the global hotkey wins even when agterm is frontmost.
+  `global-hotkey f5` takes F5 from every application and from agterm local map/command bindings.
 
-Either verb's chord token may hold **alternatives** joined by `|`, with no spaces around it (everything
-after the first token is the shell line): `map cmd+t|ctrl+space>s toggle_split` fires the action from
-either. A built-in's first single-chord alternative the menu can carry becomes its menu shortcut (one that
+Custom commands keep banner-only failure reporting by default, subject to the notification setting.
+To add a ten-second failure panel, put `--error-hud` after the optional chord, before the shell body:
+
+```text
+command "Build" ctrl+a>b --error-hud ./build.sh
+command "Deploy" --error-position top-right --error-pane left --error-hud ./deploy.sh
+```
+
+The panel defaults to `center` over the whole session. `--error-position POS` accepts the same nine
+positions as `session hud --position`, including the `top`/`bottom` aliases. `--error-pane left|right`
+selects that role when the failure is reported. If the pane is hidden or gone, the panel falls back to
+the whole session at the configured position and logs the fallback. A program overlay keeps its slot.
+The panel shows the command name, exit status or spawn error, and the last usable stderr line if any;
+only opted-in commands capture stderr. Successful commands show nothing.
+
+Flags may appear in any order. Position and pane require `--error-hud`. A missing/invalid value,
+duplicate flag, unknown leading `--error-*` option, or empty shell body diagnoses and skips the command.
+The first ordinary shell token ends option parsing; the rest stays shell text, so
+`--error-hud ./script --error-pane right` passes `--error-pane right` to the script.
+Use `--` to end options explicitly, including before a shell body starting with a reserved name.
+Palette-only commands put flags immediately after the quoted name; a chord is never parsed after flags.
+
+Either verb's chord token may hold **alternatives** joined by `|`, with no spaces around it:
+`map cmd+t|ctrl+space>s toggle_split` fires the action from either. A built-in's first single-chord alternative the menu can carry becomes its menu shortcut (one that
 names a reserved chord or a bare arrow is diagnosed and dropped, and the next single chord takes the slot);
 every other alternative, and every alternative of a `command`, is delivered by a key monitor and so must
-carry a modifier on its first chord. `global-hotkey` is outside all of this: the OS owns it, and it WINS —
-agterm frontmost included — so a chord it shares with a menu action fires the panel and the menu binding
-never sees it. A `map` line with no single-chord alternative
+start with a modifier or a function key. `global-hotkey` is outside all of this:
+the OS owns it and wins, agterm frontmost included, so a chord it shares with a menu action
+fires the panel and the menu binding never sees it. A `map` line with no single-chord alternative
 (`map ctrl+a>s toggle_split`) leaves the action with NO menu shortcut — its shipped default is gone, not
 kept. A malformed alternative rejects the whole line; one that merely breaks a rule or collides with
 another binding drops by itself and its siblings keep working. A line left binding nothing at all leaves
 the action on the shortcut it shipped with.
 
 A **chord** is modifier words joined by `+` then a base key: modifiers `ctrl`, `cmd`, `opt`, `shift`;
-base key is a single character or `tab`/`space`/`return`/`delete`/`left`/`right`/`up`/`down`. A key typed
-with Shift is written `shift+<base>` (`shift+/` = `?`, `shift+=` = `+`, `shift+5` = `%`) — the base key,
+base key is a single character or `tab`/`space`/`return`/`delete`/`left`/`right`/`up`/`down`,
+or `f1` through `f20`. A key typed with Shift is written `shift+<base>`
+(`shift+/` = `?`, `shift+=` = `+`, `shift+5` = `%`), the base key,
 not the shifted glyph. `+`/`>` can't be a bare key token (they are the separators), though those keys are
 bindable via `shift+=`/`shift+.`. A `map` line may not bind a bare, modifier-less arrow (`map left …`) —
 a built-in rides an always-on menu key-equivalent, so a bare arrow would swallow the key everywhere;
 any modifier makes it bindable. Some chords are reserved (the Ctrl-Tab switcher, Ctrl-1/2 pane focus,
 and Linux Ctrl+, Preferences shortcut)
-and cannot be bound.
+and cannot be bound. On Apple keyboards, hold Fn/Globe or enable standard function keys in
+System Settings to send F1-F12 instead of media keys.
 
 Custom-command tokens (expanded into the `/bin/sh -c` line, raw — prefer the quoted `$AGT_*` env form
 for untrusted content). A remote host can set the session title (OSC) and working directory (OSC 7),
@@ -1349,6 +1472,12 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 - `{AGT_PANE}` / `$AGT_PANE` — the pane the command fired from: `left` (main), `right` (split), or
   `scratch` (the session's scratch terminal). Feed it back as `session type --pane "$AGT_PANE"` to type
   into the very pane the shortcut was pressed in.
+- `{AGT_PANE_ID}` / `$AGT_PANE_ID` — that pane's stable token, the value its shell holds as
+  `AGTERM_PANE_ID`. `{AGT_PANE}` is the role at fire time and a swap or promotion changes it; the token
+  follows the terminal, so feed it to `--pane-id` (`session text` and `session status` take any pane;
+  `session restore`, `hud open` and `ask open` take a left or right token only, never the scratch) when
+  the command must find the same shell later. A chord fired inside an overlay carries the token of the
+  pane the overlay covers, the one `{AGT_PANE}` names. Empty for a launcher fired with no session.
 - Plus the other `$AGT_*` context vars the runner exports.
 
 Linux runs custom commands detached with stdin, stdout, and stderr connected to `/dev/null`.
@@ -1363,6 +1492,37 @@ Built-in action names for `map` include: `new_window`, `new_workspace`, `new_ses
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
 `previous_window`, `next_window`, `focus_left_pane`, `focus_right_pane`, `select_theme`). Editing the keymap from a terminal: open
 `keymap.conf` in `$EDITOR`, then `agtermctl keymap reload`.
+
+## hooks
+
+`hooks.conf`, beside `keymap.conf`, binds a shell line to an event kind: `on <kind> <shell...>`, one per
+line, blank and `#` lines ignored, the remainder after the kind passed to `/bin/sh -c` untouched.
+Several lines per kind are independent hooks; an identical kind+command line is skipped with a
+diagnostic. The script gets the event as one JSON object on stdin (the `events --json` shape) followed
+by a newline and EOF, plus `AGT_EVENT_KIND`, `AGT_EVENT_STATUS`, `AGT_EVENT_HOST`, `AGT_SESSION_ID`,
+`AGT_WORKSPACE_ID`, `AGT_WINDOW_ID` and `AGT_SOCKET`, each set explicitly and empty when the event lacks the field. It runs
+detached in the app's working directory with the widened `PATH` a custom command gets; pass
+`--socket "$AGT_SOCKET"` to any `agtermctl` call. One process per line at a time; further events queue
+in order up to 256, then the oldest is dropped and counted. No timeout. A non-zero exit, a failed spawn
+or an event that could not be handed to a running script banners once per hook until its next success
+or a reload; a script that ignores stdin is fine, only its exit status counts. A hook whose command
+emits another event of its own kind triggers itself again; the queue bounds concurrency, nothing detects
+the loop.
+
+`agtermctl hooks reload` — re-read and apply `hooks.conf`; returns `result.count` = the number of
+parse diagnostics (0 = clean). A hook whose line is unchanged keeps its running child, queue and
+counters, comments and reordering included; a removed line drops its queue and finishes its child.
+
+`agtermctl hooks list` — returns `result.hooks`:
+
+- `path` — the `hooks.conf` this came from.
+- `diagnostics[]` — `line` + `message` per parse problem.
+- `hooks[]` — one row per line in file order, then any removed line whose child still runs, marked
+  `retired: true`: `kind`, `command`, `line`, `runningPid` and `elapsedSeconds` while a child runs,
+  `pending` (events waiting behind it), `dropped` (events the bounded queue discarded), and
+  `lastFailure`, kept until the hook next succeeds (a reload keeps it).
+
+Both are app-global and refuse a target or `--window`.
 
 ## config
 
@@ -1526,6 +1686,7 @@ same answer a target that does not exist gets.
 Mac over ssh; with none it reports this app's own, which is exactly the form the remote call runs on the
 far side, so it is also how to see what another machine would answer without sshing anywhere.
 `result.remote` carries `endpoint` (the zmx `executable` and `socketDirectory`), `host` when one was given,
+`presentation` (the presentation protocol version, absent from an app too old to stream),
 and `sessions`, each with `id`, `name`, `windowID`/`windowName` and `workspaceID`/`workspaceName` (show the
 names, group by the ids — neither is unique, so two windows called `main` merge if you group by name),
 `context` when its owner set one, `cwd`, `splitAxis` when it has a split, and `panes`
@@ -1553,6 +1714,59 @@ here is a failure found before that point — a connection that starts and later
 exit, which holds on Ghostty's press-any-key prompt under one line naming the host, the session, the pane
 and the exit status.
 
+A program in an attached session runs on the origin and talks to the origin's agterm, so what it asks
+agterm to draw would show there only. Every attach therefore also opens a presentation stream, and this
+Mac mirrors the origin session's status, its `session context`, its `notify` notifications, its HUD and
+the layout of panes already attached.
+Nothing has to be set up beyond the `agtermctl` PATH precondition above. What to expect:
+
+- The origin's context shows in this Mac's title bar and as the row's `context` in `tree`. A
+  `session context` set on this Mac's row wins over it, and `--clear` here removes only that local value,
+  so the origin's latest context shows again. It cannot blank the origin's. An origin running an agterm
+  that predates context mirroring still connects and mirrors status and HUD, with no context.
+
+- Two existing remote panes follow the origin's split axis, hide/show and swaps. Local panes, divider
+  ratio and focus stay local. A layout never opens a pane: an origin split opened later requires closing
+  and attaching the row again, and a replica closed here stays closed. Older origins leave layout alone.
+- Confirmed origin removal closes its replica without acknowledgement, even if ssh already exited and
+  left a hold prompt. The last replica waits for its ssh exit and may then close the row. A pending local
+  split prevents automatic primary removal; an ordinary disconnect still holds for a keypress.
+- `presentation.state` in `tree` reports the stream. `connected` means mirroring works; it is not a claim
+  about the panes' ssh connections. An origin too old for it reads `unsupported` and the attach still works.
+- When the stream drops, the mirrored status, context and HUD are cleared here and come back on reconnect. Retries
+  run after 1, 2, 4, 8, 16 then 30 seconds, slow to every 5 minutes after eight failures in a row, and
+  never stop.
+- A notification raised while the stream is down is never shown here; status, context and HUD are restored.
+- A terminal notification (OSC 9/777) is not mirrored: it already arrives in the pane's bytes and is
+  raised here once. A mirrored `notify` records a `notify` event on each app.
+- A HUD with `--hide-after` closes here on this Mac's own countdown of the time the origin had left, so
+  the two panels can close a moment apart.
+- A HUD or overlay opened by a program on THIS Mac wins: a mirrored HUD never replaces or closes it.
+- A non-idle status set on this Mac's row holds until a live status update arrives from the origin, a
+  repeat of the same value included. A reconnect does not end it, even when the origin's status changed
+  while the stream was down. Clearing it here gives the row back to the origin's status.
+- One attached row per session holds the presenter role (`presentation.mode` is `presenter`): the first
+  whose stream asks for it while none holds it. The others mirror and ask again only when they reconnect.
+  While a session has a presenter, an `ask open` or `session overlay open` newly aimed at it on the origin
+  is handed to the presenting Mac, and the caller on the origin gets the answer or the exit status as usual.
+- A handed-over ask the presenting Mac refuses (its slot is taken, or a GUI question's target is not on
+  screen), or one whose stream drops, goes back to the origin and waits there like a local one. If the
+  origin cannot place it, it ends `{"result":"cancelled","reason":"presentation-lost"}`.
+- A handed-over overlay runs its program ONCE, on the origin, under an ssh terminal the presenting Mac
+  opens (`agtermctl session overlay run-job`, plumbing not meant to be typed). The origin's session stays
+  uncovered and its slot is reserved (`remoteOverlays`). An overlay the presenting Mac cannot show ends
+  `launch-failed` rather than opening on the origin. `session overlay close` requests the cancel, `resize`
+  answers `the viewer showing this overlay is gone` once its stream is, and `copy`/`text` refuse. The
+  presenting Mac's own `session overlay result` for it reports its local ssh status; ask the origin.
+- When the stream drops, a `--wait` overlay whose program already ended closes on the presenting Mac,
+  and a running one keeps running and closes when its ssh ends. Nothing is handed back later.
+- While the stream is not up the row's indicator says so and names the host. It retries on its own;
+  close and reattach the session to retry at once.
+
+`agtermctl zmx present SESSION` is the plumbing behind it: it opens the stream on the local socket and
+bridges it to stdio as newline-delimited JSON. agterm runs it over ssh on the origin; it is not meant to
+be typed.
+
 Closing a remote session here ends only this side's connection: the far-side processes keep running and
 nothing agterm does from this end can kill them. It is never written to disk, so it does not come back
 after a relaunch whatever the restore mode is.
@@ -1566,18 +1780,22 @@ one opened after the attach-time split is closed), Duplicate Session, and New Se
 to open in the current session's directory. An explicit overlay `--cwd` is used as given. Quote both
 variables; an existing local path is not checked to be the same repository as the remote one.
 
-When another client leads at a different terminal size, local cursor and screen-text reads can disagree
-with the application's layout; automation relying on those reads, including the chat transport, is
-unsupported in that state.
+Each pane has ONE leading Mac, whose window size the program inside sees. `zmx attach` takes the lead in
+every pane at once; the same panes on the Mac the session runs on are covered ("in use from another Mac").
+Each pane's `lead` in `tree` reads `leader`, `follower` or `unowned`. It is absent when the pane has no
+daemon to lead, which is every local pane outside Live sessions mode (`agtermctl restore mode`), and when
+an agterm on either side predates the lead. `agtermctl session lead [--pane left|right]` takes the lead
+for this Mac, as pressing a key on the cover does.
+
+On the Mac the session RUNS on, a covered pane stays fully drivable: `session type`, `session text` and
+`surface cursor` go through the session's daemon and answer for the real layout, so pane-to-pane
+automation is unaffected by who leads. On the ATTACHING Mac a covered pane refuses those three with
+`pane is in use on the Mac it runs on`; run `session lead` first.
 
 Both commands run ssh non-interactively (`BatchMode`), so key-based auth must already work for the host —
-a password or host-key prompt is a failure, not a question. An attach joins as a follower and pinned zmx
-keeps one leader per pane, so the pane arrives at the OTHER machine's window size and drops input until
-the first CLASSIFIED key (a printable character, Return, Tab or Backspace) takes the lead and reflows
-it. Until then the mouse, focus reporting and Ctrl-L do not reach the far side, so a mouse-driven TUI looks
-dead, and an ordinary control key may not wake it. Because the lead is per pane, typing in one half of a split leaves the other at the
-remote's geometry, and after the session closes the far side keeps that size until something there resizes
-it.
+a password or host-key prompt is a failure, not a question. Against an origin whose agterm predates the
+lead, the attach follows instead: the pane arrives at the OTHER machine's window size and drops input
+until a typed key (a printable character, Return, Tab or Backspace) takes the lead.
 
 Every zmx command needs a running agterm: only the app can join its live windows, its pending closes and
 its persisted snapshots against what zmx reports. With agterm stopped there is nothing to ask.
@@ -1595,6 +1813,34 @@ For a PER-SESSION, per-pane override that pins (or suppresses) what a pane resto
 denylist, and is what a `SessionStart` hook rewrites to reattach an agent session — agterm's installed
 Claude Code hooks already do that for `claude`. `restore clear` here is app-global and touches only the
 captured commands, not those overrides.
+
+## terminfo
+
+`agtermctl terminfo install DESTINATION [-p PORT] [-i FILE ...] [-J HOST] [-F FILE]` — install the bundled
+`xterm-ghostty` terminfo entry into a remote account's `~/.terminfo`. Local-only: it never opens the
+control socket, takes no `--socket`, `--window` or `--json`, and needs no running agterm. It dumps the
+entry with `infocmp -x` from the database next to the running `agtermctl` (falling back to `TERMINFO`
+from the environment outside a bundle), then runs the remote `tic -x -o "$HOME/.terminfo" -` over one
+ssh connection with the source on stdin. Nothing is cached; run it once per host and account.
+
+- `DESTINATION` — as ssh takes it: host, `user@host`, or an alias from `~/.ssh/config`. Refused when it
+  starts with `-` or contains whitespace or a control character.
+- `-p`, `-i` (repeatable), `-J`, `-F` — passed through to ssh. No other ssh option passes; other
+  connection settings go in `~/.ssh/config`. The execution settings are the installer's and override the
+  config: `-T`, `StdinNull=no`, `SessionType=default`, `ForkAfterAuthentication=no`, `RemoteCommand=none`.
+- The connection is interactive: a password, passphrase or host-key prompt is answered on this terminal.
+  Do not run it from a hook or a non-interactive script unless key auth already works for the host.
+
+Human output on success is `installed xterm-ghostty on DESTINATION`. It exits with ssh's status (128 plus
+the signal when ssh was killed), and 64 for a usage error. Failures before the connection open none:
+
+- `no xterm-ghostty terminfo entry next to this agtermctl; looked in <dirs>` — no database found.
+- `infocmp exited N: <stderr>` — the local dump failed.
+- `could not start ssh: <call> failed with <reason>` — the spawn failed.
+- `agterm: tic is not installed on this host, install ncurses first` — printed by the remote and followed
+  by `ssh exited 3; xterm-ghostty was not installed`.
+- `ssh exited N; xterm-ghostty was not installed` — any other remote failure; ssh's own stderr above it
+  says what happened.
 
 ## version
 
@@ -1626,6 +1872,9 @@ a terminal surface's.
 `invalid scratch mode`, `session has no split` (focus, restore, or HUD update), `no selection` (copy),
 `overlay already open` /
 `no overlay` / `overlay still running` / `no overlay result` / `pane overlay already open` /
+`overlay ended: launch-failed|canceled|unknown` / `overlay is shown on another Mac` /
+`overlay command too large to show on another Mac` /
+`the viewer showing this overlay is gone` (an overlay shown on another Mac) /
 `pane not visible` (pane overlay or HUD open),
 `no hud` (session hud update/close with none up) /
 `hud pane must be left or right` (a HUD pane ID resolved to scratch) /

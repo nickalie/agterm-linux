@@ -85,6 +85,8 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
 
     /// Called on the main actor when the shell process exits, so the app can close the owning session.
     var onExit: (() -> Void)?
+    /// Called on the main actor when the command exits and `waitAfterCommand` holds the surface open.
+    var onExitHeld: (() -> Void)?
 
     /// For a capturing overlay surface: the temp file the command wrapper writes its exit status to
     /// (`echo $? > file`), nil otherwise — libghostty's child-exited status reflects the login-shell wrapper
@@ -698,7 +700,7 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
         // `watermarkSession`, sessionless overlay/quick skip it. ALSO re-applies a standalone
         // `dashboardFontOverride` for a member realizing AFTER the dashboard set the transient font, since
         // `applyWatermarkFromSession` honors `dashboardFontOverride ?? session.fontSize`.
-        if (session ?? watermarkSession)?.backgroundWatermark != nil || dashboardFontOverride != nil {
+        if effectiveWatermark != nil || dashboardFontOverride != nil {
             applyWatermarkFromSession()
         }
         // an overlay surface with its own background color applies it here too — the overlay is sessionless,
@@ -892,6 +894,7 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
         // retain cycle. MUST stay after the onExitCodeCaptured?(code) call above, which niling earlier would
         // silently drop. no libghostty callback fires once the surface is freed.
         onExit = nil
+        onExitHeld = nil
         onExitCodeCaptured = nil
         onFocusChange = nil
         onClearUnseen = nil

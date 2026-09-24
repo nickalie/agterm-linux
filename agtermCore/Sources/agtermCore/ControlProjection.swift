@@ -14,17 +14,23 @@ public struct ControlSurfaceNode: Codable, Sendable, Equatable {
     public let visible: Bool
     /// Actual zmx backing for primary/split surfaces; nil for ephemeral surfaces or older servers.
     public let backedByZmx: Bool?
+    /// Whether this pane's client leads its zmx daemon: `leader`, `follower` or `unowned`. A pane that
+    /// does not lead is covered and its reads come from the daemon. Nil until the pane's zmx reports a
+    /// role, which a zmx or an origin without explicit leadership never does.
+    public let lead: ZmxLeadRole?
 
     public init(id: String, kind: String, active: Bool, visible: Bool) {
         self.init(id: id, kind: kind, active: active, visible: visible, backedByZmx: nil)
     }
 
-    public init(id: String, kind: String, active: Bool, visible: Bool, backedByZmx: Bool?) {
+    public init(id: String, kind: String, active: Bool, visible: Bool, backedByZmx: Bool?,
+                lead: ZmxLeadRole? = nil) {
         self.id = id
         self.kind = kind
         self.active = active
         self.visible = visible
         self.backedByZmx = backedByZmx
+        self.lead = lead
     }
 }
 
@@ -63,11 +69,23 @@ public struct ControlHudNode: Codable, Sendable, Equatable {
     public let position: String
     /// The pane currently carrying the stable HUD target, nil/omitted for session-wide placement.
     public let pane: String?
+    /// The panel's auto-hide in seconds, 0 for one that stays until something closes it. The CONFIGURED
+    /// duration rather than the time left: each successful open or update restarts it, so a caller who wants
+    /// a countdown holds its own clock from the call it made.
+    public let hideAfter: Double
+    /// markdown reports whether the message renders as markdown. Always present; an absent key decodes as
+    /// false.
+    public let markdown: Bool
+    /// fontSize is the caller's requested point size, nil/omitted when the panel inherits the session's.
+    public let fontSize: Double?
 
     public init(message: String, detail: String? = nil, spinner: String = HudSpinner.noneName,
                 backgroundColor: String? = nil, textColor: String? = nil,
                 sizePercent: Int? = nil, heightPercent: Int? = nil, position: String,
-                pane: String? = nil) {
+                pane: String? = nil, hideAfter: Double = 0, markdown: Bool = false, fontSize: Double? = nil) {
+        self.hideAfter = hideAfter
+        self.markdown = markdown
+        self.fontSize = fontSize
         self.message = message
         self.detail = detail
         self.spinner = spinner
@@ -78,6 +96,27 @@ public struct ControlHudNode: Codable, Sendable, Equatable {
         self.position = position
         self.pane = pane
     }
+
+    enum CodingKeys: String, CodingKey {
+        case message, detail, spinner, backgroundColor, textColor, sizePercent, heightPercent, position, pane
+        case hideAfter, markdown, fontSize
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        message = try c.decode(String.self, forKey: .message)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail)
+        spinner = try c.decode(String.self, forKey: .spinner)
+        backgroundColor = try c.decodeIfPresent(String.self, forKey: .backgroundColor)
+        textColor = try c.decodeIfPresent(String.self, forKey: .textColor)
+        sizePercent = try c.decodeIfPresent(Int.self, forKey: .sizePercent)
+        heightPercent = try c.decodeIfPresent(Int.self, forKey: .heightPercent)
+        position = try c.decode(String.self, forKey: .position)
+        pane = try c.decodeIfPresent(String.self, forKey: .pane)
+        hideAfter = try c.decode(Double.self, forKey: .hideAfter)
+        markdown = try c.decodeIfPresent(Bool.self, forKey: .markdown) ?? false
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
+    }
 }
 
 /// The session's pending terminal ask and its current pane placement.
@@ -86,10 +125,16 @@ public struct ControlSessionAsk: Codable, Sendable, Equatable {
     public let id: String
     /// Current left/right placement, nil for the whole session.
     public let pane: String?
+    /// True while a viewer presenting the session draws the ask; omitted when this Mac does.
+    public let remote: Bool?
+    /// True on a viewer for a replica of an ask its origin owns; the id is the origin's.
+    public let replica: Bool?
 
-    public init(id: String, pane: String? = nil) {
+    public init(id: String, pane: String? = nil, remote: Bool? = nil, replica: Bool? = nil) {
         self.id = id
         self.pane = pane
+        self.remote = remote
+        self.replica = replica
     }
 }
 
@@ -104,6 +149,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// nil/omitted when none reported. The unprocessed `Session.oscTitle`, distinct from `name` (the derived
     /// sidebar label, which uses it as one fallback); a remote session's local `cwd` goes stale, this does not.
     public let title: String?
+    /// Whether this is the window's selected session. Selection within the window, not keyboard focus: it
+    /// stays `true` while another window is frontmost.
     public let active: Bool
     /// Whether the split is SHOWN side by side, the read side of `session.split on|off`. A split hidden with
     /// ⌘D reports `false` while its pane stays alive, so a caller asking "is there a second pane" must read
@@ -148,8 +195,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let ask: ControlSessionAsk?
     public let scratch: Bool
     public let flagged: Bool
-    /// What the session is FOR, the read side of `session.context`; nil/omitted when none is set. Durable
-    /// purpose, so it survives a relaunch and only an explicit `session.context clear` removes it.
+    /// What the session is FOR: `Session.effectiveContext`, so the local `session.context` value or, on an
+    /// attached row without one, the origin's mirrored context. Nil/omitted when neither is set.
     public let context: String?
     /// For a `--command` session, whether it HOLDS its surface after the command exits (`session.new
     /// --command … --wait`) instead of closing; nil/omitted for a plain or non-holding session. The read
@@ -202,15 +249,15 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// the Settings shape / the default plain circle. The read side of `session.status --shape` — the
     /// PER-CALL override only, exactly like `statusColor`.
     public let statusShape: String?
-    /// When the agent status was last SET, as epoch seconds on the `ControlEvent.ts` clock (so the two
-    /// compare directly); nil/omitted when idle. Stamped on EVERY non-idle `session.status`, not only on a
-    /// change of state, so a hook re-pushing `active` refreshes it and "now minus this" reads as how long ago
-    /// the status was last WRITTEN — normally the agent's own push, though a pane promotion re-tags the
-    /// indicator and counts too. Ephemeral like `status` and `unseen` — never persisted.
+    /// When the status was last set, idle and repeated values included, as epoch seconds on the
+    /// `ControlEvent.ts` clock. Omitted before any set; never persisted.
     public let statusChangedAt: Double?
     /// The session's background watermark spec; nil/omitted when none is set. The read side of
     /// `session.background`.
     public let background: BackgroundWatermark?
+    /// paneBackgrounds is the read side of `session.background --pane`: overrides only, never effective values,
+    /// so an absent pane inherits `background`; omitted when no pane has one.
+    public let paneBackgrounds: PaneBackgrounds?
     /// The session's unseen-notification badge count; nil/omitted when zero. `notify` (and terminal OSC
     /// 9/777) raise it, `session.seen` clears it. Ephemeral like `status` — never persisted, resets on restart.
     public let unseen: Int?
@@ -245,6 +292,18 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// session is never persisted, so this never survives a relaunch.
     public let remoteHost: String?
 
+    /// This Mac's presentation stream to the session's origin, on an attached session only. `state` is
+    /// `connecting`, `connected`, `unsupported` for an origin that predates the stream, or `failed` with
+    /// the reason in `error`. It says whether status, context, notifications and HUD are being mirrored, never
+    /// whether the panes' own ssh connections are up.
+    public let presentation: ControlPresentationNode?
+    /// The presentation streams on this session: how many mirror it, a count of connections so two rows
+    /// attached from one Mac are two, and whether one presents it. Omitted when there is none.
+    public let presenters: ControlPresentersNode?
+    /// Overlay slots a viewer presenting this session holds, on the origin; omitted when none is held. Such
+    /// an overlay covers nothing here, so `overlay` and `paneOverlays` leave it out.
+    public let remoteOverlays: [ControlRemoteOverlayNode]?
+
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 hasSplit: Bool? = nil, backedByZmx: Bool?, splitAxis: String? = nil,
                 splitRatio: Double? = nil, splitFocused: Bool? = nil,
@@ -256,11 +315,13 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 restoreCommand: String? = nil, splitRestoreCommand: String? = nil, status: String? = nil,
                 statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
                 statusShape: String? = nil, statusChangedAt: Double? = nil,
-                background: BackgroundWatermark? = nil, unseen: Int? = nil,
+                background: BackgroundWatermark? = nil, paneBackgrounds: PaneBackgrounds? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
                 surfaces: [ControlSurfaceNode]? = nil, realized: Bool? = nil,
                 context: String? = nil, remoteHost: String? = nil, splitCwd: String? = nil,
-                liveAttribution: String? = nil, splitLiveAttribution: String? = nil) {
+                liveAttribution: String? = nil, splitLiveAttribution: String? = nil,
+                presentation: ControlPresentationNode? = nil, presenters: ControlPresentersNode? = nil,
+                remoteOverlays: [ControlRemoteOverlayNode]? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -295,6 +356,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.statusShape = statusShape
         self.statusChangedAt = statusChangedAt
         self.background = background
+        self.paneBackgrounds = paneBackgrounds
         self.unseen = unseen
         self.fontSize = fontSize
         self.splitFontSize = splitFontSize
@@ -305,6 +367,47 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.remoteHost = remoteHost
         self.liveAttribution = liveAttribution
         self.splitLiveAttribution = splitLiveAttribution
+        self.presentation = presentation
+        self.presenters = presenters
+        self.remoteOverlays = remoteOverlays
+    }
+}
+
+/// An overlay slot of an origin session held by the viewer presenting it, as `tree` reports it.
+public struct ControlRemoteOverlayNode: Codable, Sendable, Equatable {
+    /// The pane role, omitted for the session-wide slot.
+    public let pane: String?
+    /// The size requested for a session-wide overlay; what the viewer applied is not reported.
+    public let sizePercent: Int?
+
+    public init(pane: String?, sizePercent: Int?) {
+        self.pane = pane
+        self.sizePercent = sizePercent
+    }
+}
+
+/// A viewer's presentation stream as `tree` reports it.
+public struct ControlPresentationNode: Codable, Sendable, Equatable {
+    public let state: String
+    public let mode: String
+    public let error: String?
+
+    public init(state: String, mode: String, error: String? = nil) {
+        self.state = state
+        self.mode = mode
+        self.error = error
+    }
+}
+
+/// The viewers of an origin session as `tree` reports them. `mirrors` counts the viewers that are not the
+/// presenter; `presenter` is omitted unless a viewer holds that role.
+public struct ControlPresentersNode: Codable, Sendable, Equatable {
+    public let mirrors: Int
+    public let presenter: Bool?
+
+    public init(mirrors: Int, presenter: Bool? = nil) {
+        self.mirrors = mirrors
+        self.presenter = presenter
     }
 }
 
@@ -320,11 +423,13 @@ public struct ControlWorkspaceNode: Codable, Sendable, Equatable {
     /// the selected session stays behind in another one). The read
     /// side of the write-only `workspace.focus`/`workspace.filter`.
     ///
-    /// A workspace ROW is VISIBLE iff `tree.sidebarVisible && tree.sidebarMode == "tree" &&
-    /// (!tree.workspaceFilter || focused)`, every term on the same `tree` response — no second call needed.
-    /// Both shorter forms are wrong: `focused && workspaceFilter` reports nothing visible while the filter is
-    /// off, and a bare `!workspaceFilter || focused` reports rows behind a hidden sidebar and in `"flagged"`
-    /// mode, which renders a FLAT flagged-session list with NO workspace rows whatever membership says. The
+    /// A workspace ROW is VISIBLE iff `tree.sidebarVisible && ((tree.sidebarMode == "tree" &&
+    /// (!tree.workspaceFilter || focused)) || (tree.sidebarMode == "flagged" &&
+    /// tree.sidebarFlaggedLayout == "tree" && one of its sessions is `flagged`))`, every term on the same
+    /// `tree` response — no second call needed. The parentheses matter: the focus filter restricts the
+    /// ordinary tree only, and flagged mode ignores it. The shorter forms are wrong: `focused &&
+    /// workspaceFilter` reports nothing visible while the filter is off, and a bare `!workspaceFilter ||
+    /// focused` reports rows behind a hidden sidebar and under the FLAT flagged list, which has none. The
     /// filter-ON term is exact because enabled-with-an-empty-set is unrepresentable (enabling an empty set is
     /// refused; restore prunes stale ids then disables when it empties), so an applied filter always has at
     /// least one visible member.
@@ -363,11 +468,16 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// it for a closed window.
     public let sidebarVisible: Bool?
     /// The projected window's sidebar VIEW mode — `SidebarMode.rawValue` (`tree` = the workspace tree,
-    /// `flagged` = the flat flagged working-set list). LIVE and always populated on an app-produced `tree`;
+    /// `flagged` = the flagged working-set view). LIVE and always populated on an app-produced `tree`;
     /// optional at the protocol level (like the other `tree` fields) for version skew. The read side of the
     /// write-only `sidebar.mode`. `tree`-only, as every field below is: a GUI toggle bypasses the command
     /// path, so a cached `window.list` copy would go stale.
     public let sidebarMode: String?
+    /// How the flagged view arranges its sessions — `FlaggedViewLayout.rawValue` (`flat` | `tree`). APP-WIDE,
+    /// so every window's `tree` reports the same value, and reported under the ordinary tree too, where it
+    /// is dormant. The read side of `sidebar.flagged-layout` and a term of the workspace-row visibility
+    /// predicate on `ControlWorkspaceNode.focused`.
+    public let sidebarFlaggedLayout: String?
     /// The projected window's sidebar divider position in points - the read side of `sidebar.width`, and the
     /// only place it is reported. LIVE and `tree`-only, like every field below and like `sidebarMode`: the
     /// tree is the live per-window read surface, and nothing needs width discovery ACROSS windows, which is
@@ -418,7 +528,8 @@ public struct ControlTree: Codable, Sendable, Equatable {
     public let liveReset: ControlLiveResetReadback?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
-                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, sidebarWidth: Double? = nil, workspaceFilter: Bool? = nil,
+                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, sidebarFlaggedLayout: String? = nil,
+                sidebarWidth: Double? = nil, workspaceFilter: Bool? = nil,
                 quickVisible: Bool? = nil,
                 zoomedSurface: String? = nil, dashboardMembers: [String]? = nil,
                 dashboardHighlighted: String? = nil, dashboardFontSize: Double? = nil,
@@ -430,6 +541,7 @@ public struct ControlTree: Codable, Sendable, Equatable {
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible
         self.sidebarMode = sidebarMode
+        self.sidebarFlaggedLayout = sidebarFlaggedLayout
         self.sidebarWidth = sidebarWidth
         self.workspaceFilter = workspaceFilter
         self.quickVisible = quickVisible

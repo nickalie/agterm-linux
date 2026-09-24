@@ -1,5 +1,80 @@
 # Changelog
 
+## v0.32.0 - 2026-09-24
+
+### New Features
+
+- **explicit pane lead for attached sessions.** a session attached from another Mac shares each pane's zmx daemon between two terminals, and only the one leading the pane sets its size. The lead used to follow whichever side last sent input, so a freshly attached pane kept the origin's size until a key was pressed there. A remote attach now claims the lead in every pane, so the panes take the attaching Mac's size at once. A pane that does not lead is covered by a panel saying where it is in use, and a keypress without Command, or `agtermctl session lead`, takes the lead back. When the leader goes away the pane re-attaches by itself, and `surfaces[].lead` in `tree` reads the role back. On the Mac a covered pane runs on, `session type`, `session text` and `surface cursor` keep working under the cover; commands that act only on the local surface refuse there and name `session lead`. Both Macs need 0.32.0, and a Live session still running an older zmx keeps the old behaviour until it is recreated #635 @umputun
+- **attached Macs follow the origin's split layout.** the origin publishes its split layout on the presentation stream, and a Mac that attached the session applies the axis, hide and show, and swap to the panes it already has, and closes a pane the origin removed. A layout never opens a pane: a split opened on the origin after attach appears on the next attach. Local panes, the divider ratio and keyboard focus stay local #636 @umputun
+- **title-bar context mirrored to attached Macs.** an attached session shows the origin's `session context`. A context set on the attached row overrides it, and `session context --clear` there brings the origin's latest value back #634 @umputun
+- **markdown HUD.** `session hud open --markdown` renders headings, emphasis, lists, code blocks, quotes, rules and tables, with a 4096-character cap in place of plain text's 256, so an agent can keep a multiline status panel over the session. `--font-size PT` sets the panel's own font size at open and stays fixed for its life, an `update` must repeat `--markdown` or the panel returns to plain text, `--file FILE` reads the message from a file, and the tree's `hud` node reads back `markdown` and a requested `fontSize` #641 @umputun
+- **per-pane session background.** `session background image|text|color|clear` take `--pane left|right|scratch`, so each pane of a split can carry its own tint or watermark over the session default. Left and right overrides follow their terminal through swaps and relaunch, a scratch override ends when that scratch terminal closes, and `tree` reports `paneBackgrounds` next to `background`. Asked for in discussion #643 #647 @umputun
+
+### Improved
+
+- `agtermctl` answered every refused or missing control socket with `is agterm running?`, although macOS refuses a live app with a full backlog the same way. It now checks the app's ownership lock and says the owner is present but not accepting connections when the lock is held #633 @umputun
+- a new cookbook recipe, `remote-image-paste`, copies the image on this Mac's clipboard to the Mac a `zmx attach` session runs on with one chord, so ctrl+v pastes it there as a real image. Related to discussion #645 #648 @umputun
+- the `two-agent-chat` cookbook recipe lets the two agents sit in either pane, where a split arranged the other way refused every send 8981b754 0d9a5471 @paskal
+
+## v0.31.0 - 2026-09-20
+
+### New Features
+
+- **remote presentation for attached sessions.** a session attached from another Mac drew its agent status, control notifications, HUD, asks and overlays on the origin only, because the programs and their `agtermctl` run there. The attaching Mac now opens a presentation stream and mirrors status, control notifications and HUD onto its own row and pane. One attached Mac also becomes the session's presenter, the first whose stream asks for the role while none holds it, so an `ask open` or `session overlay open` newly aimed at that session opens there instead. The overlay's program still runs once on the origin, under an ssh terminal the presenting Mac opens, and its exit status answers the caller. Other viewers mirror and ask for the role again only when they reconnect. `presentation.mode` on an attached row reads `presenter` or `mirror`, `presenters` on the origin counts the streams mirroring it and says whether one presents it, and a remote row whose stream is connecting or failed swaps its cloud glyph for `icloud.slash` with the reason in the tooltip. Losing the stream is the only revocation: a terminal ask goes back to the origin and waits there like a local one, a GUI ask the origin cannot place ends cancelled with `presentation-lost`, a finished `--wait` surface closes, and a running overlay keeps its program until its own ssh ends. Two limits in this first version: closing a viewer pane can clear the origin's still-current mirrored status and HUD until the next update or reconnect, and a GUI ask replica hides rather than cancels when its target leaves the screen #629 #630 @umputun
+- **workspace tree for the flagged view.** the flagged view can nest its rows under their workspaces instead of listing them flat; a workspace holding nothing flagged is left out. **Settings ▸ General ▸ Flagged view layout** picks it for every window, a workspace badge counts unseen notifications only from its flagged sessions, a group shares its collapse state with the ordinary tree, and switching mode or layout reveals the selected session. `agtermctl sidebar flagged-layout [flat|tree|toggle]` sets it and the tree reads it back #621 @umputun
+- **f1 through f20 as keymap keys.** `keymap.conf` rejected every F-key name, so no built-in, custom command or global hotkey could use one. They now work with or without modifiers, as a leader, and as `global-hotkey f5`, which takes that key from every application including agterm. A bound F-key keeps ownership of its press through the repeats and the release, so a held key neither refires the action nor leaks the key into the terminal. On an Apple keyboard, use Fn/Globe or enable standard function keys to send F1-F12 #619 @umputun
+
+### Improved
+
+- the custom command failure panel is now opt-in per command, where 0.30.1 posted one for every custom command that failed. A command turns it on with `--error-hud` in `keymap.conf`, placed with `--error-position POS` and `--error-pane left|right`. macOS banners are unchanged, an opted-out command creates no stderr capture file, and `keymap list` reads all three options back #622 @umputun
+- `statusChangedAt` is stamped on every accepted status set, idle included, and the tree reports it whenever it exists, so a script can tell when an idle session's status was last set. A session that never had a status, or was restored, still reads nil. Asked for in discussion #196 #617 @umputun
+- a new cookbook recipe, `truthful-agent-lights`, replaces the Stop hook's unconditional `completed --auto-reset` with a classifier over the tool processes still running under Claude Code, and adds a scheduled sweeper that clears a stale glyph or restores an activity one #462 @x9x9x9x9x9x91
+
+### Bug Fixes
+
+- `tree` and `window list` stalled the app's main thread for the full three-second zmx timeout once four Live daemons existed, so the UI froze on every call and stuttered continuously while agent hooks polled it. The app read the child's stdout only after it exited and zmx writes its listing row by row, so the 512-byte pipe buffer filled and both sides blocked. Each pipe is now drained to EOF while the call waits, and the pipe fds are close-on-exec so a surface spawn cannot carry a write end into a long-lived `zmx attach` #624 @p4elkin #623
+- a write end inherited by a long-lived surface child could leave reader threads, their descriptors and their buffers stuck for that child's lifetime. The zmx and ssh runners now share one cancellable capture, a missed output deadline cancels both read channels, and the ssh runner gets the same close-on-exec pipes and bounded post-exit join #627 @umputun
+- `agtermctl --json` re-encoded the decoded response, so any field the CLI build did not model was dropped with `ok` true and exit 0. The server's line is now printed unchanged #628 @umputun #625
+- deleting a window before its scene claimed it left the id queued, so the next window to appear popped the dead id and closed itself as a stray 11015c33 @umputun #626
+- a cookbook stuck-shape comparison treated every row carrying no shape override as stuck when `AGT_SHAPE_STUCK` was blank, so the sweeper pulsed over the machinery tint #620 @x9x9x9x9x9x91
+- the bundled agent skill's description exceeded the 1024-character agent skills limit after 0.30.0's event hooks additions, which pi warns about. It is trimmed to 975 and a test fails past the limit 8abf983b @umputun #631
+
+## v0.30.1 - 2026-09-16
+
+### Improved
+
+- a custom command that fails posts a panel over the session carrying the command name, the exit status or launch error, and the last usable line of stderr when the command wrote one. A failure previously reported only through a macOS banner, so with notifications off a broken chord looked identical to one that did nothing. The panel clears after ten seconds and does not replace a running program overlay #613 @umputun
+- `session hud open` and `session hud update` take `--hide-after SECONDS`, so a HUD can carry its own lifetime instead of staying until something takes it down #613 @umputun
+- the bundled zmx 0.8.1 is rebuilt for the app's arm64 and macOS 14 baseline #616 @umputun
+
+### Bug Fixes
+
+- on macOS 27 with a comma-decimal locale, SF Symbols drew missing or malformed and a modal alert could take the app down. libghostty adopts the user's locale during init and CoreSVG parses symbol geometry through it, so a comma decimal separator mis-sized symbols and a zero-sized rasterization inside a modal's render aborted the process. A crash during quit also skipped the final session-state save. The numeric locale is now pinned after init, and spawned shells keep the user's locale #615 @umputun #611
+- building zmx from source failed under the macOS 27 SDK, which needs a protocol zig 0.16's bundled `float.h` does not implement. Setup applies a compatibility shim to the installed zig's header and keeps the original as a backup #615 @umputun #611
+- close the excess gap between sidebar disclosure triangles and row icons on macOS 27; earlier macOS layouts are unchanged a883cc18 @umputun
+
+## v0.30.0 - 2026-09-15
+
+### New Features
+
+- **event hooks.** `hooks.conf`, next to `keymap.conf`, runs a command for matching control events with one `on <kind> <command>` line per hook, so a script reacts to status changes, notifications, sessions and the tree without a subscriber process of its own. The command runs through `/bin/sh -c` with the event JSON on stdin and the event and its target in `AGT_*` environment variables; the docs list the kinds and variables. Events queue in order while a hook is still running, and `agtermctl hooks list` shows failures and dropped events. `status` events now carry `previous`, and two new kinds, `pane.split` and `pane.scratch`, fire when a split or scratch pane is shown or hidden. **File ▸ Edit Hooks…** opens the file in an overlay and reloads it on close, and **Reload Hooks** and `agtermctl hooks reload` reload it. A hook that emits an event of its own kind can keep triggering itself, and nothing detects that loop #607 @umputun
+- **remote.opened and remote.closed events.** A session created by `zmx attach` emits them beside `session.created` and `session.closed`, with the ssh destination as `host`, `AGT_EVENT_HOST` in a hook and `host=` on the human `agtermctl events` line. They follow the local row, not the ssh connection: a soft close emits `remote.closed`, undo emits `remote.opened`, and closing only the split emits neither #610 @umputun
+- **agtermctl terminfo install.** `agtermctl terminfo install DESTINATION` copies the bundled `xterm-ghostty` entry into the remote account's `~/.terminfo` over one ssh connection, the fix for `less`, `vim` or `apt` on that host warning that the terminal is not fully functional. It passes only `-p`, `-i`, `-J` and `-F` to ssh, shows ssh's own password and host-key prompts, and exits 3 when the host has no `tic`. Nothing runs automatically and `ssh` stays the real `ssh` #609 @umputun #605
+- **attention list across every open window.** ⌃⇧I and the title-bar bell list non-idle sessions from every open window in one blocked, active, completed order, with the window name in each row's subtitle once more than one window is open. Picking a session in another window raises that window first; a blocked or completed session reveals the pane that set its status. Rows for a closed or covered window, or a removed session, are disabled, and the bell popover scrolls past about ten rows. The Dock menu and ⌃⌥↑/↓ stay scoped to one window #596 @umputun
+- **workspace name in the title bar.** A **Workspace name** toggle in Settings ▸ Interface, off by default, puts the active session's workspace in front of the identity as `workspace — session — window`, cut to 24 characters, so the bar says where a session lives while the sidebar is collapsed #601 @umputun #598
+- **pick --select.** `agtermctl pick --select ID` opens the picker with that item highlighted and scrolled into view, so a picker of windows or sessions can start on the current one and Return on an untouched list stays put. A `--query` that filters the item out leaves the first visible row highlighted, and an id that names no supplied item refuses the open #597 @umputun
+- **AGT_PANE_ID for custom commands.** `{AGT_PANE_ID}` and `$AGT_PANE_ID` carry the stable token of the pane a command fired in, the value its shell holds as `AGTERM_PANE_ID`, so a command keeps addressing the same terminal with `--pane-id` after a swap or promotion changed what `AGT_PANE` reports. A chord pressed in an overlay gets the covered pane's token, and a launcher fired with no session gets an empty value #603 @umputun
+
+### Improved
+
+- the bundled zmx moves to v0.8.1. A Live session answers terminal identification queries again once the last terminal detaches, where the old build stopped answering after the first attach and a query sent before a responding terminal attached could time out. Scrollback rises to 10,000 lines. A Live session started by an older agterm keeps its running zmx, and with it the old behaviour, until that session is recreated; attaching to it still works #604 @umputun
+- `docs/troubleshooting.md` covers an Accessibility grant made for an older build, where tools are denied while Settings still shows agterm enabled, with the reset and re-grant steps. The bundled agent skill can check the stored grant against the running binary 566449f @umputun
+- two cookbook recipes. `window-switcher` jumps to a window by its number in library order, closed windows included, or picks one from a native picker showing each window's blocked and completed sessions #599 #600 @anadale. `long-commands-status` wraps a shell command in `agst`, which sets the session's status to active while it runs and to completed or blocked when it exits #608 @Rulexec
+
+### Bug Fixes
+
+- the Interface and Agent Status tabs in Settings overflowed their fixed frame and scrolled after 0.29.0 added controls to both. The window is taller and the Typing hint is gone #593 @umputun
+
 ## v0.29.1 - 2026-09-11
 
 ### Bug Fixes

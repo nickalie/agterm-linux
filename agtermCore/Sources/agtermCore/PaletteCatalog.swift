@@ -4,6 +4,10 @@ public struct PaletteContext: Sendable, Equatable {
     public let canRemoveWorkspace: Bool
     public let hasFlaggedSessions: Bool
     public let sidebarShowsWorkspaceTree: Bool
+    /// Whether the sidebar has workspace ROWS to fold: the ordinary tree, or flagged mode under the tree
+    /// layout. Wider than `sidebarShowsWorkspaceTree`, which workspace stepping still keys on. An init call
+    /// that omits it takes `sidebarShowsWorkspaceTree`, so a caller with no flagged tree keeps its fold commands.
+    public let sidebarShowsWorkspaceRows: Bool
     public let sidebarShowsFlaggedOnly: Bool
     public let activeSessionFlagged: Bool
     /// Whether ANY workspace is MARKED in the focus set — membership, NOT whether the filter is applied
@@ -44,7 +48,7 @@ public struct PaletteContext: Sendable, Equatable {
 
     public init(canRemoveWorkspace: Bool = false,
                 hasFlaggedSessions: Bool = false,
-                sidebarShowsWorkspaceTree: Bool = false,
+                sidebarShowsWorkspaceTree: Bool = false, sidebarShowsWorkspaceRows: Bool? = nil,
                 sidebarShowsFlaggedOnly: Bool = false,
                 activeSessionFlagged: Bool = false,
                 hasMarkedWorkspaces: Bool = false,
@@ -64,6 +68,7 @@ public struct PaletteContext: Sendable, Equatable {
         self.canRemoveWorkspace = canRemoveWorkspace
         self.hasFlaggedSessions = hasFlaggedSessions
         self.sidebarShowsWorkspaceTree = sidebarShowsWorkspaceTree
+        self.sidebarShowsWorkspaceRows = sidebarShowsWorkspaceRows ?? sidebarShowsWorkspaceTree
         self.sidebarShowsFlaggedOnly = sidebarShowsFlaggedOnly
         self.activeSessionFlagged = activeSessionFlagged
         self.hasMarkedWorkspaces = hasMarkedWorkspaces
@@ -95,7 +100,7 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
     case toggleSidebar, toggleFlag, focusWorkspace
     case find, quickTerminal, dashboard, toggleFullscreen
     case increaseFontSize, decreaseFontSize, resetFontSize, selectTheme
-    case editKeymap, reloadKeymap, editGhosttyConfig, reloadConfig
+    case editKeymap, reloadKeymap, editHooks, reloadHooks, editGhosttyConfig, reloadConfig
     case deleteWorkspace, toggleFlaggedView, clearFlagged, clearFocus
     case addWorkspaceToFocus, toggleWorkspaceFilter
     case expandWorkspaces, collapseWorkspaces, toggleWorkspaceCollapse, focusLeftPane, focusRightPane
@@ -133,7 +138,7 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
     private func isCoveredByModal(_ context: PaletteContext) -> Bool {
         switch self {
         case .increaseFontSize, .decreaseFontSize, .resetFontSize,
-             .reloadKeymap, .reloadConfig, .toggleTerminalZoom, .closeSession:
+             .reloadKeymap, .reloadHooks, .reloadConfig, .toggleTerminalZoom, .closeSession:
             return false
         case .dashboard:
             return context.terminalZoomActive || context.pickerActive
@@ -164,14 +169,14 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
             // targets `currentWorkspaceID`). NOT gated on sidebar mode — membership is model state the tree
             // applies the moment it is shown again, and every sibling is mode-agnostic: the View-menu item,
             // Focus Workspace, Toggle Workspace Filter, Clear Focus, the `focus_workspace` keybind,
-            // `workspace.focus`/`workspace.filter`. the tree-mode gate belongs to expand/collapse, whose rows
-            // flagged mode never renders.
+            // `workspace.focus`/`workspace.filter`. the row gate belongs to expand/collapse, whose rows
+            // the flat flagged list never renders.
             return !context.activeWorkspaceMarked
-        case .expandWorkspaces, .collapseWorkspaces, .toggleWorkspaceCollapse,
-             .previousWorkspace, .nextWorkspace:
-            // the tree-mode gate the sibling comment on `addWorkspaceToFocus` describes: these five act on
-            // workspace ROWS, which flagged mode's flat list does not render, and `navigateWorkspace` no-ops
-            // there for the same reason.
+        case .expandWorkspaces, .collapseWorkspaces, .toggleWorkspaceCollapse:
+            // these fold workspace ROWS, which the flat flagged list does not render.
+            return context.sidebarShowsWorkspaceRows
+        case .previousWorkspace, .nextWorkspace:
+            // ordinary tree only, narrower than the row gate above: `AppStore.canStepWorkspaces` owns why.
             return context.sidebarShowsWorkspaceTree
         case .focusLeftPane, .focusRightPane, .closeSplit:
             // `hasSplit`, not `isSplit`: a hidden pane is alive and still reported, the state Close Split
@@ -232,6 +237,8 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
         case .selectTheme: return "Select Theme…"
         case .editKeymap: return "Edit Keymap"
         case .reloadKeymap: return "Reload Keymap"
+        case .editHooks: return "Edit Hooks"
+        case .reloadHooks: return "Reload Hooks"
         case .editGhosttyConfig: return "Edit ghostty.conf"
         case .reloadConfig: return "Reload Config"
         case .deleteWorkspace: return "Delete Workspace"
@@ -292,7 +299,7 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
         case .toggleWorkspaceFilter: return .toggleWorkspaceFilter
         case .focusLeftPane: return .focusLeftPane
         case .focusRightPane: return .focusRightPane
-        case .editKeymap, .reloadKeymap, .editGhosttyConfig, .reloadConfig,
+        case .editKeymap, .reloadKeymap, .editHooks, .reloadHooks, .editGhosttyConfig, .reloadConfig,
              .clearFlagged, .clearFocus, .addWorkspaceToFocus, .expandWorkspaces, .collapseWorkspaces,
              .closeSplit, .swapPanes:
             return nil

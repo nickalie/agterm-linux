@@ -15,10 +15,85 @@ struct RemoteSessionTests {
         #expect(argv.count == 8)
     }
 
+    @Test func presentIsNonInteractiveAndRunsTheBridgeForThatSession() throws {
+        let argv = try RemoteSession.presentCommand(host: "buildbox", session: "0F1E2D3C")
+
+        #expect(argv.prefix(7) == ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "buildbox"])
+        #expect(argv.count == 8)
+        #expect(argv[7].contains(RemoteSession.cliPathPrefix), "sshd's PATH does not reach an installed CLI")
+    }
+
+    @Test func presentRunsTheBridgeForExactlyThatSession() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        try fake.installAgtermctl(exitCodes: [0])
+
+        let run = try fake.runRemote(RemoteSession.presentCommand(host: "buildbox", session: "s1;rm"))
+
+        #expect(run.status == 0)
+        #expect(try fake.calls() == [["zmx", "present", "s1;rm"]],
+                "a shell metacharacter in the id reaches the bridge as one argument and runs nothing")
+    }
+
+    @Test(arguments: ["", "s 1", "s1\u{1B}[31m"])
+    func presentRefusesASessionThatIsNotAPlainToken(_ session: String) {
+        #expect(throws: RemoteSession.InvocationError.invalidSession) {
+            try RemoteSession.presentCommand(host: "buildbox", session: session)
+        }
+    }
+
+    @Test func presentRefusesAHostileHost() {
+        #expect(throws: RemoteSession.InvocationError.invalidHost) {
+            try RemoteSession.presentCommand(host: "-oProxyCommand=touch /tmp/pwned", session: "s1")
+        }
+    }
+
+    @Test func runJobForcesAPtyAndReachesTheInstalledCli() throws {
+        let argv = try RemoteSession.runJobCommand(host: "buildbox", job: "job-1")
+
+        #expect(argv.prefix(7) == ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "buildbox"])
+        #expect(argv.count == 8)
+        #expect(argv[7].contains(RemoteSession.cliPathPrefix))
+    }
+
+    @Test func runJobRunsTheHelperForExactlyThatJob() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        try fake.installAgtermctl(exitCodes: [0])
+
+        let run = try fake.runRemote(RemoteSession.runJobCommand(host: "buildbox", job: "j1;rm"))
+
+        #expect(run.status == 0)
+        #expect(try fake.calls() == [["session", "overlay", "run-job", "j1;rm"]])
+    }
+
+    @Test(arguments: ["", "j 1", "j1\u{1B}[31m"])
+    func runJobRefusesAJobThatIsNotAPlainToken(_ job: String) {
+        #expect(throws: RemoteSession.InvocationError.invalidSession) {
+            try RemoteSession.runJobCommand(host: "buildbox", job: job)
+        }
+    }
+
     @Test func attachForcesAPtyAndNeverBoundsItsLifetime() throws {
         let argv = try RemoteSession.attachCommand(host: "buildbox", endpoint: endpoint, daemon: daemon)
         #expect(argv.prefix(7) == ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "buildbox"])
         #expect(!argv.contains { $0.hasPrefix("ServerAlive") })
+    }
+
+    @Test func attachPutsTheLeadWordsAheadOfTheExecutableAndOmitsThemByDefault() throws {
+        let lead = ZmxLeadAttachment(nonce: "abc123", claim: true)
+        let managed = try #require(try RemoteSession.attachCommand(host: "buildbox", endpoint: endpoint,
+                                                                   daemon: daemon, lead: lead).last)
+        let plain = try #require(try RemoteSession.attachCommand(host: "buildbox", endpoint: endpoint,
+                                                                 daemon: daemon).last)
+
+        let words = "'ZMX_MANAGED=abc123' 'ZMX_MANAGED_CLAIM=1' "
+        #expect(managed == plain.replacingOccurrences(of: "'" + endpoint.executable + "'",
+                                                       with: words + "'" + endpoint.executable + "'"))
+        #expect(!plain.contains("ZMX_MANAGED"))
+        let pane = try RemoteSession.attachPaneCommand(host: "buildbox", endpoint: endpoint, daemon: daemon,
+                                                       session: "work", pane: .left, lead: lead)
+        #expect(pane.contains("ZMX_MANAGED=abc123"))
     }
 
     // MARK: - what the remote shell actually runs

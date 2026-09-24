@@ -23,7 +23,7 @@ agterm 0.24.0 or later, which added `surface cursor`. The recipe refuses to type
 1. Copy `peer-chat.py` somewhere on your `PATH`, keeping the executable bit.
 2. Copy `SKILL-claude.md` to `~/.claude/skills/peer-chat/SKILL.md` and `SKILL-codex.md` to `~/.codex/skills/peer-chat/SKILL.md`. Both loaders require the installed file to be named exactly `SKILL.md`, so the suffix here only says which agent the file is for. Each one tells its own agent how to send, how to recognise an incoming message, and what it may not do to the other pane.
 3. Keep `peer-chat.py` on your `PATH`: both skills invoke it as a bare command and name no path. If you install it somewhere off `PATH` instead, prefix the command lines in both copies with its full path.
-4. If you start either agent through a wrapper script instead of as `claude` or `codex`, put that wrapper's name in the same file, as the `--target-command` value the agent should pass when sending to it. Without this the first send refuses, saying the target pane is not running the expected command.
+4. If you start either agent through a wrapper script instead of as `claude` or `codex`, put that wrapper's name in the same file, as the `--target-command` value the agent should pass when sending to it. Without this the first send refuses, saying the target pane is not running the expected command. If you also arrange the split the other way round, the sender must recognise its own wrapper on the target's usual side: set `PEER_CHAT_CLAUDE_COMMAND` or `PEER_CHAT_CODEX_COMMAND` to the wrapper's name in that agent's environment, for Codex through `shell_environment_policy.set` as in step 6. `--target-command` cannot do this, since it names the target.
 5. To let Codex reserve and send file-backed messages without separate approvals, add these two entries to `~/.codex/rules/default.rules`, creating the file if needed and using the command name or path from step 1:
 
    ```python
@@ -37,7 +37,7 @@ If your `agtermctl` is not on `PATH` under that name, set `AGTERMCTL` to its ful
 
 ## Usage
 
-Open a split in the session you want to use, then start one agent in each pane yourself: Claude Code on the left, Codex on the right. Neither the script nor the skills start an agent, by design.
+Open a split in the session you want to use, then start one agent in each pane yourself: Claude Code in one and Codex in the other, either way round. Neither the script nor the skills start an agent, by design.
 
 Ask either agent to talk to the other, and it sends through the script:
 
@@ -47,7 +47,7 @@ your message as one paragraph
 MSG
 ```
 
-`--to claude` sends the other way. `--session` names a session explicitly; without it the script uses `AGTERM_SESSION_ID` when the caller has one, and otherwise looks for a single session whose target pane is running the expected agent. An explicit session is found across open windows, while `--window` constrains the lookup. The resolved window id stays pinned for the full send.
+`--to claude` sends the other way. Either agent can sit in either pane. The script looks for the target on its usual side first, Claude Code on the left and Codex on the right, and takes the other side only when the usual one runs the other agent, since anything else there could be the sender. Agents are recognised by name in the command lines agterm reports. When the usual side names both, as a launch prompt that mentions the other agent does, it gives way only if the program it runs is plainly the other agent, and otherwise keeps the send as before. In a Claude Code and Codex pair, a launch command that still misleads the script makes the send fail its prompt check after the retries instead of typing. `--session` names a session explicitly; without it the script uses `AGTERM_SESSION_ID` when the caller has one, and otherwise looks for a single session whose target pane is running the expected agent. An explicit session is found across open windows, while `--window` constrains the lookup. The resolved window id stays pinned for the full send.
 
 Claude Code normally sends to Codex with Return, the key Codex uses for steering an active turn. Codex can still queue it when its current state cannot accept a steer. Add `--queue` only for an informational note that can wait until the turn ends:
 
@@ -79,7 +79,7 @@ your message as one paragraph
 MSG
 ```
 
-A path works as well as a bare name; only the last component is compared. `PEER_CHAT_CLAUDE_COMMAND` and `PEER_CHAT_CODEX_COMMAND` do the same thing through the environment, for an agent that cannot easily add a flag. Only the pane being sent to is checked, so a wrapped Claude Code can still send to a plain Codex without any of this.
+A path works as well as a bare name; only the last component is compared. `PEER_CHAT_CLAUDE_COMMAND` and `PEER_CHAT_CODEX_COMMAND` do the same thing through the environment, for an agent that cannot easily add a flag. In the usual layout only the pane being sent to is checked, so a wrapped Claude Code can still send to a plain Codex without any of this. A reversed split also needs the sender's own wrapper name, as *Setup* step 4 describes.
 
 On success it prints `{"sent": N}` and exits 0. Any refusal or failure exits 1 with the reason on stderr, and an interrupt exits 130.
 
@@ -125,7 +125,9 @@ The recipe deliberately does not start agents. Deciding that a pane is safe to t
 
 The two directions are not symmetric. Codex exposes both steering Return and queued Tab, while Claude Code exposes only its normal Return submission and manages busy input itself. Use `--queue` only for a Codex-bound note that needs no action during the current turn.
 
-It assumes Claude Code on the left and Codex on the right. Each agent's pane is fixed in the script's profiles, so a split arranged the other way sends every message to the wrong pane. A session with no split is refused outright, before any pane is read: without that check a send to the left pane would still pass after the right one had closed, which is no longer a two-agent layout at all.
+The target pane is chosen once per send, from agterm's view of which pane runs the agent named by `--to`, and every later read and write goes to that pane alone. If the agents swap panes during a send, the next check refuses instead of following the agent to the other side. A session with no split is refused outright, before any pane is read: without that check a send would still pass after the other pane had closed, which is no longer a two-agent layout at all.
+
+The other side is taken only when the usual one runs the other agent under its own command, so a wrapped peer on the usual side needs `PEER_CHAT_CLAUDE_COMMAND` or `PEER_CHAT_CODEX_COMMAND` for a reversed split to be recognised. Two agents of the same kind are not a supported pair: agterm addresses a pane by its position, and with the same agent on both sides the script sends to the usual side and has no way to tell a swapped split from the original.
 
 **Codex cannot see which pane it is in unless you tell it at launch.** It strips `AGTERM_SESSION_ID` from every tool subprocess, and nothing inside its sandbox recovers the value: reading a parent process is blocked outright. Without the launch injection in *Setup*, the script falls back to matching the git checkout, and every worktree of one repository maps to the same checkout, so two sessions open on the same repository are indistinguishable and the send refuses. That refusal is the correct outcome, not a bug, but it is why the injection is worth doing once in your Codex launcher instead of remembering per session.
 

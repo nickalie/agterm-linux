@@ -13,7 +13,7 @@ extension agtermApp {
 
     /// Map a host-free `Chord` to a SwiftUI `KeyboardShortcut` — the menu-side mirror of the runner's
     /// `NSEvent`→`Chord` mapping. The base key is a printable `Character` or a named key; modifiers map 1:1.
-    private static func toShortcut(_ chord: Chord) -> KeyboardShortcut {
+    static func toShortcut(_ chord: Chord) -> KeyboardShortcut {
         let key: KeyEquivalent
         switch chord.key {
         case "tab": key = .tab
@@ -24,7 +24,13 @@ extension agtermApp {
         case "right": key = .rightArrow
         case "up": key = .upArrow
         case "down": key = .downArrow
-        default: key = KeyEquivalent(Character(chord.key))
+        default:
+            if bindableFunctionKeys.contains(chord.key), let number = Int(chord.key.dropFirst()),
+               let scalar = UnicodeScalar(0xF703 + number) {
+                key = KeyEquivalent(Character(scalar))
+            } else {
+                key = KeyEquivalent(Character(chord.key))
+            }
         }
         var modifiers: EventModifiers = []
         if chord.mods.contains(.control) { modifiers.insert(.control) }
@@ -191,6 +197,10 @@ extension agtermApp {
                 // re-read keymap.conf and apply — menu shortcuts, runner and palette rebuild. keyless.
                 Button { actions.reloadKeymap() } label: { Label("Reload Keymap", systemImage: "keyboard") }
                     .disabled(!PaletteCommand.reloadKeymap.isEnabled(in: context))
+                Button { actions.editHooks() } label: { Label("Edit Hooks…", systemImage: "pencil.and.list.clipboard") }
+                    .disabled(!PaletteCommand.editHooks.isEnabled(in: context))
+                Button { actions.reloadHooks() } label: { Label("Reload Hooks", systemImage: "bolt.horizontal") }
+                    .disabled(!PaletteCommand.reloadHooks.isEnabled(in: context))
                 // open the agterm-scoped ghostty.conf in $EDITOR in a 95% overlay; reloads on editor exit.
                 Button { actions.editGhosttyConfig() } label: { Label("Edit ghostty.conf…", systemImage: "slider.horizontal.3") }
                     .disabled(!PaletteCommand.editGhosttyConfig.isEnabled(in: context))
@@ -227,7 +237,7 @@ extension agtermApp {
                 .keyboardShortcut(shortcut(for: .toggleSidebar))
                 .disabled(!PaletteCommand.toggleSidebar.isEnabled(in: context))
                 // expand every workspace / collapse all but the active one. plain keyless items, disabled
-                // outside tree mode, where there are no workspace rows; control sidebar.expand/collapse.
+                // under the flat flagged list, where there are no workspace rows; control sidebar.expand/collapse.
                 Button { actions.expandAllWorkspaces() } label: { Label("Expand Workspaces", systemImage: "chevron.down") }
                     .disabled(!PaletteCommand.expandWorkspaces.isEnabled(in: context))
                 Button { actions.collapseOtherWorkspaces() } label: { Label("Collapse Workspaces", systemImage: "chevron.right") }
@@ -241,7 +251,7 @@ extension agtermApp {
                 }
                 .keyboardShortcut(shortcut(for: .toggleWorkspaceCollapse))
                 .disabled(!PaletteCommand.toggleWorkspaceCollapse.isEnabled(in: context))
-                // flip the sidebar between the workspace tree and the flat flagged working-set list. one
+                // flip the sidebar between the workspace tree and the flagged working-set view. one
                 // 2-state item, keyless by default (rebindable via toggle_flagged_view); control sidebar.mode.
                 // Disabled with nothing to show (tree mode + no flags), live in flagged mode so it can
                 // always switch back to the tree.
@@ -377,8 +387,8 @@ extension agtermApp {
                     .keyboardShortcut(shortcut(for: .lastSession))
                     .disabled(!PaletteCommand.lastSession.isEnabled(in: context))
                 // step between WORKSPACES, landing on each one's first session. keyless, rebindable via
-                // previous_workspace/next_workspace; control workspace.go. tree mode only, like the
-                // expansion items in View — flagged mode renders no workspace rows to step through.
+                // previous_workspace/next_workspace; control workspace.go. ordinary tree only, narrower than
+                // the expansion items in View: `AppStore.canStepWorkspaces` owns why.
                 Button { actions.selectPreviousWorkspace() } label: {
                     Label("Previous Workspace", systemImage: "chevron.up.2")
                 }

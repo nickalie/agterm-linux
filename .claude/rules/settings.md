@@ -88,7 +88,7 @@ paths:
   contract, so freeing it risks a crash and the rare leak is accepted.
 - `.agtermAppearanceChanged` is required because terminal color is not observable; it updates
   `terminalColor`, quick-terminal backing, title/window appearance, and non-observable chrome mirrors.
-- Settings is a 540x640 six-tab SwiftUI scene with explicit selection defaulting General, preventing
+- Settings is a 540x680 six-tab SwiftUI scene with explicit selection defaulting General, preventing
   `com_apple_SwiftUI_Settings_selectedTabIndex` persistence. General holds Mouse, Sessions, and Ghostty
   Config. Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row, plus
   Multiple Windows and the quick terminal's panel size, which sits there rather than under Appearance's
@@ -241,12 +241,18 @@ paths:
 - `confirmCloseSession` defaults off and is read on demand, without a mirror. Prompt only for GUI active
   close and sidebar row close; skip under XCUITest. Control `session.close` must never prompt.
 - `hiddenInterfaceElements` stores raw names and preserves unknown values while toggling known ones; empty
-  maps nil. Titlebar cases are `sidebarToggle`, `sessionName`, `windowName`, `remoteHost`, `sessionContext`,
-  `recentSessions`, `scratch`, `split`, `dashboard`, `quickTerminal`, `customCommands`; sidebar cases are
-  `newWorkspace`, `newSession`, `flaggedView`, `focusFilter`, and row-level `workspaceAddSession`.
-  A `hiddenByDefault` case (`customCommands` alone) is governed by `shownInterfaceElements` instead, the
-  same shape with the opposite sense, and its name in the hidden list is ignored. Attention has its
-  separate default-off setting.
+  maps nil. Titlebar cases are `sidebarToggle`, `workspaceName`, `sessionName`, `windowName`, `remoteHost`,
+  `sessionContext`, `recentSessions`, `scratch`, `split`, `dashboard`, `quickTerminal`, `customCommands`;
+  sidebar cases are `newWorkspace`, `newSession`, `flaggedView`, `focusFilter`, and row-level
+  `workspaceAddSession`.
+  A `hiddenByDefault` case (`workspaceName` and `customCommands`) is governed by `shownInterfaceElements`
+  instead, the same shape with the opposite sense, and its name in the hidden list is ignored. Attention
+  has its separate default-off setting.
+  `workspaceName` leads the identity as `workspace — session — window`, looked up from the ACTIVE SESSION
+  (`workspace(forSession:)`, never `currentWorkspaceID`, which an empty workspace can hold while the old
+  session stays selected). `TitlebarComposition` caps it at `workspaceNameLimit` characters with an
+  ellipsis, display only, because the identity is one tail-truncated text and an uncapped prefix would
+  push the session name off the bar. The OS window title (`WindowTitleSync`) does not carry it.
 - `InterfaceElement` owns section/display name; the tab iterates `allCases`. Mutate the raw set, then push
   resolved known values to `GhosttyApp`. SwiftUI gates with `shows(_:)`; the AppKit row "+" checks the
   mirror on hover. Titlebar group dividers appear only between adjacent groups that each retain at least
@@ -262,5 +268,13 @@ paths:
   settings predate the flag never sees it. Decide it in `agtermApp.init()`: the first launch saves its own
   window within a second of the scene appearing, which would read back as prior state.
   `WelcomeAlert` suppresses itself under XCUITest unless `AGTERM_UITEST_SHOW_WELCOME` is set.
+- `flaggedViewLayout` is a raw `FlaggedViewLayout` (`flat`|`tree`), nil for the default `flat`, resolved by
+  `effectiveFlaggedViewLayout` and mirrored to `GhosttyApp.flaggedViewLayout`. App-wide, never per window.
+  Every sidebar Coordinator picks it up on `.agtermAppearanceChanged`, and only one showing the flagged view
+  rebuilds. The picker sits at the bottom of the General tab's Sessions section: the Interface tab is exactly full at
+  540x680, and one more row pushes the quick-terminal Size off the bottom. A grouped Form scrolls, so an
+  overflowing tab still reports every control hittable; `testFlaggedViewLayoutPickerPersists` compares the
+  tab's last line against the window frame instead.
+  The control catalog carries it as `sidebar.flagged-layout` ([[control-api]]).
 - These settings are GUI-only unless the control catalog explicitly says otherwise. Do not add settings
   commands merely to mirror chrome; user actions already have control coverage.

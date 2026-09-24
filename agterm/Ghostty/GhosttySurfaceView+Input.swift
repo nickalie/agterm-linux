@@ -47,6 +47,8 @@ extension GhosttySurfaceView {
             super.keyDown(with: event)
             return
         }
+        // a covered pane takes no input: its first press asks for the lead instead
+        guard !PaneLead.consumes(event, in: self) else { return }
         // every keystroke is user activity: reset the auto-follow idle timer UNCONDITIONALLY, not gated on
         // the status-clear below, else typing in an idle session yanks the user to a blocked one mid-type.
         onUserInput?()
@@ -122,14 +124,14 @@ extension GhosttySurfaceView {
     override func doCommand(by _: Selector) {}
 
     override func keyUp(with event: NSEvent) {
-        guard let surface else { return }
+        guard let surface, !PaneLead.consumes(event, in: self) else { return }
         var ke = buildKeyEvent(from: event, action: GHOSTTY_ACTION_RELEASE)
         ke.text = nil
         _ = ghostty_surface_key(surface, ke)
     }
 
     override func flagsChanged(with event: NSEvent) {
-        guard let surface else { return }
+        guard let surface, !leadCovered else { return }
         var ke = buildKeyEvent(from: event, action: isFlagPress(event) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE)
         ke.text = nil
         _ = ghostty_surface_key(surface, ke)
@@ -446,6 +448,23 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
         } else {
             insertText(_markedText, replacementRange: NSRange(location: NSNotFound, length: 0))
         }
+        guard window?.firstResponder === self else { return }
+        committingComposition = true
+        inputContext?.discardMarkedText()
+        committingComposition = false
+    }
+
+    /// The text of a live composition, empty when none. For input that does NOT go through this surface:
+    /// `commitOrDiscardComposition` commits by `insertText`, which a managed pane's daemon may be dropping,
+    /// so that caller sends this text itself and then calls `discardComposition`.
+    var pendingComposition: String { hasMarkedText() ? _markedText : "" }
+
+    /// Ends a composition whose text a caller delivered another way, without inserting it here.
+    func discardComposition() {
+        guard hasMarkedText() else { return }
+        _markedRange = NSRange(location: NSNotFound, length: 0)
+        _markedText = ""
+        if let surface { ghostty_surface_preedit(surface, nil, 0) }
         guard window?.firstResponder === self else { return }
         committingComposition = true
         inputContext?.discardMarkedText()

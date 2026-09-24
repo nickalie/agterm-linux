@@ -26,10 +26,13 @@ public enum ZmxSupport {
         public let baseEnvironment: [String: String]
         public let inheritedZdotdir: String?
         public let sessionHostExecutablePath: String?
+        /// Nil leaves the attach unmanaged, as a zmx without explicit leadership expects.
+        public let lead: ZmxLeadAttachment?
 
         public init(zmxExecutablePath: String, passwordDatabaseShell: String?, resourcesDirectory: String?,
                     stateDirectory: String, paneIdentity: UUID, baseEnvironment: [String: String],
-                    inheritedZdotdir: String?, sessionHostExecutablePath: String? = nil) {
+                    inheritedZdotdir: String?, sessionHostExecutablePath: String? = nil,
+                    lead: ZmxLeadAttachment? = nil) {
             self.zmxExecutablePath = zmxExecutablePath
             self.passwordDatabaseShell = passwordDatabaseShell
             self.resourcesDirectory = resourcesDirectory
@@ -38,6 +41,7 @@ public enum ZmxSupport {
             self.baseEnvironment = baseEnvironment
             self.inheritedZdotdir = inheritedZdotdir
             self.sessionHostExecutablePath = sessionHostExecutablePath
+            self.lead = lead
         }
     }
 
@@ -113,6 +117,11 @@ public enum ZmxSupport {
         environment["ZMX_SESSION"] = ""
         environment["ZMX_SESSION_PREFIX"] = ""
         environment["ZMX_NO_DETACH_KEY"] = "1"
+        // a stale value inherited from the app's own environment would opt the client in under a
+        // nonce no pane expects
+        environment[ZmxLeadAttachment.nonceVariable] = nil
+        environment[ZmxLeadAttachment.claimVariable] = nil
+        environment.merge(inputs.lead?.environment ?? [:]) { _, new in new }
 
         let host = inputs.sessionHostExecutablePath.flatMap { path -> String? in
             guard (path as NSString).isAbsolutePath, FileManager.default.isExecutableFile(atPath: path) else { return nil }
@@ -180,6 +189,14 @@ public enum ZmxSupport {
 
     public static func daemonName(for paneIdentity: UUID) -> String {
         namePrefix + compactUUID(paneIdentity)
+    }
+
+    /// The pane identity `daemonName(for:)` built `name` from, nil for any other name.
+    public static func paneIdentity(fromDaemonName name: String) -> UUID? {
+        guard isDaemonName(name) else { return nil }
+        let hex = Array(name.dropFirst(namePrefix.count))
+        let groups = [hex[0..<8], hex[8..<12], hex[12..<16], hex[16..<20], hex[20..<32]]
+        return UUID(uuidString: groups.map { String($0) }.joined(separator: "-"))
     }
 
     /// Whether `name` is one of OUR daemons: the exact shape `daemonName(for:)` emits. A prefix test is

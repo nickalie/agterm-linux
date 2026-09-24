@@ -673,6 +673,29 @@ struct ControlDispatcherTests {
         #expect(actions.calls == [.sessionSwap(target: "session", window: "win")])
     }
 
+    @Test func sessionLeadParsesThePaneOnceAndRoutesIt() async {
+        let actions = MockControlActions()
+
+        let response = await ControlDispatcher(actions: actions).dispatch(ControlRequest(
+            cmd: .sessionLead, target: "session", args: ControlArgs(window: "win", pane: "split")))
+        let bare = await ControlDispatcher(actions: actions).dispatch(ControlRequest(cmd: .sessionLead, target: "active"))
+
+        #expect(response?.ok == true)
+        #expect(bare?.ok == true)
+        #expect(actions.calls == [.sessionLead(target: "session", window: "win", pane: .right),
+                                  .sessionLead(target: "active", window: nil, pane: nil)])
+    }
+
+    @Test func sessionLeadRejectsAnUnknownPaneBeforeDispatch() async {
+        let actions = MockControlActions()
+
+        let response = await ControlDispatcher(actions: actions).dispatch(ControlRequest(
+            cmd: .sessionLead, target: "session", args: ControlArgs(pane: "middle")))
+
+        #expect(response == ControlResponse(ok: false, error: "invalid pane: middle"))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func splitRejectsAnUnknownAxisBeforeDispatch() async {
         let actions = MockControlActions()
         let response = await ControlDispatcher(actions: actions).dispatch(ControlRequest(
@@ -848,6 +871,39 @@ struct ControlDispatcherTests {
 
         #expect(response?.ok == true)
         #expect(actions.calls == [.keymapList])
+    }
+
+    @Test func hooksReloadAndListRouteToActionsAndKeepPayloads() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        let payload = ControlHooks(path: "/tmp/hooks.conf", diagnostics: [],
+                                   hooks: [ControlHookEntry(kind: "status", command: "~/s.sh", line: 1)])
+        actions.nextHooksReloadResponse = ControlResponse(ok: true, result: ControlResult(count: 1))
+        actions.nextHooksListResponse = ControlResponse(ok: true, result: ControlResult(hooks: payload))
+
+        let reload = await dispatcher.dispatch(ControlRequest(cmd: .hooksReload))
+        let list = await dispatcher.dispatch(ControlRequest(cmd: .hooksList))
+
+        #expect(reload == ControlResponse(ok: true, result: ControlResult(count: 1)))
+        #expect(list == ControlResponse(ok: true, result: ControlResult(hooks: payload)))
+        #expect(actions.calls == [.hooksReload, .hooksList])
+    }
+
+    @Test func hooksCommandsRefuseATargetOrWindowBeforeAnyAction() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let targeted = await dispatcher.dispatch(ControlRequest(cmd: .hooksReload, target: "active"))
+        let windowed = await dispatcher.dispatch(ControlRequest(cmd: .hooksList, args: ControlArgs(window: "w1")))
+
+        #expect(targeted == ControlResponse(ok: false, error: "hooks.reload takes no target or --window"))
+        #expect(windowed == ControlResponse(ok: false, error: "hooks.list takes no target or --window"))
+        #expect(actions.calls.isEmpty)
+    }
+
+    @Test func unsupportedMessageNamesTheHooksCommand() {
+        #expect(ControlActionsUnsupported.message("hooks.reload") == "hooks.reload is not supported on this platform")
+        #expect(ControlActionsUnsupported.message("hooks.list") == "hooks.list is not supported on this platform")
     }
 
     @Test func versionRoutesToActionsAndKeepsTheIdentity() async {
@@ -1131,6 +1187,30 @@ struct ControlDispatcherTests {
             .sessionBackground(target: "session", window: nil,
                                ControlSessionBackgroundOptions(watermark: nil))
         ])
+    }
+
+    @Test(arguments: [("left", StatusPane.left), ("split", .right), ("bottom", .right), ("scratch", .scratch)])
+    func sessionBackgroundPassesTheParsedPane(raw: String, pane: StatusPane) async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextSessionBackgroundResponse = ControlResponse(ok: true, result: ControlResult(id: "session"))
+
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .sessionBackground, target: "session",
+                                                     args: ControlArgs(mode: "clear", pane: raw)))
+
+        #expect(actions.calls == [.sessionBackground(target: "session", window: nil,
+                                                     ControlSessionBackgroundOptions(watermark: nil, pane: pane))])
+    }
+
+    @Test func sessionBackgroundRejectsAnUnknownPaneBeforeCallingActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionBackground, args: ControlArgs(mode: "color", pane: "middle", color: "#102030")))
+
+        #expect(response == ControlResponse(ok: false, error: "--pane must be left, right, or scratch"))
+        #expect(actions.calls.isEmpty)
     }
 
     @Test func sessionBackgroundRejectsInvalidInputsBeforeCallingActions() async {

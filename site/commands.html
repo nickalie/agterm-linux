@@ -202,9 +202,11 @@
             <a href="#font" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">font</a>
             <a href="#theme" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">theme</a>
             <a href="#keymap" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">keymap</a>
+            <a href="#hooks" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">hooks</a>
             <a href="#config" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">config</a>
             <a href="#restore" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">restore</a>
             <a href="#zmx" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">zmx</a>
+            <a href="#terminfo" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">terminfo</a>
             <a href="#version" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">version</a>
             <div style="height: 16px"></div>
             <span style="color: #4a5158; font-size: 11px; letter-spacing: 0.12em; padding: 4px 12px">HELP</span>
@@ -458,7 +460,10 @@
                 displays wake, then recovers on its own — poll this after an unattended create),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">backedByZmx</span> (true only when every existing
                 primary/split pane is currently zmx-backed; each primary/split object in
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">surfaces</span> reports its own value),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">surfaces</span> reports its own value, and its
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">lead</span>: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">leader</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">follower</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">unowned</span>, which says whether this Mac's
+                window size is the one the pane's program sees. A pane that does not lead is covered. Absent until the
+                pane's terminal reports one),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">liveAttribution</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitLiveAttribution</span> (primary and split pane
                 attribution: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">supervisor</span> identifies the bundled
@@ -481,18 +486,20 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">["right"]</span> or
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">["left","right"]</span>, omitted when neither is),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">hud</span> (the message panel holding the session-wide
-                slot — <span style="font-family: &quot;JetBrains Mono&quot;, monospace">{message, detail?, spinner, backgroundColor?, textColor?, sizePercent?, heightPercent?, position, pane?}</span>, where
+                slot — <span style="font-family: &quot;JetBrains Mono&quot;, monospace">{message, detail?, spinner, backgroundColor?, textColor?, sizePercent?, heightPercent?, position, pane?, hideAfter, markdown, fontSize?}</span>, where
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">spinner</span> names the effective style or
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">none</span> —
                 omitted when none is up; mutually exclusive with
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">overlay</span>, which reads false beside it),
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ask</span> (the pending terminal question as
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">{id, pane?}</span>, omitted when none is pending;
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane</span> is omitted for session-wide placement),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ask</span> (the session's pending question as
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">{id, pane?, remote?, replica?}</span>: a terminal question, or one of either style handed over for a
+                remote session; omitted when none is pending;
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane</span> is omitted for session-wide placement, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remote</span> is true on an origin
+                while the Mac presenting the session draws it, and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">replica</span> is true on that Mac for its copy),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">scratch</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">flagged</span>,
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">context</span> (what the session is about,
-                omitted when unset),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">context</span> (the local context, or on an attached row without
+                one the origin's mirrored context; omitted when neither is set),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">status</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusPane</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusBlink</span>,
@@ -500,8 +507,8 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusShape</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusChangedAt</span> (when the status was last set,
                 in epoch seconds on the same clock as an event's
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ts</span>; omitted when idle, refreshed by a re-push
-                of the same status, and never persisted),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ts</span>; omitted before any set, refreshed by every set
+                including idle and repeated values, and never persisted),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">foreground</span> /
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitForeground</span> (each pane's live foreground
                 argv, omitted at the shell prompt or for a setuid program like top/sudo),
@@ -532,7 +539,17 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remoteHost</span> (the machine an attached session
                 came from, the read side of
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">zmx attach</span>; omitted for a
-                local session, and never present after a relaunch because a remote session is not persisted), and
+                local session, and never present after a relaunch because a remote session is not persisted),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presentation</span> (on an attached session only:
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">state</span> is <span style="font-family: &quot;JetBrains Mono&quot;, monospace">connecting</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">connected</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">unsupported</span> or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">failed</span> with the reason in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">error</span>, and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">mode</span> is <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presenter</span> when this row's stream holds the presenter role
+                or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">mirror</span> when it does not; it reports the stream, not the panes' ssh connections),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presenters</span> (on an origin session:
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">mirrors</span>, how many streams mirror it without presenting, one per attached row and not per Mac, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presenter</span>, true when one presents it; omitted when none does),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remoteOverlays</span> (on an origin session: the overlay slots a presenting Mac holds, each
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">{pane?, sizePercent?}</span>, while the session stays uncovered here; omitted when none is held), and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">unseen</span>.
               </p>
               <p style="font-size: 14px; line-height: 1.65; color: #949ba4; margin: 8px 0 0">
@@ -546,10 +563,10 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">workspace focus</span>, distinct from
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">active</span>; reported independently of whether the
                 filter is applied, so a workspace row renders iff
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarVisible &amp;&amp; sidebarMode == "tree" &amp;&amp; (!workspaceFilter || focused)</span>
-                — no workspace row at all with the sidebar hidden or in
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">flagged</span> mode, the whole tree
-                while the filter is off, only the members while it is on), and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarVisible &amp;&amp; ((sidebarMode == "tree" &amp;&amp; (!workspaceFilter || focused)) || (sidebarMode == "flagged" &amp;&amp; sidebarFlaggedLayout == "tree" &amp;&amp; one of its sessions is flagged))</span>
+                — no workspace row at all with the sidebar hidden or under the flat flagged list; in the ordinary tree, the
+                whole tree while the filter is off and only the members while it is on; in the flagged tree, the workspaces
+                holding a flagged session, whatever the filter says), and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">collapsed</span> (the read side of
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">workspace collapse</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">expand</span>;
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">true</span> when collapsed, omitted when expanded).
@@ -561,6 +578,10 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">autoFollowMs</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarVisible</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarMode</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarFlaggedLayout</span> (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">flat</span> or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span>, the read side of
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">sidebar flagged-layout</span>; app-wide, so every window reports the
+                same value, under the ordinary tree too),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarWidth</span> (the sidebar divider position in points, the read side
                 of <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">sidebar width</span>, reported here and not on
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">window list</span>),
@@ -619,11 +640,19 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">status</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">notify</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session.created</span>,
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session.closed</span>, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session.closed</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree.changed</span> (a 100 ms coalesced signal that a
                 window's names, membership, or ordering moved, or a session's context changed — read
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">tree --json</span> for the new
-                snapshot). <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--kind</span> may be repeated or
+                snapshot), and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane.split</span> /
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane.scratch</span> (a
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">status</span> of
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">shown</span> or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">hidden</span>, emitted only on a real change), and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remote.opened</span> /
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remote.closed</span> (a local row created by <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx attach</span> entered or
+                left the tree, carrying its ssh destination as <span style="font-family: &quot;JetBrains Mono&quot;, monospace">host</span>; they ride the
+                created/closed edges, so undo re-emits <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remote.opened</span>, and they say nothing
+                about whether ssh is still connected). <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--kind</span> may be repeated or
                 comma-separated; an unknown kind errors. Every event carries
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">seq</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ts</span>,
@@ -632,7 +661,8 @@
                 ids, and a kind-specific
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">payload</span> — a
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">status</span> payload carries the session name, the
-                normalized status, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">blink</span>, and the optional
+                normalized status, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">previous</span> (the status before
+                the write), <span style="font-family: &quot;JetBrains Mono&quot;, monospace">blink</span>, and the optional
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">color</span>, and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">shape</span> fields.
@@ -733,8 +763,8 @@
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 Whether a workspace is collapsed makes no difference — a folded workspace is stepped into like any other. While the
                 workspace focus filter is applied, stepping stays inside the marked workspaces, the same scoping
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session go</span> gets. With nowhere to step — the flagged
-                flat list, or a single visible workspace — it errors with
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session go</span> gets. With nowhere to step — flagged mode in
+                either layout, or a single visible workspace — it errors with
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no other workspace to navigate to</span>.
               </p>
             </div>
@@ -1288,6 +1318,22 @@
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl session lead [--pane left|right] [--target T] [--window W]
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.lead</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Take the lead of a pane for this Mac. A session attached from another Mac has one leading Mac per pane, whose
+                window size the program sees; a pane that does not lead is covered. This uncovers it here and covers it on
+                the other Mac, exactly as pressing a key on the cover does. <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane</span> defaults to the primary pane.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                A pane that already leads answers ok. One whose terminal reports no lead answers <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane has no lead to take</span>. Read each pane's
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">lead</span> from <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span>.
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
                 agtermctl session scratch [on|off|toggle] [--command CMD] [--target T] [--window W]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.scratch</div>
@@ -1402,9 +1448,9 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusColor</span>, and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusShape</span> (the last two reporting the
                 per-call override only), and
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusChangedAt</span> — every accepted non-idle call stamps it,
-                including one that re-pushes the status already showing, so a poller reads the glyph's age
-                without keeping state of its own.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">statusChangedAt</span> — every accepted call stamps it,
+                including idle and one that re-pushes the same status, so a poller reads the last set time
+                without keeping state of its own. Automatic and manual clears also count.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane-id</span> is the surface's stable spawn token
                 (the shell's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">$AGTERM_PANE_ID</span>), forwarded
                 automatically by the agent-status hook; when it resolves it overrides
@@ -1460,6 +1506,10 @@
                 and follows the session and window names on one line in compact mode, where a long value truncates before the
                 names do. Settings ▸ Interface ▸ Title Bar ▸ "Session context" hides it without clearing it. A set or clear
                 that changes the value emits <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree.changed</span>.
+                A session attached from another Mac also shows that Mac's context: a value set here wins over it, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--clear</span> here removes only the local value. The mirrored
+                value is never saved and goes when the stream drops, and the event follows what is shown, so setting the text
+                already on screen emits nothing.
               </p>
             </div>
 
@@ -1485,11 +1535,13 @@
                 agtermctl session background image &lt;path&gt; [--opacity F] [--fit contain|cover|stretch|none] [--position P] [--repeat]<br />
                 agtermctl session background text &lt;text&gt; [--color #rrggbb] [--opacity F] [--fit …] [--position …]<br />
                 agtermctl session background color &lt;#rrggbb&gt;<br />
-                agtermctl session background clear
+                agtermctl session background clear<br />
+                … [--pane left|right|scratch]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.background</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
-                Set or clear a per-session background composited behind the terminal grid. Persisted, so it survives a relaunch. All
+                Set or clear a background composited behind the terminal grid. Without <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane</span>
+                it sets or clears the persisted session default, which survives a relaunch. All
                 four forms accept <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">[--target T] [--window W]</span>.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
@@ -1511,6 +1563,19 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">image</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">text</span>
                 watermark instead forces the pane opaque. Read the current spec back from the node's
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">background</span> object.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                <strong style="color: #bfbab0">--pane</strong> — sets one pane's own override instead of the session default, for
+                example a <span style="font-family: &quot;JetBrains Mono&quot;, monospace">DRIVER</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">PEER</span>
+                label per agent in a split. A pane without an override inherits the default, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">clear --pane</span> returns it to inheriting; set and clear
+                without <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane</span> never touch overrides. The override
+                follows its terminal across <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session swap</span> and a closed
+                left pane; left/right survive a relaunch, a scratch override lasts until that scratch terminal closes.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">right</span> needs a split and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">scratch</span> an open scratch terminal. Read overrides back
+                from the node's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">paneBackgrounds</span> object, where an absent
+                pane inherits <span style="font-family: &quot;JetBrains Mono&quot;, monospace">background</span>.
               </p>
             </div>
 
@@ -1665,7 +1730,9 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">--size-percent N</span> (1–100, floating) or
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--full</span> is required; both, neither, or an
                 out-of-range percent errors. The program keeps running across the resize — it is a layout re-flow, never a re-spawn.
-                Errors <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">no overlay</span> when none is open.
+                Errors <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">no overlay</span> when none is open,
+                and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">the viewer showing this overlay is gone</span> for an overlay shown on another Mac
+                (<a href="#zmx" style="color: #6d82f3">remote sessions</a>) whose stream has dropped.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 Record the node's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">overlaySizePercent</span> first to
@@ -1693,6 +1760,11 @@
                 for the session-wide one. It takes a <a href="#hud" style="color: #6d82f3">HUD</a> down too, as a courtesy — the
                 slot is the same one.
               </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                For an overlay shown on another Mac (<a href="#zmx" style="color: #6d82f3">remote sessions</a>) the reply means
+                the cancel was requested, not that the program ended;
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session overlay result</span> reports how it ended.
+              </p>
             </div>
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
@@ -1714,6 +1786,16 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no overlay result: the slot holds a hud</span>. The
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane</span> arm is unaffected — a HUD only ever takes
                 the session-wide slot.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                For an overlay shown on another Mac (<a href="#zmx" style="color: #6d82f3">remote sessions</a>) the result is
+                readable as soon as its job ends, even while a held <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--wait</span> surface there keeps the slot or a
+                HUD opened here during the run holds it. A job with no exit code errors
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay ended: launch-failed</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay ended: canceled</span> or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay ended: unknown</span>, the last meaning its helper stopped
+                reporting, not that the program stopped, and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">open --block</span> exits 1 for it. <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--block</span> polls the slot, so an
+                overlay opened on it before the next poll answers for it.
               </p>
             </div>
 
@@ -1738,7 +1820,8 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">open</span> before its terminal is up,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">no selection</span> when nothing is selected, and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no overlay to read: the slot holds a hud</span> for a
-                <a href="#hud" style="color: #6d82f3">HUD</a>, whose text is agterm's own.
+                <a href="#hud" style="color: #6d82f3">HUD</a>, whose text is agterm's own, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay is shown on another Mac</span> for one a presenting Mac draws.
               </p>
             </div>
 
@@ -1764,7 +1847,8 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay not realized</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no overlay to read: the slot holds a hud</span> as
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session overlay copy</span> does, plus
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">failed to read surface buffer</span> on a real read failure.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">failed to read surface buffer</span> on a real read failure and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">overlay is shown on another Mac</span> for one a presenting Mac draws.
                 It has no <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">no selection</span>: a blank
                 realized screen is <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ok</span> with an empty string.
               </p>
@@ -1794,9 +1878,9 @@
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
-                agtermctl session hud [open] &lt;message&gt; [--detail T] [--spinner] [--spinner-style S] [--position P]
-                [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--pane P] [--pane-id ID]
-                [--target T] [--window W]
+                agtermctl session hud [open] &lt;message&gt;|--file FILE [--markdown] [--font-size PT] [--detail T] [--spinner] [--spinner-style S] [--position P]
+                [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS]
+                [--pane P] [--pane-id ID] [--target T] [--window W]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.hud.open</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
@@ -1826,7 +1910,7 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">top</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">bottom</span> this argument shipped with are still
                 accepted for the middle column, and the read-back reports the canonical anchor. The panel is measured from the message
-                against the session's terminal font on BOTH axes separately — width from the longest wrapped line, height from
+                against its own font on BOTH axes separately — width from the longest wrapped line, height from
                 the number of them — so a title and a subtitle give a wide, short panel rather than a square one.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--pane primary|left|top|split|right|bottom</span>
                 uses that pane as the bounds for measurement, explicit size, anchors, and margins.
@@ -1858,14 +1942,30 @@
                 message is replaceable, a program is not.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--markdown</span> renders the message as standard markdown (CommonMark plus GFM tables): headings, bold,
+                italic, strikethrough, nested lists, code blocks, block quotes, rules and tables, with a link showing its label and
+                raw HTML staying literal. It raises the message cap to 4096 characters and allows newlines and tabs in it; the
+                detail keeps the plain rules. A message that renders nothing visible is refused like an empty one. A single newline inside a paragraph is a space, so end a line with two spaces or a
+                backslash, or use list items; lists always render tight. Text wraps at 60 columns while table rows stay intact,
+                all left-aligned as one block. What does not fit is clipped: a row too wide ends in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">…</span>, and rows past the
+                panel's height give way to a dim <span style="font-family: &quot;JetBrains Mono&quot;, monospace">… N more</span>, itself clipped in a narrow panel. Trailing all-empty table
+                rows and an all-empty header row are not shown; a table is framed in box-drawing borders with a rule under its header.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--file FILE</span> reads the message from a UTF-8 file instead of the argument (exactly one of the two), once
+                per command with nothing watching it, dropping one trailing newline; an unreadable or non-UTF-8 file fails in
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">agtermctl</span> before anything is sent. <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--font-size PT</span> (6–72) sets the panel's own font for its surface and its measurement,
+                fixed for the panel's life; omitted, the panel uses the session's size at open. A window resize or divider drag
+                re-measures the panel by itself. Both read back, as <span style="font-family: &quot;JetBrains Mono&quot;, monospace">markdown</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">fontSize</span>.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 There is no menu item, chord, or palette entry: this is control-only, with nothing for a human to invoke by hand.
               </p>
             </div>
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
-                agtermctl session hud update &lt;message&gt; [--detail T] [--spinner] [--spinner-style S] [--position P]
-                [--text-color #rrggbb] [--size-percent N] [--pane P] [--pane-id ID] [--target T] [--window W]
+                agtermctl session hud update &lt;message&gt;|--file FILE [--markdown] [--detail T] [--spinner] [--spinner-style S] [--position P]
+                [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS] [--pane P] [--pane-id ID]
+                [--target T] [--window W]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.hud.update</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
@@ -1890,6 +1990,10 @@
                 is ignored for the same reason, and the read-back keeps naming the color the panel actually paints.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--text-color</span> is the half that CAN change: it
                 rides the body file the panel's painter re-reads every tick, so the live text recolors with no re-spawn.
+                The font is fixed the same way: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">update</span> takes no <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--font-size</span>, and a raw protocol update
+                carrying <span style="font-family: &quot;JetBrains Mono&quot;, monospace">fontSize</span> errors
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session.hud.update: --font-size is fixed at open; reopen the hud to change it</span>.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--markdown</span> must be repeated, or the panel returns to plain text.
               </p>
             </div>
 
@@ -2310,7 +2414,7 @@
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
-                agtermctl pick [--prompt TEXT] [--query TEXT] [--allow-custom] [--follow] [--window W] [--no-block]
+                agtermctl pick [--prompt TEXT] [--query TEXT] [--select ID] [--allow-custom] [--follow] [--window W] [--no-block]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">pick.open</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
@@ -2324,12 +2428,18 @@
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 Typing matches item labels only; a subtitle is displayed but never searched. An empty query lists the items in the
-                order the caller supplied them, so the first item is the one Return runs on open.
+                order the caller supplied them, so without
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--select</span> the first item is the one Return
+                runs on open.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--prompt</span> sets the query field placeholder.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--query</span> prefills it and filters on open, which
                 ranks by match score and so does not preserve the supplied order.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--select ID</span> opens with that item highlighted
+                and scrolled into view, so Return on an untouched picker runs it; the id must name a supplied item, and a
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--query</span> that filters it out leaves the first
+                visible row highlighted instead.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--allow-custom</span> accepts a nonmatching query.
                 A background <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span> target stays in the
                 background unless <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--follow</span> raises it. The
@@ -2349,8 +2459,10 @@
                 without <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--allow-custom</span>),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">too many items (max 1000)</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pick item label must not be empty</span>,
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pick item ids must be unique</span>, or
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">item text must not contain control characters</span>.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pick item ids must be unique</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">item text must not contain control characters</span>, or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pick select must name an item id</span>
+                (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">--select</span> names no supplied item).
                 A second live picker returns <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pick already pending</span>, or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ask already pending</span> when a GUI ask owns the slot;
                 an unavailable target returns the standard window-resolution error,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no open window</span>, or
@@ -2496,8 +2608,10 @@
                 <strong style="color: #bfbab0">Read-back:</strong> the session node's
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ask</span> holds the terminal question's
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span> and optional current
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane</span>.
-                Top-level <span style="font-family: &quot;JetBrains Mono&quot;, monospace">askPending</span> holds the GUI question's id.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pane</span>, and also a question of either style
+                handed over for a remote session, marked <span style="font-family: &quot;JetBrains Mono&quot;, monospace">remote</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">replica</span>
+                (<a href="#zmx" style="color: #6d82f3">remote sessions</a>).
+                Top-level <span style="font-family: &quot;JetBrains Mono&quot;, monospace">askPending</span> holds the window's GUI question's id.
                 Each field is omitted when its slot is empty.
                 The raw protocol's open reply includes <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.pane</span>
                 for pane placement. Ask state is poll-only.
@@ -2649,11 +2763,12 @@
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">sidebar.mode</div>
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
-                Flip the sidebar view between the workspace tree and the flat flagged working-set list, where each row is labeled
+                Flip the sidebar view between the workspace tree and the flagged working set. In its default flat layout each row is labeled
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session : workspace</span> even across workspaces.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">toggle</span> is the default; idempotent; persisted
                 per-window. Read back via the tree's
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarMode</span>.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">sidebar flagged-layout</span> picks how the flagged view is arranged.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 While in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">flagged</span> mode,
@@ -2672,6 +2787,28 @@
 
             <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl sidebar flagged-layout [flat|tree|toggle]
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">sidebar.flagged-layout</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Pick how the flagged view arranges its sessions: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">flat</span> is one list
+                labeled <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session : workspace</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span> nests
+                them under their workspace rows and leaves out workspaces with nothing flagged.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">toggle</span> is the default; an unknown layout errors. App-wide, the same
+                setting as Settings ▸ General: it takes no <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span>, needs no open
+                window, and applies to every window's flagged view at once. <strong style="color: #bfbab0">Returns</strong> the
+                resulting layout in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.text</span>. Read back via the tree's
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebarFlaggedLayout</span>.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                The tree layout shares each workspace's collapse state with the ordinary tree, so collapsing a group there
+                collapses that workspace in both. It ignores the workspace focus filter, as the flat list does, and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">workspace go</span> stays unavailable in flagged mode under either layout.
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
                 agtermctl sidebar expand [--window W]
               </div>
               <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">sidebar.expand</div>
@@ -2679,7 +2816,8 @@
                 Expand every workspace row in a window's sidebar tree. Unlike
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sidebar</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">sidebar mode</span>,
                 it honors <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span>, so a script can expand a
-                background window's tree. Idempotent; a graceful no-op in flagged mode.
+                background window's tree. Idempotent; a graceful no-op under the flat flagged list, which has no
+                workspace rows. In either tree layout it applies to all workspaces, including those the view omits.
               </p>
             </div>
 
@@ -2691,8 +2829,8 @@
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
                 Collapse every workspace except the current one, which stays expanded and is scrolled into view. Same
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span> selector and defaults as
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">expand</span>. Idempotent; a graceful no-op in flagged
-                mode.
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">expand</span>. Idempotent; a graceful no-op under the flat
+                flagged list, and in either tree layout it applies to all workspaces, including those the view omits.
               </p>
             </div>
 
@@ -2914,10 +3052,63 @@
                 chord therefore inert. The action and menu lists can disagree, which is how you tell a keymap problem from a menu one
                 when a binding will not fire. App-global; takes no target or arguments.
               </p>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Each custom command reports <span style="font-family: &quot;JetBrains Mono&quot;, monospace">errorHud</span> (boolean), <span style="font-family: &quot;JetBrains Mono&quot;, monospace">errorPosition</span>
+                (canonical position, default <span style="font-family: &quot;JetBrains Mono&quot;, monospace">center</span>), and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">errorPane</span>
+                (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">left</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">right</span>, omitted for session-wide placement).
+                The human listing shows enabled error options. See <a href="docs.html#keymap" style="color: #6d82f3">Key Mapping</a>
+                for the <span style="font-family: &quot;JetBrains Mono&quot;, monospace">keymap.conf</span> syntax that sets them.
+              </p>
             </div>
           </section>
 
           <!-- CONFIG -->
+          <section id="hooks" style="scroll-margin-top: 88px; padding-top: 56px">
+            <h2
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 700;
+                font-size: 28px;
+                letter-spacing: -0.02em;
+                margin: 0 0 16px;
+                padding-bottom: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+              "
+            >
+              hooks
+            </h2>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl hooks reload
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">hooks.reload</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Re-read and apply <span style="font-family: &quot;JetBrains Mono&quot;, monospace">hooks.conf</span>.
+                <strong style="color: #bfbab0">Returns</strong>
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.count</span> — the number of parse diagnostics (0 is a clean reload). A hook whose line is
+                unchanged keeps its running script and queue. App-global; the same path as File ▸ Reload Hooks, and a target or
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span> is refused. See <a href="/docs#hooks" style="color: #6d82f3">Event hooks</a> for the file format.
+              </p>
+            </div>
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl hooks list
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">hooks.list</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Show every hook with its live state.
+                <strong style="color: #bfbab0">Returns</strong>
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.hooks</span> with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">path</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">diagnostics</span> (line and message), and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">hooks</span> — one row per line in file order, then any hook removed from the file whose script is still
+                running, marked <span style="font-family: &quot;JetBrains Mono&quot;, monospace">retired</span>: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">kind</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">command</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">line</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">runningPid</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">elapsedSeconds</span> while a script runs, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">pending</span> (events waiting
+                behind it), <span style="font-family: &quot;JetBrains Mono&quot;, monospace">dropped</span> (events the bounded queue discarded), and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">lastFailure</span>, kept until the
+                hook next succeeds (a reload keeps it). App-global; a target or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--window</span> is refused.
+              </p>
+            </div>
+          </section>
+
           <section id="config" style="scroll-margin-top: 88px; padding-top: 56px">
             <h2
               style="
@@ -3123,7 +3314,8 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">host</span> (only when one was given — the ssh destination the requesting app was handed, stamped on after decoding, since the far side cannot know which name reached it),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">endpoint</span> (the zmx
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">executable</span> and
-                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">socketDirectory</span>), and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">socketDirectory</span>),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presentation</span> (the presentation protocol version, absent from an app too old to stream), and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">sessions</span>, each with
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span> (what
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx attach</span> takes),
@@ -3152,10 +3344,73 @@
                 The remote is resolved again before anything is created, so a session gone since the listing fails and creates nothing rather than handing back a fresh shell wearing its name. Only failures found before that point are reported here; a connection that starts and later drops is an ordinary pane exit.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
-                Each pane holds on Ghostty's own press-any-key prompt when its ssh exits, under one line naming the host, the session, the pane and the exit status. Closing the session here ends only this side's connection: the far-side processes keep running, and nothing this command does can kill them. A remote session is never written to disk, so it does not come back after a relaunch.
+                An ordinary ssh disconnect holds on Ghostty's own press-any-key prompt, under one line naming the host, the session, the pane and the exit status. Confirmed origin removal requires no acknowledgement, even if the replica already shows that prompt. Automatic primary removal is skipped while a local split is pending; the last replica waits for its ssh exit and may then close the row. Closing the session here ends only this side's connection: the far-side processes keep running, and nothing this command does can kill them. A remote session is never written to disk, so it does not come back after a relaunch.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
-                Pinned zmx has a single leader, and an attach joins as a follower, so the remote arrives at the <em>other</em> machine's window size and ignores input until the first <em>classified</em> key — a printable character, Return, Tab or Backspace — takes the lead and reflows it. Until then the mouse, focus reporting and Ctrl-L do not reach the far side, so a mouse-driven TUI looks dead, and an ordinary control key may not wake it either. Leadership is per pane, so typing in one half of a split leaves the other at the remote's geometry, and after you close the session the far side keeps your size until something else resizes it.
+                Every attach also opens a presentation stream, so the row mirrors the origin session's status, its context, its <span style="font-family: &quot;JetBrains Mono&quot;, monospace">notify</span> notifications, its HUD and the layout of panes already attached; <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presentation</span> on the tree node reports it. Layout updates never open a pane: close and reattach the row to include a split opened later on the origin. The mirrored status, context and HUD clear while the stream is down and return on reconnect, a notification raised meanwhile is not shown, and a terminal notification (OSC 9/777) is not mirrored because it already arrives in the pane's bytes.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                One attached row per session holds the <em>presenter</em> role (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">mode</span> reads <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presenter</span>): the first whose stream asks for it while none holds it. The others mirror and ask again only when they reconnect. While a session has a presenter, an <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ask open</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session overlay open</span> newly aimed at it on the origin is handed to that Mac, and the caller on the origin gets the answer or the exit status as usual. An ask the presenting Mac refuses (its slot is taken, or a GUI question's target is not on screen), or whose stream drops, goes back to the origin and waits there like a local one; if the origin cannot place it, it ends <span style="font-family: &quot;JetBrains Mono&quot;, monospace">cancelled</span> with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">reason</span> <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presentation-lost</span>. An overlay's program runs once, on the origin, under an ssh terminal the presenting Mac opens; the origin's session stays uncovered with its slot reserved, and an overlay the presenting Mac cannot show ends <span style="font-family: &quot;JetBrains Mono&quot;, monospace">launch-failed</span> instead of opening on the origin. The presenting Mac's own <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session overlay result</span> for it reports its local ssh status, so ask the origin.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                When the stream drops, a <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--wait</span> overlay whose program already ended closes on the presenting Mac, and a running one keeps running and closes when its ssh ends; nothing is handed back later. While the stream is not up, the row's indicator says so and names the host. It retries on its own; close and reattach the session to retry at once.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                Each pane has one leading Mac, whose window size the program sees. An attach takes the lead in every pane, and the same panes on the Mac the session runs on are covered; each pane's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">lead</span> in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span> reads <span style="font-family: &quot;JetBrains Mono&quot;, monospace">leader</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">follower</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">unowned</span>. A key on the cover or <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session lead</span> takes it back. On the Mac the session runs on, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session type</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session text</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">surface cursor</span> keep working on a covered pane; on the attaching Mac a covered pane refuses them until it leads again. Closing the session uncovers the far side. An origin running an older agterm reports no lead, and the attach then arrives at its window size until a typed key.
+              </p>
+            </div>
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl zmx present SESSION
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">zmx.present</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                The plumbing behind a remote session's mirroring, run by agterm over ssh on the origin and not meant to be typed. It opens a presentation stream for <span style="font-family: &quot;JetBrains Mono&quot;, monospace">SESSION</span> on the local socket and bridges it to stdio as newline-delimited JSON: a snapshot of the session's status, context, HUD and layout, then each change and each <span style="font-family: &quot;JetBrains Mono&quot;, monospace">notify</span>, with a ping every 10 seconds. It is refused for a session whose panes are not all live-backed. <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx tree</span> advertises support as <span style="font-family: &quot;JetBrains Mono&quot;, monospace">presentation</span>, the protocol version.
+              </p>
+            </div>
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl session overlay run-job JOB
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">session.overlay.job.run</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                The plumbing behind an overlay shown on another Mac, run by that Mac over <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ssh -tt</span> on the origin and not meant to be typed. It claims <span style="font-family: &quot;JetBrains Mono&quot;, monospace">JOB</span> on the local socket, runs its program under the ssh terminal in the working directory a local overlay would get, with agterm's session variables over the environment ssh gave it, and reports how it ended. A job can be claimed once, and only within 30 seconds of its open; a job that cannot be claimed exits 1 having launched nothing, one whose program cannot be launched exits 127, and otherwise it exits with the program's status. Losing the terminal cancels the program.
+              </p>
+            </div>
+          </section>
+
+          <section id="terminfo" style="scroll-margin-top: 88px; padding-top: 56px">
+            <h2
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 700;
+                font-size: 28px;
+                letter-spacing: -0.02em;
+                margin: 0 0 16px;
+                padding-bottom: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+              "
+            >
+              terminfo
+            </h2>
+
+            <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 0 0 12px">
+              Local-only: this group never opens the control socket, so it has no protocol command, no
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--json</span>, and needs no running agterm.
+            </p>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl terminfo install DESTINATION [-p PORT] [-i FILE ...] [-J HOST] [-F FILE]
+              </div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Install the bundled <span style="font-family: &quot;JetBrains Mono&quot;, monospace">xterm-ghostty</span> terminfo entry on a remote host. agterm's shells run with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">TERM=xterm-ghostty</span>, and a host without that entry makes <span style="font-family: &quot;JetBrains Mono&quot;, monospace">less</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">vim</span> and other full-screen programs warn that the terminal is not fully functional. This dumps the entry with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">infocmp</span> and compiles it into the remote account's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">~/.terminfo</span> with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tic</span>, over one ssh connection. Run it once per host and account; nothing is cached and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">ssh</span> itself is untouched.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">DESTINATION</span> is what ssh takes: a host, <span style="font-family: &quot;JetBrains Mono&quot;, monospace">user@host</span>, or an alias from <span style="font-family: &quot;JetBrains Mono&quot;, monospace">~/.ssh/config</span>. The connection is interactive, so a password or host-key prompt is answered on this terminal. Only the four options shown pass through to ssh; other connection settings belong in <span style="font-family: &quot;JetBrains Mono&quot;, monospace">~/.ssh/config</span> under a host alias, because an unchecked ssh argument could print the config and claim success or never run <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tic</span> at all. The settings that decide how the command itself runs are the installer's, and win over the config: no pty, stdin kept, a plain session, no fork after authentication, and no <span style="font-family: &quot;JetBrains Mono&quot;, monospace">RemoteCommand</span>.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                The remote needs <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tic</span>, which comes with ncurses, and says so when it is missing. Exits with ssh's status; a failure before the connection, such as no entry next to this <span style="font-family: &quot;JetBrains Mono&quot;, monospace">agtermctl</span>, is reported without opening one.
               </p>
             </div>
           </section>

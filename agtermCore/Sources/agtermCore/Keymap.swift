@@ -199,7 +199,7 @@ public func parseKeymap(_ text: String) -> (keymap: Keymap, diagnostics: [Keymap
             diagnostics)
 }
 
-/// Parse the remainder of a `global-hotkey` line: one chord token and nothing else. Rejects a bare key
+/// Parse one `global-hotkey` chord. Rejects a bare non-function key
 /// outright — a system-wide binding with no modifier would take that key from every other application —
 /// and a leader sequence, which `RegisterEventHotKey` cannot express. Repeats are last-wins.
 private func parseGlobalHotkeyLine(_ rest: String, line: Int, hotkey: inout Chord?,
@@ -219,7 +219,7 @@ private func parseGlobalHotkeyLine(_ rest: String, line: Int, hotkey: inout Chor
         diagnostics.append(KeymapDiagnostic(line: line, message: "invalid global-hotkey chord '\(token)'"))
         return
     }
-    guard !chord.mods.isEmpty else {
+    guard chord.canStartShortcut else {
         diagnostics.append(KeymapDiagnostic(line: line,
                                             message: "global-hotkey '\(token)' must include a modifier"))
         return
@@ -697,9 +697,8 @@ private func splitMapAlternatives(_ parsed: Alternatives, line: Int,
             menuChord = chord
             continue
         }
-        // monitor-bound: a bare first chord would be swallowed everywhere in the terminal, the rule
-        // `parseCommandLine` already applies to every custom shortcut.
-        guard alternative.keybind.first?.mods.isEmpty == false else {
+        // monitor-bound shortcuts reserve bare first chords for function keys.
+        guard alternative.keybind.first?.canStartShortcut == true else {
             diagnostics.append(KeymapDiagnostic(
                 line: line,
                 message: "chord '\(alternative.raw)' needs a modifier on its first key; \(scope.mapSkipped)"))
@@ -710,7 +709,7 @@ private func splitMapAlternatives(_ parsed: Alternatives, line: Int,
     return (menuChord, alternatives)
 }
 
-/// Parse the remainder of a `command` line (after the verb): `"<name>" [chord] <shell...>`. On any failure,
+/// Parse the remainder of a `command` line (after the verb): `"<name>" [chord] [error options] <shell...>`. On any failure,
 /// a name already taken included, it appends a diagnostic and leaves `commandLines` untouched. The kept
 /// alternatives ride alongside the command; `applySurvivingShortcuts` is what turns them back into
 /// `CustomCommand.shortcut`.
@@ -723,21 +722,21 @@ private func parseCommandLine(_ rest: String, line: Int, commandLines: inout [Pa
     let name = String(rest[rest.index(after: rest.startIndex)..<closeQuote])
     let afterName = String(rest[rest.index(after: closeQuote)...]).trimmingCharacters(in: .whitespaces)
 
-    // EVERY alternative's first chord must carry a modifier: a bare key would shadow that key in the
-    // terminal, and a palette-only shell line starting with a single-char token (`[`, `:`, a one-letter
-    // alias) would be swallowed as a binding. One alternative failing that drops alone, as on a `map` line;
+    // a first chord needs a modifier or a function key. Otherwise a shell line starting with a
+    // single-char token (`[`, `:`, a one-letter alias) would be swallowed as a binding.
+    // one alternative failing that drops alone, as on a `map` line;
     // the token stays shell only when NOTHING in it is bindable, which is what keeps `command "x" a|b echo`
     // running the same shell line it always did.
     let firstToken = String(afterName.prefix(while: { !$0.isWhitespace }))
     var kept: Alternatives = []
     var shellLine = afterName
     if !firstToken.isEmpty, let parsed = alternativeKeybinds(firstToken) {
-        kept = parsed.filter { $0.keybind.first?.mods.isEmpty == false }
+        kept = parsed.filter { $0.keybind.first?.canStartShortcut == true }
         if kept.isEmpty {
             diagnostics.append(KeymapDiagnostic(line: line,
                 message: "command '\(name)' shortcut '\(firstToken)' must include a modifier; \(DropScope.wholeBinding.commandSkipped)"))
         } else {
-            for dropped in parsed where dropped.keybind.first?.mods.isEmpty != false {
+            for dropped in parsed where dropped.keybind.first?.canStartShortcut != true {
                 diagnostics.append(KeymapDiagnostic(line: line,
                     message: "command '\(name)' shortcut '\(dropped.raw)' must include a modifier; \(DropScope.alternative.commandSkipped)"))
             }
@@ -750,11 +749,7 @@ private func parseCommandLine(_ rest: String, line: Int, commandLines: inout [Pa
             message: "command '\(name)' shortcut '\(firstToken)' has an invalid alternative; \(DropScope.wholeBinding.commandSkipped)"))
     }
 
-    // an empty shell line (just a name, or a name + chord with no command) is a no-op binding; skip it.
-    guard !shellLine.trimmingCharacters(in: .whitespaces).isEmpty else {
-        diagnostics.append(KeymapDiagnostic(line: line, message: "command '\(name)' has no shell line"))
-        return
-    }
+    guard let command = parseCommandOptions(shellLine, name: name, line: line, diagnostics: &diagnostics) else { return }
 
     // the name is the identity a run count is stored under, so a second definition cannot share it.
     guard !commandLines.contains(where: { $0.command.name == name }) else {
@@ -763,6 +758,51 @@ private func parseCommandLine(_ rest: String, line: Int, commandLines: inout [Pa
         return
     }
 
-    commandLines.append(ParsedCommandLine(command: CustomCommand(name: name, command: shellLine, shortcut: ""),
-                                          alternatives: kept))
+    commandLines.append(ParsedCommandLine(command: command, alternatives: kept))
+}
+
+private func parseCommandOptions(_ body: String, name: String, line: Int,
+                                 diagnostics: inout [KeymapDiagnostic]) -> CustomCommand? {
+    var rest = body[...]
+    var command = CustomCommand(name: name, command: "", shortcut: "")
+    var seen: Set<String> = []
+    func reject(_ reason: String) -> CustomCommand? {
+        diagnostics.append(KeymapDiagnostic(line: line, message: "command '\(name)' \(reason)"))
+        return nil
+    }
+    func takeToken() -> String {
+        let token = rest.prefix { !$0.isWhitespace }
+        rest = rest.dropFirst(token.count).drop { $0.isWhitespace }
+        return String(token)
+    }
+    while !rest.isEmpty {
+        let option = String(rest.prefix { !$0.isWhitespace })
+        if option == "--" {
+            _ = takeToken()
+            break
+        }
+        guard option.hasPrefix("--error-") else { break }
+        guard ["--error-hud", "--error-position", "--error-pane"].contains(option) else {
+            return reject("has unknown option '\(option)'")
+        }
+        guard seen.insert(option).inserted else { return reject("repeats option '\(option)'") }
+        _ = takeToken()
+        switch option {
+        case "--error-hud": command.errorHud = true
+        case "--error-position":
+            guard let position = HudPosition.parse(takeToken()) else {
+                return reject("requires a valid HUD position after --error-position")
+            }
+            command.errorPosition = position
+        default:
+            guard let pane = OverlayPane(rawValue: takeToken()) else {
+                return reject("requires left or right after --error-pane")
+            }
+            command.errorPane = pane
+        }
+    }
+    guard command.errorHud || seen.isEmpty else { return reject("requires --error-hud for error placement options") }
+    guard !rest.isEmpty else { return reject("has no shell line") }
+    command.command = String(rest)
+    return command
 }

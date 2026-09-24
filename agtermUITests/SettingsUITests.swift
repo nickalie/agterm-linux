@@ -80,6 +80,30 @@ final class SettingsUITests: XCTestCase {
                       "the default 'On first key' should remove statusReset from settings.json")
     }
 
+    func testFlaggedViewLayoutPickerPersists() throws {
+        let picker = settingsControl(tab: "General", control: "settings-flagged-view-layout")
+        // the tab's last line must sit inside the fixed-size window: a grouped Form scrolls, so an
+        // overflowing tab still reports every control as hittable.
+        let window = app.windows.containing(.any, identifier: "settings-flagged-view-layout").firstMatch
+        let lastLine = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Also loads")).firstMatch
+        XCTAssertTrue(lastLine.waitForExistence(timeout: 5), "the General tab's closing hint should exist")
+        XCTAssertLessThanOrEqual(lastLine.frame.maxY, window.frame.maxY, "the General tab should fit without scrolling")
+
+        picker.click()
+        let tree = app.menuItems["Workspace tree"]
+        XCTAssertTrue(tree.waitForExistence(timeout: 5), "the layout picker should offer 'Workspace tree'")
+        tree.click()
+        XCTAssertTrue(poll { self.settingsValue("flaggedViewLayout") == "tree" },
+                      "selecting 'Workspace tree' should persist flaggedViewLayout=tree to settings.json")
+
+        picker.click()
+        let flat = app.menuItems["Flat list"]
+        XCTAssertTrue(flat.waitForExistence(timeout: 5), "the layout picker should offer 'Flat list'")
+        flat.click()
+        XCTAssertTrue(poll { self.settingsValue("flaggedViewLayout") == nil },
+                      "the default 'Flat list' should remove flaggedViewLayout from settings.json")
+    }
+
     func testDockBouncePickerPersists() throws {
         let picker = settingsControl(tab: "Notifications", control: "settings-dock-bounce")
 

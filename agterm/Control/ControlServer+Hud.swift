@@ -1,18 +1,81 @@
 import AppKit
 import CoreText
 import Foundation
+import os
 import agtermCore
+
+private let hudLogger = Logger(subsystem: "com.umputun.agterm", category: "ControlHud")
+
+/// A session's live auto-hide timer and the revision that armed it. The revision is what makes a superseded
+/// callback inert: an update restarts the interval without bumping `Session.overlaySlotGeneration`, which
+/// would recreate the panel's surface.
+struct HudAutoHide {
+    let revision: Int
+    /// When the panel comes down. A viewer's remaining lifetime is sampled from it, so a late subscriber
+    /// gets what is left and not the configured interval again.
+    let deadline: Date
+    let task: Task<Void, Never>
+}
 
 /// App-side host for `session.hud.*`. Validation, error text and response shape stay in
 /// `ControlDispatcher+Hud`; this layer supplies the three things agtermCore cannot resolve — the bundled
 /// helper's path, the terminal font's cell size, and live geometry, plus the body file the helper reads.
 extension ControlServer {
+    /// Arms `spec`'s auto-hide for `session`, replacing whatever was armed before, registers the
+    /// cancellation the store calls from `discardHudBody`, and publishes the panel to attached viewers with
+    /// the deadline it now has. A spec with no auto-hide only cancels, and still publishes.
+    ///
+    /// Called after the body write succeeds, never before: a rejected open or update must leave the panel
+    /// that is actually on screen with the deadline it actually has, and must not reach a viewer.
+    func armHudAutoHide(_ session: Session, spec: HudSpec) {
+        let id = session.id
+        defer {
+            library.store(forSession: id)?.publishHud(forSession: id, expiresAt: hudAutoHide[id]?.deadline,
+                                                      now: hudClock())
+        }
+        let revision = (hudAutoHide[id]?.revision ?? 0) + 1
+        hudAutoHide[id]?.task.cancel()
+        hudAutoHide[id] = nil
+        // clamped as well as validated: the conversion below traps on a large enough Double, and a raw-socket
+        // caller reaching here past a validation that drifted must not take the app with it.
+        let seconds = min(spec.effectiveHideAfter, HudSpec.maxHideAfter)
+        guard seconds > 0 else { return }
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.hudAutoHide[id]?.revision == revision else { return }
+            self.hudAutoHide[id] = nil
+            // through the store, so the body file goes with the panel and the deck sees the slot empty.
+            self.library.store(forSession: id)?.closeHud(id)
+        }
+        hudAutoHide[id] = HudAutoHide(revision: revision, deadline: hudClock().addingTimeInterval(seconds),
+                                      task: task)
+        session.onHudDiscarded = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.hudAutoHide[id]?.task.cancel()
+                self?.hudAutoHide[id] = nil
+            }
+        }
+    }
     func openHud(_ target: String?, window: String?, spec: HudSpec) -> ControlResponse {
         openHud(target, window: window, spec: spec, placement: ControlHudPlacement())
     }
 
     func openHud(_ target: String?, window: String?, spec: HudSpec,
                  placement: ControlHudPlacement) -> ControlResponse {
+        openHud(target, window: window, spec: spec, placement: placement, fallbackToSession: false)
+    }
+
+    func openCommandFailureHud(_ target: String, spec: HudSpec, pane: OverlayPane?) -> ControlResponse {
+        openHud(target, window: nil, spec: spec, placement: ControlHudPlacement(pane: pane), fallbackToSession: true)
+    }
+
+    /// A pane the origin placed its panel over may not be laid out here, so this falls back to session-wide.
+    func openRemoteHud(_ target: String, spec: HudSpec, placement: ControlHudPlacement) -> ControlResponse {
+        openHud(target, window: nil, spec: spec, placement: placement, fallbackToSession: true)
+    }
+
+    private func openHud(_ target: String?, window: String?, spec: HudSpec,
+                         placement: ControlHudPlacement, fallbackToSession: Bool) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
             guard let session = store.session(withID: id) else {
                 return ControlResponse(ok: false, error: "no such session")
@@ -27,18 +90,25 @@ extension ControlServer {
             case .resolved(let identity, let targetPane):
                 paneIdentity = identity
                 pane = targetPane
-            case .rejected(let response): return response
+            case .rejected(let response):
+                guard fallbackToSession else { return response }
+                hudLogger.notice("failure panel for \"\(spec.message, privacy: .public)\" falling back to session-wide placement: \(response.error ?? "unknown placement error", privacy: .public)")
+                paneIdentity = nil
+                pane = nil
             }
             let file = Self.bodyFile(for: id)
+            // resolved before measuring and stored only by the open: a replaced HUD's teardown clears the
+            // session's stored size, so reading it here would measure the predecessor's font.
+            let fontSize = spec.fontSize ?? session.fontSize ?? GhosttyApp.shared.baseFontSize
             // measured ONCE and threaded through: the sizing and the header describe the same panel, and
             // both a font lookup and a pane-geometry union would otherwise run twice per command.
-            let metrics = self.paneMetrics(for: session, pane: pane)
+            let metrics = self.paneMetrics(for: session, pane: pane, fontSize: fontSize)
             // open FIRST, write second: replacing a live HUD tears its surface down, and that teardown
             // deletes the body file at this same per-session path — writing first would lose it. The
             // header's grid also comes from the size the store RESOLVED, which only exists after this call.
             guard store.openHud(id, command: command, spec: spec, file: file,
                                 size: HudLayout.panelSize(for: spec, pane: metrics),
-                                paneIdentity: paneIdentity) else {
+                                paneIdentity: paneIdentity, fontSize: fontSize) else {
                 return ControlResponse(ok: false, error: "overlay already open")
             }
             // the rolled-back HUD never realized a surface, and a replaced predecessor's file sits at this
@@ -47,6 +117,8 @@ extension ControlServer {
                 store.closeHud(id)
                 return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
+            self.watchHudGeometry(session)
+            self.armHudAutoHide(session, spec: spec)
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -78,15 +150,18 @@ extension ControlServer {
             case .rejected(let response): return response
             }
             let previousPaneIdentity = session.hudPaneIdentity
-            let metrics = self.paneMetrics(for: session, pane: pane)
+            let metrics = self.paneMetrics(for: session, pane: pane, fontSize: self.liveHudFontSize(session))
             store.updateHud(id, spec: spec, size: HudLayout.panelSize(for: spec, pane: metrics),
                             paneIdentity: paneIdentity)
             guard self.writeHudBody(session, pane: metrics) else {
+                // the panel still paints the old message, so it keeps the deadline that came with it: the
+                // arm below is the only thing that touches timer state, and it never ran.
                 store.updateHud(id, spec: previous,
                                 size: HudPanelSize(widthPercent: previousSize, heightPercent: previousHeight),
                                 paneIdentity: previousPaneIdentity)
                 return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
+            self.armHudAutoHide(session, spec: spec)
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -109,13 +184,32 @@ extension ControlServer {
     /// shifts the centering by about a column, as the estimated cell already can.
     private static let windowPadding = (horizontal: 8.0, vertical: 6.0)
 
-    /// Cell size comes from the configured font. A scoped call reads the deck-frame cache, falling back to its
+    /// watchHudGeometry coalesces deck size notifications into body rewrites using the latest HUD state.
+    func watchHudGeometry(_ session: Session) {
+        let id = session.id
+        session.onHudGeometryChange = { [weak self, weak session] in
+            guard let self, self.hudGeometryPending.insert(id).inserted else { return }
+            Task { @MainActor [weak self, weak session] in
+                guard let self else { return }
+                self.hudGeometryPending.remove(id)
+                guard let session, session.hudActive else { return }
+                _ = self.writeHudBody(session, pane: self.paneMetrics(for: session, pane: session.hudTargetPane,
+                                                                    fontSize: self.liveHudFontSize(session)))
+            }
+        }
+    }
+
+    /// liveHudFontSize is the size the live HUD's surface was created at.
+    func liveHudFontSize(_ session: Session) -> Double {
+        session.hudFontSize ?? session.fontSize ?? GhosttyApp.shared.baseFontSize
+    }
+
+    /// paneMetrics measures the cell from `fontSize`, the HUD surface's own. A scoped call reads the deck-frame cache, falling back to its
     /// deck-hosted surface before the preference arrives; zoom and dashboard hosts are excluded. An unscoped
     /// call unions the live pane frames, so a hidden focused split contributes its one maximized surface.
     /// libghostty reports no cell metrics; an unmeasured session takes the cap.
-    func paneMetrics(for session: Session, pane: OverlayPane? = nil) -> PaneMetrics {
-        let cell = Self.cellSize(family: settingsModel.settings.fontFamily,
-                                 size: session.fontSize ?? GhosttyApp.shared.baseFontSize)
+    func paneMetrics(for session: Session, pane: OverlayPane? = nil, fontSize: Double) -> PaneMetrics {
+        let cell = Self.cellSize(family: settingsModel.settings.fontFamily, size: fontSize)
         let size: (width: Double, height: Double)
         if let pane, let frame = session.hudPaneFrames[pane] {
             size = (frame.width, frame.height)

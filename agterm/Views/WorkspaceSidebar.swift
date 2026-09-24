@@ -98,10 +98,15 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // reload; a touch inside viewFor wouldn't register it. The badge-visibility toggle
         // (GhosttyApp.notificationBadgeEnabled) is NOT observable and drives a re-reconcile via
         // .agtermAppearanceChanged, like toolbarMode.
-        _ = store.workspaces.map { ($0.id, $0.name, $0.unseenCount, $0.sessions.map { ($0.id, $0.displayName, $0.hasSplit, $0.splitAxis, $0.unseenCount, $0.agentIndicator, $0.flagged) }) }
+        _ = store.workspaces.map {
+            ($0.id, $0.name, $0.unseenCount, $0.sessions.map {
+                ($0.id, $0.displayName, $0.hasSplit, $0.splitAxis, $0.unseenCount, $0.agentIndicator, $0.flagged,
+                 $0.remotePresentation?.connection)
+            })
+        }
         _ = store.selectedSessionID
         _ = store.sidebarSelectionIDs
-        // sidebarMode flips the whole data source (tree ↔ flat flagged list), so a mode change must rebuild.
+        // sidebarMode flips the whole data source (tree ↔ flagged view), so a mode change must rebuild.
         _ = store.sidebarMode
         // the marked set restricts the tree to its members while the filter is on; BOTH fields are read so
         // a membership change or a filter flip takes the rebuild branch.
@@ -132,11 +137,14 @@ struct WorkspaceSidebar: NSViewRepresentable {
         private var lastRevealedSelection: UUID?
         /// Last-seen `TreeShape`; a change is structural and forces a full rebuild.
         private var lastShape: [TreeShape] = []
-        /// Last-seen sidebar mode; a flip forces a full `rebuildAndReload` independent of the shape diff.
+        /// The sidebar mode and flagged layout the outline was last BUILT for, written by `rebuildAndReload`
+        /// so the mount's own rebuild counts as rendered. A change to either swaps the whole data source.
         private var lastMode: SidebarMode = .tree
+        private var lastFlaggedLayout: FlaggedViewLayout?
         /// Workspace ids the user has expanded, tracked via the expand/collapse callbacks. The source of
         /// truth for restoring expansion on rebuild: NSOutlineView discards its own expansion state for
-        /// items it no longer renders, and the flagged-mode reload drops every workspace node.
+        /// items it no longer renders: the flat flagged list drops every workspace node, and the flagged tree
+        /// drops the ones holding nothing flagged.
         /// Mirrored into the store on every assignment — a suppressed reveal opens a row without touching
         /// `Workspace.isExpanded`, so the persisted flag alone cannot answer "is this row open right now",
         /// which is what Collapse/Expand Workspace has to fold. One `didSet` rather than a push beside each
@@ -271,6 +279,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
             applyThemeAppearance()
             // a settings change may have flipped the badge-visibility toggle; reconcile reloads those rows.
             reconcile()
+            // this path never passes through `updateNSView`, so a rebuild here would drop the row selection.
+            syncSelection()
             // agent-status colors are global, so the content diff can't see a color change — re-apply all.
             reapplyStatusGlyphs()
             updateEmptyState()
@@ -315,14 +325,14 @@ struct WorkspaceSidebar: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in self?.renameController.beginEditing(node: node) }
         }
 
-        /// Expand every workspace in this window's sidebar. Gated on tree mode here so `expandAll`'s
-        /// tracked-expansion seeding can't fire in flagged mode, where there are no workspace rows.
+        /// Expand every workspace in this window's sidebar. Gated on workspace rows here so `expandAll`'s
+        /// tracked-expansion seeding can't fire under the flat flagged list, which has none.
         @objc private func expandWorkspacesNotified() {
-            guard store.sidebarMode == .tree else { return }
+            guard rendersWorkspaceRows else { return }
             expandAll()
         }
 
-        /// Collapse every workspace except the active one; `collapseOthers` gates on tree mode itself.
+        /// Collapse every workspace except the active one; `collapseOthers` gates on workspace rows itself.
         @objc private func collapseWorkspacesNotified() {
             collapseOthers()
         }
@@ -337,7 +347,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
             guard let id = notification.userInfo?[Self.workspaceIDUserInfoKey] as? UUID,
                   let expanded = notification.userInfo?[Self.expandedUserInfoKey] as? Bool else { return }
             if expanded { expandedWorkspaceIDs.insert(id) } else { expandedWorkspaceIDs.remove(id) }
-            guard store.sidebarMode == .tree, let outline = outlineView,
+            guard rendersWorkspaceRows, let outline = outlineView,
                   let node = nodeCache[id], outline.row(forItem: node) >= 0 else { return }
             suppressExpansionPersist = true
             if expanded { outline.expandItem(node) } else { outline.collapseItem(node) }
@@ -371,6 +381,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
             /// independent of `focusEnabled`, so marking re-renders just that row even while the filter is
             /// off (with it on the shape changes too and the rebuild branch takes over). False for sessions.
             let focusMember: Bool
+            /// The remote row's stream notice, nil while it is up or for a local row.
+            var presentationNotice: String?
 
             func differsOnlyInLabel(from other: RowContent) -> Bool {
                 var relabeled = self
@@ -397,29 +409,23 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// update (a content change: rename, cwd-driven name, split open/close, badge). A row update during
         /// an in-progress rename is skipped so a tick can't drop the edit.
         func reconcile() {
-            // a mode flip swaps the whole data source, so rebuild regardless of the shape diff.
-            let shape = currentShape()
-            if store.sidebarMode != lastMode || shape != lastShape {
-                lastMode = store.sidebarMode
-                lastShape = shape
+            // a mode or layout flip swaps the whole data source, so rebuild regardless of the shape diff.
+            if store.sidebarMode != lastMode || flaggedLayout != lastFlaggedLayout || currentShape() != lastShape {
                 rebuildAndReload()
-                snapshotRowContent()
                 return
             }
             reloadChangedContentRows()
         }
 
-        /// The structural shape for the current mode: the workspace tree, or one flat group of the flagged
-        /// session ids. A change means an add/remove/move/reorder (or a flag/unflag in flagged mode) and
-        /// forces a full rebuild. The tree case derives from `visibleWorkspaces`, so marking a workspace or
-        /// flipping the focus filter counts as a shape change too.
+        /// The structural shape for the current mode and layout: the workspace rows `workspaceProjection`
+        /// yields, or one flat group of the flagged session ids. A change means an add/remove/move/reorder
+        /// (or a flag/unflag in flagged mode) and forces a full rebuild. The ordinary tree derives from
+        /// `visibleWorkspaces`, so marking a workspace or flipping the focus filter counts as a shape change too.
         private func currentShape() -> [TreeShape] {
-            switch store.sidebarMode {
-            case .tree:
-                return store.visibleWorkspaces.map { TreeShape(workspaceID: $0.id, sessionIDs: $0.sessions.map(\.id)) }
-            case .flagged:
+            guard rendersWorkspaceRows else {
                 return [TreeShape(workspaceID: Self.flaggedShapeID, sessionIDs: store.flaggedSessions.map(\.id))]
             }
+            return workspaceProjection.map { TreeShape(workspaceID: $0.workspace.id, sessionIDs: $0.sessions.map(\.id)) }
         }
 
         /// Updates only the rows whose visible content changed — the session row and, for a badge roll-up,
@@ -472,7 +478,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// `snapshotRowContent` so the snapshot and the diff can't drift.
         private func rowContent(forWorkspace workspace: Workspace) -> RowContent {
             RowContent(label: workspace.name, hasSplit: false, splitAxis: .leftRight,
-                       unseen: effectiveUnseen(workspace.unseenCount),
+                       unseen: effectiveUnseen(displayedUnseen(for: workspace)),
                        indicator: AgentIndicator(), flagged: false,
                        focusMember: store.focusedWorkspaceIDs.contains(workspace.id))
         }
@@ -485,16 +491,26 @@ struct WorkspaceSidebar: NSViewRepresentable {
                        splitAxis: session.splitAxis,
                        unseen: effectiveUnseen(session.unseenCount),
                        indicator: session.agentIndicator, flagged: session.flagged,
-                       focusMember: false)
+                       focusMember: false, presentationNotice: presentationNotice(for: session))
         }
 
         /// Rebuilds `roots` from the store, reusing cached node instances by id so NSOutlineView item
         /// identity and expansion state stay stable, then reloads the outline preserving expansion.
         func rebuildAndReload() {
             guard let outline = outlineView else { return }
+            // a mode or layout switch moves the selected row, possibly under a collapsed workspace, while the
+            // selected id stays the same: forget the last reveal so the next `syncSelection` reveals it again.
+            // Only a switch does this. Any other rebuild must leave a deliberate fold alone.
+            if store.sidebarMode != lastMode || flaggedLayout != lastFlaggedLayout { lastRevealedSelection = nil }
+            // record what this build renders HERE, not in `reconcile`: the mount builds directly, and an
+            // unrecorded first build makes the next reconcile rebuild for a change that never happened.
+            lastMode = store.sidebarMode
+            lastFlaggedLayout = flaggedLayout
+            lastShape = currentShape()
+            snapshotRowContent()
 
-            // flagged mode: flat, non-expandable session rows; no workspace nodes, so they leave the cache.
-            if store.sidebarMode == .flagged {
+            // flat flagged list: non-expandable session rows; no workspace nodes, so they leave the cache.
+            if !rendersWorkspaceRows {
                 var seen = Set<UUID>()
                 roots = store.flaggedSessions.map { session in
                     seen.insert(session.id)
@@ -506,13 +522,12 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 return
             }
 
-            // render only the visible workspaces: the marked set when the focus filter is on, else all.
             var seen = Set<UUID>()
             var newRoots: [SidebarNode] = []
-            for workspace in store.visibleWorkspaces {
+            for (workspace, sessions) in workspaceProjection {
                 let wsNode = node(for: workspace.id, kind: .workspace)
                 seen.insert(workspace.id)
-                wsNode.children = workspace.sessions.map { session in
+                wsNode.children = sessions.map { session in
                     seen.insert(session.id)
                     return node(for: session.id, kind: .session)
                 }
@@ -528,8 +543,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
             expandedWorkspaceIDs.formIntersection(Set(store.workspaces.map(\.id)))
             expandedWorkspaceIDs.formUnion(store.workspaces.filter(\.isExpanded).map(\.id))
 
-            // restore expansion from the tracked set, not the live outline state, which forgets across a
-            // flagged-mode reload. A filter applied to a SINGLE marked workspace also force-expands it — a
+            // restore expansion from the tracked set, not the live outline state, which forgets every
+            // workspace a flagged-mode reload left out. A filter applied to a SINGLE marked workspace also force-expands it — a
             // "zoom in", so its sessions show even from a collapsed row. The force stops at one member on
             // purpose: with a working SET the tree is a list of workspaces, not a zoom, and re-expanding
             // every member on each rebuild (any session add/close/move re-shapes it) would undo the user's
@@ -537,7 +552,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
             // suppress the persist: a marked-but-collapsed workspace keeps its persisted collapse.
             outline.reloadData()
             suppressExpansionPersist = true
-            let forceExpanded = store.soleFocusedWorkspaceID
+            // flagged mode ignores the focus filter, so its tree never zooms to the marked workspace.
+            let forceExpanded = store.sidebarMode == .tree ? store.soleFocusedWorkspaceID : nil
             for node in roots where expandedWorkspaceIDs.contains(node.id) || forceExpanded == node.id {
                 outline.expandItem(node)
             }
@@ -595,9 +611,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
         }
 
         /// Collapses every workspace except the current one (`store.currentWorkspaceID`), keeping that
-        /// one expanded and scrolled into view. Tree-mode only — flagged mode has no workspace rows.
+        /// one expanded and scrolled into view. Needs workspace rows, which the flat flagged list lacks.
         func collapseOthers() {
-            guard let outline = outlineView, store.sidebarMode == .tree else { return }
+            guard let outline = outlineView, rendersWorkspaceRows else { return }
             let keepID = store.currentWorkspaceID
             // this command targets ALL workspaces, not just the visible `roots`: reduce the tracked set to
             // exactly the active workspace, so a focus filter hiding some can't leave them in the set for
@@ -781,6 +797,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         lazy var flaggedHorizontalSplitSessionIcon = Self.rowIcon("rectangle.split.1x2.fill")
         lazy var remoteSessionIcon = Self.rowIcon("cloud")
         lazy var remoteSplitSessionIcon = Self.rowIcon("cloud", weight: .bold)
+        lazy var remoteDisconnectedSessionIcon = Self.rowIcon("icloud.slash")
+        lazy var remoteDisconnectedSplitSessionIcon = Self.rowIcon("icloud.slash", weight: .bold)
 
         private static func rowIcon(_ symbolName: String, weight: NSFont.Weight = .regular) -> NSImage? {
             let config = NSImage.SymbolConfiguration(pointSize: 13, weight: weight)
@@ -792,7 +810,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         /// The row label from an already-resolved session + its owning workspace name, with no store lookup.
         func rowLabel(for session: Session, workspaceName: String) -> String {
-            guard store.sidebarMode == .flagged else { return session.displayName }
+            guard flaggedLayout == .flat else { return session.displayName }
             return "\(session.displayName) : \(workspaceName)"
         }
 
@@ -809,6 +827,28 @@ final class SidebarOutlineView: NSOutlineView {
     // terminal, via mouseDown's focusActiveTerminal) makes AppKit re-set `isEmphasized` on the rows — an
     // extra repaint that flicks the selection pill on every click. Programmatic selection never bounces.
     override var acceptsFirstResponder: Bool { false }
+
+    /// Where a row's content belongs: the level-0 disclosure triangle ends at 14pt, and the cell's own 2pt
+    /// icon inset supplies the gap after it.
+    private static let contentX: CGFloat = 14
+
+    /// macOS 27 reserves a wider leading strip than the triangle occupies — a level-0 cell starts at 26
+    /// against a triangle ending at 14 — leaving the row icon stranded mid-gap. Trim the surplus, computed
+    /// from the frame rather than fixed so a release that lays out at `contentX` keeps its own geometry,
+    /// and gated on the version because the earlier layout is already tight and cannot be tested here.
+    /// `frameOfOutlineCell` stays untouched: the triangle keeps its place, and `handleSingleClick` reads
+    /// that frame to keep a row click from double-toggling expansion.
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        guard #available(macOS 27.0, *), !frame.isEmpty, tableColumns.indices.contains(column),
+              tableColumns[column] === outlineTableColumn else { return frame }
+        let level = level(forRow: row)
+        guard level >= 0 else { return frame }
+        let trim = max(0, frame.minX - (Self.contentX + CGFloat(level) * indentationPerLevel))
+        frame.origin.x -= trim
+        frame.size.width += trim
+        return frame
+    }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         super.draggingExited(sender)

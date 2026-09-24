@@ -136,6 +136,28 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertEqual(runner.invocations.first?.first, "ssh")
     }
 
+    func testTheFarSidesPresentationVersionSurvivesTheHostStamp() async throws {
+        let advertising = Self.projection.replacingOccurrences(of: #"{"remote":{"#,
+                                                               with: #"{"remote":{"presentation":1,"#)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: advertising, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+
+        let response = await server.remoteTree(host: "buildbox")
+
+        let remote = try XCTUnwrap(response.result?.remote)
+        XCTAssertEqual(remote.presentation, 1)
+        XCTAssertEqual(remote.host, "buildbox")
+    }
+
+    func testAnOriginThatPredatesPresentationReportsNoVersion() async throws {
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+
+        let response = await server.remoteTree(host: "buildbox")
+
+        XCTAssertNil(try XCTUnwrap(response.result?.remote).presentation)
+    }
+
     func testTheBareFormAnswersAboutThisAppWithoutSshingAnywhere() async throws {
         let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: "", stderr: ""))
         let server = makeServer(list: "", remoteRunner: runner)
@@ -146,6 +168,7 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertTrue(response.ok)
         XCTAssertNil(remote.host, "nothing was sshed to, so there is no destination to name")
         XCTAssertTrue(runner.invocations.isEmpty, "the local form must never reach ssh")
+        XCTAssertEqual(remote.presentation, PresentationCodec.version)
         // no pane in this fixture is zmx-backed, and an empty list is a successful answer rather than
         // a refusal: it does not claim to tell "not live" apart from "live with nothing eligible"
         XCTAssertTrue(remote.sessions.isEmpty)
@@ -394,6 +417,46 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertEqual(created.splitAxis, .topBottom, "the split arrives arranged as it is over there")
         XCTAssertTrue(created.splitCommandWait)
         XCTAssertTrue(try XCTUnwrap(created.splitInitialCommand).contains("agterm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"))
+    }
+
+    func testAttachRecordsWhichLocalPaneStandsForEachOfTheOriginsPanes() async throws {
+        let advertising = Self.splitProjection.replacingOccurrences(of: #"{"remote":{"#,
+                                                                    with: #"{"remote":{"presentation":1,"#)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: advertising, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        let transport = RecordingTransport()
+        server.remoteTransport = transport
+        let store = try XCTUnwrap(library.activeStore)
+
+        let response = await server.attachRemoteSession(host: "buildbox", session: "s1")
+
+        XCTAssertTrue(response.ok)
+        let created = try XCTUnwrap(store.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        XCTAssertEqual(transport.launches.count, 1, "the attach opens the presentation stream itself")
+        XCTAssertEqual(transport.launches.first?.prefix(2), ["ssh", "-T"])
+        let state = try XCTUnwrap(created.remotePresentation)
+        let remoteLeft = try XCTUnwrap(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"))
+        let remoteRight = try XCTUnwrap(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"))
+        XCTAssertEqual(state.binding.remoteSessionID, "s1")
+        XCTAssertEqual(state.binding.localPane(forRemote: remoteLeft), created.paneIdentity)
+        XCTAssertEqual(state.binding.localPane(forRemote: remoteRight), created.splitPaneIdentity)
+        XCTAssertNotNil(created.splitPaneIdentity)
+        XCTAssertEqual(state.connection, .connecting)
+    }
+
+    func testAttachingToAnOriginThatPredatesPresentationReadsUnsupported() async throws {
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        let transport = RecordingTransport()
+        server.remoteTransport = transport
+        let store = try XCTUnwrap(library.activeStore)
+
+        let response = await server.attachRemoteSession(host: "buildbox", session: "s1")
+
+        XCTAssertTrue(response.ok)
+        let created = try XCTUnwrap(store.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        XCTAssertEqual(created.remotePresentation?.connection, .unsupported)
+        XCTAssertTrue(transport.launches.isEmpty, "an origin without the capability never gets a stream ssh")
     }
 
     // attach shipped with no focus call, so a teleported session opened with the keyboard still elsewhere
@@ -993,5 +1056,21 @@ private final class FakeRemoteRunner: RemoteCommandRunner, @unchecked Sendable {
         lock.withLock { recorded.append(argv) }
         await beforeReturn?()
         return result
+    }
+}
+
+@MainActor
+private final class RecordingTransport: RemotePresentationTransport {
+    final class Link: RemotePresentationLink {
+        func send(_ line: Data) {}
+        func stop() {}
+    }
+
+    var launches: [[String]] = []
+
+    func open(_ argv: [String], onLine: @escaping @MainActor (Data) -> Void,
+              onClose: @escaping @MainActor (String) -> Void) -> RemotePresentationLink {
+        launches.append(argv)
+        return Link()
     }
 }

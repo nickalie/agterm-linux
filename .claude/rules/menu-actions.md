@@ -74,7 +74,12 @@ paths:
   split/scratch/find/quick terminal, and fullscreen. Navigate contains palettes, session/attention
   stepping, pane focus, and Dashboard. File UI tests against the menu that owns the item.
 - Workspace focus controls are mode-agnostic because membership applies when tree mode returns.
-  Expand/Collapse Workspaces alone are disabled outside tree mode, in both menu and palette.
+  Expand/Collapse Workspaces and Collapse/Expand Workspace need workspace ROWS
+  (`PaletteContext.sidebarShowsWorkspaceRows`): the ordinary tree or the flagged tree, not the flat flagged list.
+  Previous/Next Workspace keep the narrower `sidebarShowsWorkspaceTree`, since `navigateWorkspace` steps the
+  focus projection and would land on a workspace the flagged tree has no row for.
+  An init call that omits `sidebarShowsWorkspaceRows` takes `sidebarShowsWorkspaceTree`, which is what keeps
+  the `agterm-linux` fork's fold commands visible.
 - Dashboard uses Command-Shift-G, `BuiltinAction.dashboard`, and `toggleDashboard`; it toggles an MRU,
   auto-sized grid unless terminal zoom is active. Share `dashboardMembers` with control.
 - The View menu carries no fullscreen item of agterm's own, and `toggle_fullscreen` rides the key monitor
@@ -228,9 +233,13 @@ paths:
 - An empty query skips ranking in two cases: attention mode and a caller-supplied picker. Both keep their
   source order, because every row scores 0 and the tie-break would re-sort A→Z and replace the row Return
   runs. Every other palette lists everything A→Z.
-- Attention mode lists every session waiting on the user (`AgentStatus.needsAttention`, so no `active`),
-  ordered blocked, completed and then newest `statusChangedAt`, with nil last. Palette items carry status
-  plus per-call color/shape, resolved by the same helpers as sidebar glyphs. Typed queries use fuzzy score.
+- Attention mode lists every open window's sessions waiting on the user (`WindowLibrary.attentionAcrossWindows`
+  over `AgentStatus.needsAttention`, so no `active`), ordered blocked, completed and then newest
+  `statusChangedAt`, with nil last, as one combined sort. Palette items carry status plus per-call
+  color/shape, resolved by the same helpers as sidebar glyphs, a subtitle naming the window once more than
+  one is open, and `isEnabled` asking the OWNING window's modal gate. A pick defers
+  `AppActions.selectAttention` past the palette's close, which raises another window before selecting.
+  Typed queries use fuzzy score.
 - Open attention through `show_attention` (Ctrl-Shift-I), Navigate > Go to Attention, or Show Attention
   in the action palette. The titlebar bell opens a popover, not this palette. Palette opening is
   keep-in-sync exempt.
@@ -252,7 +261,8 @@ paths:
   background, and chrome text.
 - Clock lists up to `maxCandidates` recent visible sessions excluding active and enables only with at
   least two sessions. Selection records activity, selects, and focuses.
-- Bell lists every blocked or completed session including current. Selection uses pane-aware reveal.
+- Bell lists every blocked or completed session across open windows, current included. Selection uses the
+  same pane-aware reveal as the palette; see [[notifications]] for the cross-window raise.
 - Popover opens are keep-in-sync exempt. Synthesized XCUITest clicks inside `NSPopover` do not fire the
   SwiftUI button, though real clicks do; tests verify open/list contents, while selection is manual plus
   host-free API coverage.

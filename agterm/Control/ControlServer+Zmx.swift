@@ -119,8 +119,7 @@ extension ControlServer {
             let remote = try RemoteTreeMerger.decode(stdout: result.stdout)
             // the far side cannot know which name reached it, so the destination we were given is stamped
             // here rather than self-reported there
-            let stamped = ControlRemoteTree(host: host, endpoint: remote.endpoint, sessions: remote.sessions)
-            return ControlResponse(ok: true, result: ControlResult(remote: stamped))
+            return ControlResponse(ok: true, result: ControlResult(remote: remote.stamped(host: host)))
         } catch let error as RemoteTreeMerger.MergeError {
             return ControlResponse(ok: false, error: error.message)
         } catch {
@@ -189,10 +188,14 @@ extension ControlServer {
         let right = byRole[.right]
         let primary: String
         let split: String?
+        // attaching is the user asking for the session HERE, so every pane claims the lead at once
+        let leads = (left: ZmxLeadAttachment(claim: true), right: ZmxLeadAttachment(claim: true))
         do {
-            primary = try paneCommand(host: host, tree: tree, daemon: left, name: remote.name, pane: .left)
+            primary = try RemoteSession.attachPaneCommand(host: host, endpoint: tree.endpoint, daemon: left,
+                                                          session: remote.name, pane: .left, lead: leads.left)
             split = try right.map {
-                try paneCommand(host: host, tree: tree, daemon: $0, name: remote.name, pane: .right)
+                try RemoteSession.attachPaneCommand(host: host, endpoint: tree.endpoint, daemon: $0,
+                                                    session: remote.name, pane: .right, lead: leads.right)
             }
         } catch {
             return ControlResponse(ok: false, error: "\(host) reported a session agterm cannot address")
@@ -219,16 +222,22 @@ extension ControlServer {
             store.setSplitVisibility(created.id, shown: true,
                                      axis: remote.splitAxis.flatMap(SplitAxis.init(rawValue:)) ?? .leftRight)
         }
+        var daemons = [created.paneIdentity: left]
+        ZmxLeadBook.shared.begin(leads.left, pane: created.paneIdentity)
+        if let right, let local = created.splitPaneIdentity {
+            daemons[local] = right
+            ZmxLeadBook.shared.begin(leads.right, pane: local)
+        }
+        let origin = RemoteBinding.Origin(host: host, endpoint: tree.endpoint, sessionName: remote.name)
+        store.bindRemote(RemoteBinding(remoteSessionID: remote.id, daemonsByLocalPane: daemons,
+                                       presentationVersion: tree.presentation, origin: origin),
+                         forSession: created.id)
+        // the row's created event fired inside `addSession`, before the binding existed
+        startRemotePresentation(for: created)
         // a FIXED target, never `focusActiveSession`: it follows `splitFocused`, which the new split's deck
         // re-render can clear from under it through `onFocusChange`.
         actions.focusSplitPane(created, wantSplit: created.splitFocused)
         return ControlResponse(ok: true, result: ControlResult(id: created.id.uuidString))
-    }
-
-    private func paneCommand(host: String, tree: ControlRemoteTree, daemon: String, name: String,
-                             pane: ZmxPaneRole) throws -> String {
-        try RemoteSession.attachPaneCommand(host: host, endpoint: tree.endpoint, daemon: daemon,
-                                            session: name, pane: pane)
     }
 
     /// Kill the daemons the inventory shows as unclaimed and detached.

@@ -90,6 +90,25 @@ final class WindowContentViewTitlebarTests: XCTestCase {
         }
     }
 
+    func testTitlebarShowsMirroredContextWithoutALocalValue() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.currentWorkspaceID)
+        store.sidebarVisible = false
+        let session = try XCTUnwrap(store.addSession(toWorkspace: workspace, cwd: "/repo",
+                                                    name: "build", remoteHost: "dev"))
+        store.bindRemote(RemoteBinding(remoteSessionID: UUID().uuidString, daemonsByLocalPane: [:],
+                                       presentationVersion: 1), forSession: session.id)
+        store.applyRemoteContext("PR #517", forSession: session.id)
+        XCTAssertNil(session.context)
+
+        for mode in [ToolbarMode.normal, .compact] {
+            let shown = try renderTitlebar(mode: mode, width: 640)
+            let hidden = try renderTitlebar(mode: mode, width: 640, hidden: [.sessionContext])
+            let scale = Int(window.backingScaleFactor)
+            XCTAssertGreaterThan(differentPixels(shown, hidden, from: 110 * scale, to: (640 - 250) * scale), 20)
+        }
+    }
+
     func testLongRemoteIdentityKeepsButtonsInPlaceWithSidebarVisible() throws {
         let store = try XCTUnwrap(library.activeStore)
         let workspace = try XCTUnwrap(store.currentWorkspaceID)
@@ -107,6 +126,37 @@ final class WindowContentViewTitlebarTests: XCTestCase {
             XCTAssertEqual(differentPixels(visible, hidden, from: (640 - buttonsWidth) * scale, to: 640 * scale), 0)
             attach(visible, name: "remote-\(mode.rawValue)-640-sidebar-long-identity")
         }
+    }
+
+    func testWorkspaceNameLeadsTheTitleAndFollowsTheActiveSession() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.currentWorkspaceID)
+        store.renameWorkspace(workspace, to: "backend")
+        store.sidebarVisible = false
+        let session = try XCTUnwrap(store.addSession(toWorkspace: workspace, cwd: "/repo", name: "build"))
+        let scale = Int(window.backingScaleFactor)
+        let titleStart = 110 * scale
+        let titleEnd = (640 - 225) * scale
+        let shown = try renderTitlebar(mode: .compact, width: 640)
+        let hidden = try renderTitlebar(mode: .compact, width: 640, hidden: [.workspaceName])
+        XCTAssertGreaterThan(differentPixels(shown, hidden, from: titleStart, to: titleEnd), 20)
+        XCTAssertEqual(differentPixels(shown, hidden, from: titleEnd, to: 640 * scale), 0)
+
+        store.renameWorkspace(workspace, to: "frontend")
+        let renamed = try renderTitlebar(mode: .compact, width: 640)
+        XCTAssertGreaterThan(differentPixels(shown, renamed, from: titleStart, to: titleEnd), 20)
+
+        let other = store.addWorkspace(name: "ops", revealNewWorkspace: false)
+        store.moveSession(session.id, toWorkspace: other.id)
+        XCTAssertEqual(store.activeSession?.id, session.id)
+        let moved = try renderTitlebar(mode: .compact, width: 640)
+        XCTAssertGreaterThan(differentPixels(renamed, moved, from: titleStart, to: titleEnd), 20)
+
+        store.selectSession(nil)
+        let noSession = try renderTitlebar(mode: .compact, width: 640)
+        let noSessionHidden = try renderTitlebar(mode: .compact, width: 640, hidden: [.workspaceName])
+        XCTAssertEqual(differentPixels(noSession, noSessionHidden, from: titleStart, to: titleEnd), 0)
+        attach(moved, name: "workspace-compact-640")
     }
 
     func testRemoteCloudSplitWeightRemainsVisibleAtSidebarSize() throws {

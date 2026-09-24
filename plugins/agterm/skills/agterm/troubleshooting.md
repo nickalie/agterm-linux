@@ -34,8 +34,10 @@ You are inside agterm (`AGTERM_ENABLED=1`). Use:
   `ssh-env` and `ssh-terminfo` for `shell-integration-features`. Ghostty implements them by replacing
   `ssh` with a wrapper calling a `ghostty` CLI absent from agterm's bundle, so agterm forces both off
   after reading the config and keeps every other flag. Setting either is by design a no-op, reports no
-  diagnostic, and is NOT a bug. For remote terminfo, install the entry manually with
-  `infocmp -x xterm-ghostty | ssh <host> 'tic -x -'`.
+  diagnostic, and is NOT a bug. For remote terminfo, install the entry once per host and account with
+  `agtermctl terminfo install <host>` (local-only, no socket; `-p`, `-i`, `-J`, `-F` pass through, other
+  connection settings belong in `~/.ssh/config`, and the execution settings are the installer's own). The symptom it fixes is `less`, `vim` or `apt` on the remote
+  warning that the terminal is not fully functional, because `TERM=xterm-ghostty` is unknown there.
 - **Logs** (unified logging, subsystem `com.umputun.agterm`):
   ```bash
   log show --predicate 'subsystem == "com.umputun.agterm"' --info --last 30m
@@ -64,8 +66,9 @@ also no-ops with no session selected or an overlay already open.
 
 Causes, in order: a parse error (see the diagnostics); the chord conflicts with a built-in or another
 custom command and was dropped to palette-only (it still runs from `⌃⇧P`, tagged `custom`); a reserved
-chord (`ctrl+tab`, `ctrl+1`/`ctrl+2`, or Linux `ctrl+,`); a modifier-less key (rejected — a custom chord needs a
-modifier); it does not fire while a text field (inline rename, a palette, Settings) has keyboard focus,
+chord (`ctrl+tab`, `ctrl+1`/`ctrl+2`, or Linux `ctrl+,`); a first chord without a modifier or function key
+(`f1` through `f20`); it does not fire while a text field (inline rename, a palette, Settings)
+has keyboard focus,
 though it DOES fire from a terminal pane or an empty window (every session closed); it runs in a non-interactive
 `/bin/sh -c` (no aliases/functions, a smaller `PATH` — use absolute paths or `$SHELL -lc '…'`); a
 non-zero exit posts a failure banner (meaning it DID fire and failed). Reload after edits:
@@ -224,6 +227,20 @@ through agterm while macOS attributes them to it. The prompt names agterm and th
 programs with that attribution. A dismissed prompt is never re-offered (`osascript` keeps returning
 "Not authorized to send Apple events"). The user changes the answer in System Settings ▸ Privacy & Security
 under the matching service, for example Automation ▸ agterm. This is macOS policy, not an agterm bug: do not file it.
+
+### "a permission is granted but a tool still cannot use it"
+
+A service shows agterm enabled in System Settings, yet a tool in a session is denied. One cause is a stale
+grant: macOS stores each grant with a code requirement, and a grant made while agterm was signed ad-hoc
+requires a bare code hash, so a rebuilt or reinstalled agterm no longer matches while the toggle still reads
+on. Confirm it before concluding anything: save the row's raw `csreq` blob from the system TCC.db to a
+file, the bytes rather than sqlite's printed output (`SELECT writefile('/tmp/ax.csreq', csreq) FROM access
+WHERE service='kTCCServiceAccessibility' AND client='com.umputun.agterm'`), then run
+`codesign --verify -R /tmp/ax.csreq /Applications/agterm.app`. Only `code failed to satisfy specified code
+requirement(s)` is the stale grant; an extraction, parsing, or signature error needs resolving first. The
+[stale-grant diagnosis](https://github.com/umputun/agterm/blob/master/docs/troubleshooting.md#an-accessibility-permission-you-granted-stops-working-after-an-update)
+in docs covers the `tccutil reset` and the re-grant. A confirmed stale requirement is a machine-state issue,
+not an agterm bug: do not file it. A denial with a requirement that does match needs a different diagnosis.
 
 ### "a command cannot read ~/Downloads, ~/Desktop or ~/Documents"
 

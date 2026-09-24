@@ -19,15 +19,50 @@ public struct HudSpec: Codable, Equatable, Sendable {
     /// message. There is no height counterpart — `HudLayout.heightPercent` owns why.
     public let sizePercent: Int?
     public let position: HudPosition
+    /// Seconds after which the panel takes itself down, nil or 0 for one that stays until something closes
+    /// it. Elapsed lifetime rather than viewing time: the clock runs while the session is unselected, its
+    /// pane hidden or its window minimized, and expiry closes the panel without selecting anything.
+    public let hideAfter: Double?
+    /// markdown renders `message` through `HudMarkdown` instead of as centered plain text.
+    public let markdown: Bool
+    /// fontSize is the panel's point size, nil to inherit the session's. The surface reads it once at
+    /// creation, like `backgroundColor`.
+    public let fontSize: Double?
 
-    /// Cap on `message` and `detail` each, enforced by the dispatcher in `HudLayout.textLength`'s unit. The
-    /// panel wraps at `HudLayout.maxColumns` and is clamped to `HudLayout.maxSizePercent`, so longer text
-    /// cannot be shown.
+    /// maxTextLength caps `detail` and a plain `message` in `HudLayout.textLength`'s unit; a markdown message
+    /// takes `maxMarkdownLength` instead.
     public static let maxTextLength = 256
+
+    /// The longest auto-hide on offer. A bound the SCHEDULER can convert: it turns seconds into nanoseconds in
+    /// a `UInt64`, which traps on a large enough Double, and a panel that hides a day from now is already past
+    /// what anyone means by a message about work in flight.
+    public static let maxHideAfter: Double = 86_400
+
+    /// maxMarkdownLength caps a markdown `message` in `HudLayout.textLength`'s unit; `detail` keeps
+    /// `maxTextLength`.
+    public static let maxMarkdownLength = 4096
+
+    public static let fontSizeRange: ClosedRange<Double> = 6...72
+
+    public static func isValidFontSize(_ points: Double) -> Bool { fontSizeRange.contains(points) }
+
+    /// Whether `seconds` can be scheduled. Rejected rather than clamped, so a caller who asked for something
+    /// impossible hears about it instead of getting a duration nobody chose.
+    public static func isValidHideAfter(_ seconds: Double) -> Bool {
+        seconds.isFinite && seconds >= 0 && seconds <= maxHideAfter
+    }
+
+    /// The panel's own auto-hide, 0 when it stays. The one spelling of "is this panel timed", so the arming
+    /// side and the read-back cannot disagree about what nil means.
+    public var effectiveHideAfter: Double { hideAfter ?? 0 }
 
     public init(message: String, detail: String? = nil, spinner: HudSpinner? = nil,
                 backgroundColor: String? = nil, textColor: String? = nil,
-                sizePercent: Int? = nil, position: HudPosition = .defaultPosition) {
+                sizePercent: Int? = nil, position: HudPosition = .defaultPosition,
+                hideAfter: Double? = nil, markdown: Bool = false, fontSize: Double? = nil) {
+        self.hideAfter = hideAfter
+        self.markdown = markdown
+        self.fontSize = fontSize
         self.message = message
         self.detail = detail
         self.spinner = spinner
@@ -38,16 +73,22 @@ public struct HudSpec: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case message, detail, spinner, backgroundColor, textColor, sizePercent, position
+        case message, detail, spinner, backgroundColor, textColor, sizePercent, position, hideAfter, markdown
+        case fontSize
     }
 
-    /// A copy carrying `color` in place of this spec's own background. `AppStore.updateHud` holds the LIVE
-    /// panel's color across an update with it: the surface reads that color once at creation, so a stored
-    /// spec carrying any other value would report a color the panel will never paint. `textColor` is NOT
-    /// held this way — it rides the header the helper re-reads, so an update's own value is what paints.
-    func withBackgroundColor(_ color: String?) -> HudSpec {
-        HudSpec(message: message, detail: detail, spinner: spinner, backgroundColor: color,
-                textColor: textColor, sizePercent: sizePercent, position: position)
+    /// holdingCreationFields preserves the live background and font size, which the surface reads only at
+    /// creation.
+    func holdingCreationFields(of live: HudSpec) -> HudSpec {
+        HudSpec(message: message, detail: detail, spinner: spinner, backgroundColor: live.backgroundColor,
+                textColor: textColor, sizePercent: sizePercent, position: position, hideAfter: hideAfter,
+                markdown: markdown, fontSize: live.fontSize)
+    }
+
+    func withSizePercent(_ percent: Int?) -> HudSpec {
+        HudSpec(message: message, detail: detail, spinner: spinner, backgroundColor: backgroundColor,
+                textColor: textColor, sizePercent: percent, position: position, hideAfter: hideAfter,
+                markdown: markdown, fontSize: fontSize)
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +100,9 @@ public struct HudSpec: Codable, Equatable, Sendable {
         textColor = try c.decodeIfPresent(String.self, forKey: .textColor)
         sizePercent = try c.decodeIfPresent(Int.self, forKey: .sizePercent)
         position = try c.decodeIfPresent(HudPosition.self, forKey: .position) ?? .defaultPosition
+        hideAfter = try c.decodeIfPresent(Double.self, forKey: .hideAfter)
+        markdown = try c.decodeIfPresent(Bool.self, forKey: .markdown) ?? false
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
     }
 }
 
@@ -325,10 +369,9 @@ public enum HudLayout {
     /// decides how BIG the panel is (through `widthPercent` and `heightPercent`); `panelGrid` decides where
     /// the text sits inside the panel that decision produced. Measured in `cellCount`'s unit.
     public static func box(for spec: HudSpec) -> (columns: Int, rows: Int) {
-        let lines = bodyLines(for: spec)
-        let widest = lines.map(cellCount).max() ?? 0
-        let content = max(widest + (spec.spinner != nil ? spinnerWidth : 0), 1)
-        return (columns: content + horizontalPadding * 2, rows: max(lines.count, 1) + verticalPadding * 2)
+        let widths = spec.markdown ? markdownRows(for: spec).map(HudMarkdown.width) : bodyLines(for: spec).map(cellCount)
+        let content = max((widths.max() ?? 0) + (spec.spinner != nil ? spinnerWidth : 0), 1)
+        return (columns: content + horizontalPadding * 2, rows: max(widths.count, 1) + verticalPadding * 2)
     }
 
     /// panelSize is the ONE place the two axes are decided together: the caller's `--size-percent` reaches
@@ -412,9 +455,11 @@ public enum HudLayout {
     }
 
     /// renderedBody returns the bytes written to `fileEnvKey`'s file: a
-    /// `<columns> <rows> <spinner> <pid> <interval> <textcolor> [frame...]` header line, then the wrapped
-    /// message block, a single empty line, and the wrapped detail block. Content lines are never empty, so
-    /// that one empty line is what tells the helper where the dimmed detail starts. The header is what lets
+    /// `<columns> <rows> <spinner> <pid> <interval> <textcolor> <blockwidth> [frame...]` header line, then
+    /// the body. `blockwidth` 0 is plain mode: the wrapped message block, a single empty line, and the
+    /// wrapped detail block, where content lines are never empty, so that one empty line is what tells the
+    /// helper where the dimmed detail starts. Any other `blockwidth` is markdown mode: finished rows from
+    /// `markdownBody`, which the helper prints verbatim at one shared offset. The header is what lets
     /// an update change the grid, the spinner or the text color without a re-spawn — the helper re-reads this
     /// file every tick and never consults its own environment for any of them.
     ///
@@ -434,9 +479,36 @@ public enum HudLayout {
                                     ownerPid: Int32) -> String {
         let interval = spec.spinner?.interval ?? HudSpinner.staticInterval
         let frames = (spec.spinner?.frames ?? []).map { " " + $0 }.joined()
+        let (lines, blockWidth) = spec.markdown ? markdownBody(for: spec, grid: grid) : (bodyLines(for: spec), 0)
         let header = "\(grid.columns) \(grid.rows) \(spec.spinner != nil ? 1 : 0) \(ownerPid) "
-            + interval + " " + foregroundSGR(spec.textColor) + frames + "\n"
-        return header + bodyLines(for: spec).map { $0 + "\n" }.joined()
+            + interval + " " + foregroundSGR(spec.textColor) + " \(blockWidth)" + frames + "\n"
+        return header + lines.map { $0 + "\n" }.joined()
+    }
+
+    /// markdownRows lays a markdown spec out unclipped: the message's rows at `maxColumns`, then, when a
+    /// detail is set, a blank row and the detail's rows dimmed.
+    static func markdownRows(for spec: HudSpec) -> [[HudMarkdown.Run]] {
+        var rows = HudMarkdown.rows(HudMarkdown.lines(spec.message), width: maxColumns)
+        let detail = wrap(spec.detail ?? "", columns: maxColumns)
+        guard !detail.isEmpty else { return rows }
+        rows.append([])
+        rows += detail.map { [HudMarkdown.Run(text: $0, style: .dim)] }
+        return rows
+    }
+
+    /// markdownBody clips the markdown rows to `grid` less its padding and the spinner's gutter, then indents
+    /// every row after the first by that gutter (the helper draws the glyph on the first). `blockWidth` is
+    /// the widest painted row, gutter included, and never 0, which the header reserves for plain mode.
+    static func markdownBody(for spec: HudSpec, grid: (columns: Int, rows: Int)) -> (lines: [String], blockWidth: Int) {
+        let gutter = spec.spinner != nil ? spinnerWidth : 0
+        let rows = HudMarkdown.fitted(markdownRows(for: spec), columns: grid.columns - horizontalPadding * 2 - gutter,
+                                      rows: grid.rows - verticalPadding * 2)
+        let blockWidth = max((rows.map(HudMarkdown.width).max() ?? 0) + gutter, 1)
+        let indent = String(repeating: " ", count: gutter)
+        let lines = rows.enumerated().map { index, row in
+            (index > 0 && !row.isEmpty ? indent : "") + HudMarkdown.sgr(row)
+        }
+        return (lines, blockWidth)
     }
 
     static func bodyLines(for spec: HudSpec) -> [String] {

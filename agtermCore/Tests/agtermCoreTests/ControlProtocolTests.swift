@@ -127,7 +127,7 @@ struct ControlProtocolTests {
             ControlRequest(
                 cmd: .pickOpen,
                 args: ControlArgs(follow: true, items: items, prompt: "Choose one",
-                                  query: "prefilled", allowCustom: true, window: "window-id")
+                                  query: "prefilled", allowCustom: true, selection: "second", window: "window-id")
             ),
             ControlRequest(cmd: .pickResult, target: "pick-id"),
             ControlRequest(cmd: .pickCancel, target: "pick-id"),
@@ -339,6 +339,24 @@ struct ControlProtocolTests {
         let sessionHud = ControlHudNode(message: "working", position: "center")
         let json = String(decoding: try JSONEncoder().encode(sessionHud), as: UTF8.self)
         #expect(!json.contains("pane"))
+    }
+
+    @Test func sessionHudOpenRoundTripsMarkdownAndFontSize() throws {
+        let request = ControlRequest(cmd: .sessionHudOpen, target: "9f3c",
+                                     args: ControlArgs(message: "# t", markdown: true, fontSize: 18))
+
+        let decoded = try roundTrip(request)
+
+        #expect(decoded == request)
+        #expect(decoded.args?.markdown == true)
+        #expect(decoded.args?.fontSize == 18)
+    }
+
+    @Test func sessionHudOpenOmitsUnsetMarkdownAndFontSize() throws {
+        let json = String(data: try JSONEncoder().encode(ControlArgs(message: "working")), encoding: .utf8) ?? ""
+
+        #expect(!json.contains("markdown"))
+        #expect(!json.contains("fontSize"))
     }
 
     @Test func sessionHudRawStringsMapToCommands() throws {
@@ -954,6 +972,21 @@ struct ControlProtocolTests {
         #expect(decoded.background == nil)
     }
 
+    @Test func treeSessionNodeRoundTripsPaneBackgroundsAndOmitsInheritingPanes() throws {
+        let overrides = PaneBackgrounds(right: BackgroundWatermark(kind: .text, text: "PEER"))
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: true,
+                                         backedByZmx: nil, paneBackgrounds: overrides)
+        let data = try JSONEncoder().encode(session)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let panes = try #require(object["paneBackgrounds"] as? [String: Any])
+        #expect(Set(panes.keys) == ["right"])
+        let decoded = try JSONDecoder().decode(ControlSessionNode.self, from: data)
+        #expect(decoded.paneBackgrounds == overrides)
+
+        let plain = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false)
+        #expect(!(String(data: try JSONEncoder().encode(plain), encoding: .utf8) ?? "").contains("paneBackgrounds"))
+    }
+
     @Test func treeSessionNodeRoundTripsWithUnseen() throws {
         let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: false, split: false, unseen: 3)
         let response = ControlResponse(ok: true, result: ControlResult(tree: ControlTree(
@@ -1057,6 +1090,32 @@ struct ControlProtocolTests {
         #expect(json.contains("\"spinner\":\"none\""), "the effective spinner must always be emitted; got \(json)")
         let decoded = try JSONDecoder().decode(ControlHudNode.self, from: Data(json.utf8))
         #expect(decoded == hud)
+    }
+
+    @Test func controlHudNodeRoundTripsMarkdownAndFontSize() throws {
+        let hud = ControlHudNode(message: "# status", position: "center", markdown: true, fontSize: 16)
+
+        let decoded = try JSONDecoder().decode(ControlHudNode.self, from: JSONEncoder().encode(hud))
+
+        #expect(decoded == hud)
+    }
+
+    @Test func controlHudNodeAlwaysReportsMarkdownAndOmitsAnInheritedFontSize() throws {
+        let json = String(decoding: try JSONEncoder().encode(ControlHudNode(message: "working", position: "center")),
+                          as: UTF8.self)
+
+        #expect(json.contains("\"markdown\":false"))
+        #expect(!json.contains("fontSize"))
+    }
+
+    // an app deployed but not restarted still serves a tree without the markdown key to a newer CLI.
+    @Test func controlHudNodeFromAnOlderServerDecodesAsPlain() throws {
+        let raw = #"{"message":"working","spinner":"none","position":"center","hideAfter":0}"#
+
+        let hud = try JSONDecoder().decode(ControlHudNode.self, from: Data(raw.utf8))
+
+        #expect(hud.markdown == false)
+        #expect(hud.fontSize == nil)
     }
 
     @Test func treeSessionNodeToleratesMissingHud() throws {
@@ -1283,6 +1342,23 @@ struct ControlProtocolTests {
         let decoded = try roundTrip(response)
         #expect(decoded == response)
         #expect(decoded.result?.tree?.sidebarMode == "flagged")
+    }
+
+    @Test func treeRoundTripsWithSidebarFlaggedLayoutAndOmitsWhenNil() throws {
+        let response = ControlResponse(ok: true, result: ControlResult(tree: ControlTree(
+            workspaces: [], sidebarFlaggedLayout: "tree")))
+        #expect(try roundTrip(response) == response)
+
+        let json = String(decoding: try JSONEncoder().encode(ControlTree(workspaces: [])), as: UTF8.self)
+        #expect(!json.contains("sidebarFlaggedLayout"), "a nil flagged layout must be omitted; got \(json)")
+        #expect(try JSONDecoder().decode(ControlTree.self, from: Data(json.utf8)).sidebarFlaggedLayout == nil)
+    }
+
+    @Test func flaggedLayoutRequestRoundTrips() throws {
+        let request = ControlRequest(cmd: .sidebarFlaggedLayout, args: ControlArgs(mode: "tree"))
+        let data = try JSONEncoder().encode(request)
+        #expect(String(decoding: data, as: UTF8.self).contains("sidebar.flagged-layout"))
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: data) == request)
     }
 
     @Test func treeRoundTripsWithSidebarWidthAndOmitsWhenNil() throws {

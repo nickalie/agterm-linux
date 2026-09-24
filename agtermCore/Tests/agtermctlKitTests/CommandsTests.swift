@@ -407,6 +407,12 @@ struct CommandsTests {
         #expect(try request(["session", "swap", "--target", "s1", "--window", "w1"]) == expected)
     }
 
+    @Test func sessionLeadCarriesThePaneAndDefaultsToTheActiveSession() throws {
+        let expected = ControlRequest(cmd: .sessionLead, target: "s1", args: ControlArgs(window: "w1", pane: "right"))
+        #expect(try request(["session", "lead", "--target", "s1", "--pane", "right", "--window", "w1"]) == expected)
+        #expect(try request(["session", "lead"]) == ControlRequest(cmd: .sessionLead, target: "active", args: ControlArgs()))
+    }
+
     @Test func sessionScratchDefaultsToggle() throws {
         let expected = ControlRequest(cmd: .sessionScratch, target: "active", args: ControlArgs(mode: "toggle"))
         #expect(try request(["session", "scratch"]) == expected)
@@ -1183,6 +1189,83 @@ struct CommandsTests {
         #expect(update.args?.textColor == "#e0e0e0")
     }
 
+    @Test func sessionHudMarkdownFlagReachesOpenAndUpdate() throws {
+        #expect(try request(["session", "hud", "# t", "--markdown"]).args?.markdown == true)
+        #expect(try request(["session", "hud", "update", "# t", "--markdown"]).args?.markdown == true)
+        #expect(try request(["session", "hud", "plain"]).args?.markdown == nil)
+        #expect(try request(["session", "hud", "update", "plain"]).args?.markdown == nil)
+    }
+
+    @Test func sessionHudOpenCarriesAFontSize() throws {
+        #expect(try request(["session", "hud", "big", "--font-size", "18"]).args?.fontSize == 18)
+        #expect(try request(["session", "hud", "same"]).args?.fontSize == nil)
+    }
+
+    @Test func sessionHudRejectsAFontSizeOutsideTheRange() {
+        #expect(validationMessage(["session", "hud", "tiny", "--font-size", "5"]) == "font-size must be 6...72 points")
+        #expect(validationMessage(["session", "hud", "huge", "--font-size", "73"]) == "font-size must be 6...72 points")
+    }
+
+    @Test func sessionHudUpdateTakesNoFontSize() {
+        #expect(validationMessage(["session", "hud", "update", "done", "--font-size", "14"]) != nil)
+    }
+
+    @Test func sessionHudReadsTheMessageFromAFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("hud-\(UUID().uuidString).md")
+        try "# Tasks\n\n- build  \n\n".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let open = try request(["session", "hud", "--file", file.path, "--markdown"])
+        let update = try request(["session", "hud", "update", "--file", file.path])
+
+        #expect(open.args?.message == "# Tasks\n\n- build  \n")
+        #expect(update.args?.message == "# Tasks\n\n- build  \n")
+    }
+
+    @Test func sessionHudNormalizesCrlfLineEndingsFromAFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("hud-\(UUID().uuidString).md")
+        try Data("# Tasks\r\n\r\n- build\r\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        #expect(try request(["session", "hud", "--file", file.path, "--markdown"]).args?.message == "# Tasks\n\n- build")
+    }
+
+    @Test func sessionHudDropsACrlfTerminatorFromAPlainFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("hud-\(UUID().uuidString).txt")
+        try Data("done\r\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        #expect(try request(["session", "hud", "--file", file.path]).args?.message == "done")
+    }
+
+    @Test func sessionHudKeepsALoneCarriageReturnFromAFileForTheServerToRefuse() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("hud-\(UUID().uuidString).txt")
+        try Data("a\rb\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        #expect(try request(["session", "hud", "--file", file.path]).args?.message == "a\rb")
+    }
+
+    @Test func sessionHudTakesExactlyOneMessageSource() {
+        #expect(validationMessage(["session", "hud", "open"]) == "provide MESSAGE or --file")
+        #expect(validationMessage(["session", "hud", "update"]) == "provide MESSAGE or --file")
+        #expect(validationMessage(["session", "hud", "both", "--file", "/tmp/x"]) == "MESSAGE and --file are mutually exclusive")
+        #expect(validationMessage(["session", "hud", "update", "both", "--file", "/tmp/x"])
+            == "MESSAGE and --file are mutually exclusive")
+    }
+
+    @Test func sessionHudRejectsAnUnreadableOrNonUtf8FileBeforeSending() throws {
+        let missing = "/tmp/agterm-hud-missing-\(UUID().uuidString).md"
+        let binary = FileManager.default.temporaryDirectory.appendingPathComponent("hud-\(UUID().uuidString).bin")
+        try Data([0xff, 0xfe, 0x00]).write(to: binary)
+        defer { try? FileManager.default.removeItem(at: binary) }
+
+        #expect(requestErrorMessage { try request(["session", "hud", "--file", missing]) }?
+            .hasPrefix("cannot read --file \(missing)") == true)
+        #expect(requestErrorMessage { try request(["session", "hud", "--file", binary.path]) }
+            == "--file \(binary.path) is not valid UTF-8")
+    }
+
     /// The panel's backing is read once at creation, so only the text half is updatable.
     @Test func sessionHudUpdateTakesNoBackgroundColor() {
         #expect(validationMessage(["session", "hud", "update", "done", "--background-color", "#112233"]) != nil)
@@ -1372,7 +1455,7 @@ struct CommandsTests {
 
     @Test func pickOpenMapsEveryOptionToRequest() throws {
         let command = try Pick.Open.parse([
-            "--prompt", "Choose one", "--query", "on", "--allow-custom", "--follow",
+            "--prompt", "Choose one", "--query", "on", "--allow-custom", "--select", "One", "--follow",
             "--window", "w1", "--no-block"
         ])
         let items = [ControlPickItem(id: "One", label: "One")]
@@ -1380,7 +1463,7 @@ struct CommandsTests {
             cmd: .pickOpen,
             args: ControlArgs(
                 follow: true, items: items, prompt: "Choose one", query: "on",
-                allowCustom: true, window: "w1"
+                allowCustom: true, selection: "One", window: "w1"
             )
         )
 
@@ -1525,6 +1608,21 @@ struct CommandsTests {
         #expect(try request(["sidebar", "mode", "flagged"]) == ControlRequest(cmd: .sidebarMode, args: ControlArgs(mode: "flagged")))
     }
 
+    @Test func sidebarFlaggedLayoutDefaultsToggle() throws {
+        #expect(try request(["sidebar", "flagged-layout"])
+            == ControlRequest(cmd: .sidebarFlaggedLayout, args: ControlArgs(mode: "toggle")))
+    }
+
+    @Test func sidebarFlaggedLayoutTree() throws {
+        #expect(try request(["sidebar", "flagged-layout", "tree"])
+            == ControlRequest(cmd: .sidebarFlaggedLayout, args: ControlArgs(mode: "tree")))
+    }
+
+    @Test func sidebarFlaggedLayoutRejectsBadLayoutAndAWindowTarget() {
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["sidebar", "flagged-layout", "grid"]) }
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["sidebar", "flagged-layout", "tree", "--window", "w"]) }
+    }
+
     @Test func sidebarModeRejectsBadMode() {
         #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["sidebar", "mode", "sideways"]) }
     }
@@ -1627,6 +1725,16 @@ struct CommandsTests {
 
     @Test func keymapListRejectsWindowSelector() {
         #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["keymap", "list", "--window", "w1"]) }
+    }
+
+    @Test func hooksReloadAndList() throws {
+        #expect(try request(["hooks", "reload"]) == ControlRequest(cmd: .hooksReload))
+        #expect(try request(["hooks", "list"]) == ControlRequest(cmd: .hooksList))
+    }
+
+    @Test func hooksCommandsRejectWindowSelector() {
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["hooks", "reload", "--window", "w1"]) }
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["hooks", "list", "--window", "w1"]) }
     }
 
     @Test func configReload() throws {
@@ -1801,6 +1909,15 @@ struct CommandsTests {
     @Test func sessionBackgroundClear() throws {
         let expected = ControlRequest(cmd: .sessionBackground, target: "active", args: ControlArgs(mode: "clear"))
         #expect(try request(["session", "background", "clear"]) == expected)
+    }
+
+    @Test(arguments: [(["image", "/tmp/bg.png", "--pane", "right"], ControlArgs(mode: "image", pane: "right", path: "/tmp/bg.png")),
+                      (["text", "PEER", "--pane", "split"], ControlArgs(text: "PEER", mode: "text", pane: "split")),
+                      (["color", "#201414", "--pane", "left"], ControlArgs(mode: "color", pane: "left", color: "#201414")),
+                      (["clear", "--pane", "scratch"], ControlArgs(mode: "clear", pane: "scratch"))])
+    func sessionBackgroundPaneEncodesForEveryMode(argv: [String], args: ControlArgs) throws {
+        #expect(try request(["session", "background"] + argv) == ControlRequest(cmd: .sessionBackground, target: "active", args: args))
+        #expect(validationMessage(["session", "background"] + argv.dropLast() + ["middle"]) == "--pane must be left, right, or scratch")
     }
 
     @Test func sessionBackgroundRejectsBadFit() {

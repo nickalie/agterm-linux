@@ -369,6 +369,25 @@ final class AppActions {
         }
     }
 
+    /// Re-read `hooks.conf` and apply it to the scheduler. Shared by the File menu, the palette and the Edit
+    /// Hooks overlay close (`hooks.reload` reaches the model directly, like `keymap.reload`); no-op before
+    /// the model wires.
+    func reloadHooks() { settingsModel?.reloadHooks() }
+
+    /// The session whose open overlay is the hooks editor, so its close reloads the hooks. Nil when none.
+    var hooksEditOverlaySession: UUID?
+
+    /// Open `hooks.conf` in the user's editor in a 95% overlay over the active session, exactly like
+    /// `editKeymap`; exiting reloads the hooks.
+    func editHooks() {
+        guard uiActionsEnabled else { return }
+        guard let store, let id = store.selectedSessionID, let settingsModel else { return }
+        settingsModel.ensureStarterHooks()
+        if store.openOverlay(id, command: ConfigPaths.editorCommand(forPath: settingsModel.hooksPath), sizePercent: 95) {
+            hooksEditOverlaySession = id
+        }
+    }
+
     /// Re-read the ghostty config and rebroadcast it to every live surface; `SettingsModel` posts the
     /// diagnostics banner, mirroring `reloadKeymap`. Returns the diagnostic count (0 = clean, and 0 before the
     /// model is wired) so the control channel reports what the reload produced. Shared by File ▸ Reload
@@ -471,7 +490,7 @@ final class AppActions {
 
     /// Expand every workspace in `store`'s window sidebar. The sidebar owns the outline, so this posts a
     /// store-scoped notification and only that window's `WorkspaceSidebar.Coordinator` acts — how
-    /// `sidebar.expand` targets a specific (default frontmost) window. No-op in flagged mode (no rows).
+    /// `sidebar.expand` targets a specific (default frontmost) window. No-op under the flat flagged list (no rows).
     func expandAllWorkspaces(in store: AppStore) {
         NotificationCenter.default.post(name: .agtermExpandWorkspaces, object: store)
     }
@@ -484,7 +503,7 @@ final class AppActions {
     }
 
     /// Collapse every workspace except the current one in `store`'s window sidebar, keeping that one
-    /// expanded and scrolled into view. Store-scoped like `expandAllWorkspaces(in:)`, no-op in flagged mode,
+    /// expanded and scrolled into view. Store-scoped like `expandAllWorkspaces(in:)`, no-op under the flat flagged list,
     /// and how `sidebar.collapse` targets a specific (default frontmost) window.
     func collapseOtherWorkspaces(in store: AppStore) {
         NotificationCenter.default.post(name: .agtermCollapseWorkspaces, object: store)
@@ -493,13 +512,14 @@ final class AppActions {
     /// Fold or unfold the CURRENT workspace alone, for the keyless `toggle_workspace_collapse`, its View-menu
     /// item and its palette row. The per-workspace counterpart of Expand / Collapse Workspaces, which act on
     /// every row and deliberately keep this one open — so before this there was no built-in way to fold the
-    /// workspace you are in. Tree mode only, matching those two and the rows it acts on. Targets what the row
+    /// workspace you are in. Needs workspace rows, matching those two and the rows it acts on. Targets what the row
     /// SHOWS (`isCurrentWorkspaceCollapsed`), not what is persisted: a reveal routinely leaves this workspace
     /// open on screen while its stored flag still says collapsed, and toggling the stored flag there costs the
     /// user a keystroke that changes nothing he can see.
     func toggleActiveWorkspaceCollapse() {
         guard uiActionsEnabled else { return }
-        guard let store, store.sidebarMode == .tree, let id = store.currentWorkspaceID else { return }
+        guard let store, store.rendersWorkspaceRows(flaggedLayout: GhosttyApp.shared.flaggedViewLayout),
+              let id = store.currentWorkspaceID else { return }
         setWorkspaceExpanded(id, expanded: store.isCurrentWorkspaceCollapsed, in: store)
     }
 
@@ -521,7 +541,7 @@ final class AppActions {
 
     // MARK: - Flagged working-set
 
-    /// Toggle a session's flagged membership (the durable working-set the flat sidebar view projects), from
+    /// Toggle a session's flagged membership (the durable working-set the flagged sidebar view projects), from
     /// the row's "Flag"/"Unflag" item; clean no-op on an unknown id.
     func toggleFlag(_ sessionID: UUID) {
         guard uiActionsEnabled else { return }
@@ -535,7 +555,7 @@ final class AppActions {
         toggleFlag(id)
     }
 
-    /// Flip the sidebar between the workspace tree and the flat flagged working-set list. Shared by the
+    /// Flip the sidebar between the workspace tree and the flagged working-set view. Shared by the
     /// bottom-bar toggle, the View menu, the palette and `sidebar.mode`; `ContentView` animates the switch.
     func toggleFlaggedView() {
         guard uiActionsEnabled else { return }

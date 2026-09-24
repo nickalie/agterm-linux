@@ -123,6 +123,8 @@ extension AppActions {
         // a no-op unless the status needs attention: the scratch-hide / split-focus side effects must never
         // fire on plain navigation to a still-active session, or one merely showing its keep-alive scratch.
         guard indicator.status.needsAttention else { focusActiveSession(); return }
+        // a mirrored status for a pane with no counterpart here names no pane to reveal
+        guard session.remotePresentation?.statusOwnerUnknown != true else { focusActiveSession(); return }
         let pane = indicator.statusPane
         // a shown scratch masks a non-scratch block; overlays are deliberately left alone.
         if pane != .scratch, session.scratchActive { store?.toggleScratch(session.id) }
@@ -137,6 +139,27 @@ extension AppActions {
             session.splitFocused = false
             focusSplitPane(session, wantSplit: false)
         }
+    }
+
+    /// Whether an attention row can be acted on right now: its window open and not under a cover, its
+    /// session still there. Asked at render and again at the pick, since a row outlives all three.
+    func canSelectAttention(windowID: WindowInfo.ID, sessionID: UUID) -> Bool {
+        uiActionsEnabled(for: windowID) && library.store(for: windowID)?.session(withID: sessionID) != nil
+    }
+
+    /// Select a row of the cross-window attention list and reveal its pane, raising its window first when it
+    /// is not the active one so `store` resolves there. A raise that fails (the window still attaching)
+    /// drops the pick as a window step does.
+    func selectAttention(windowID: WindowInfo.ID, sessionID: UUID) {
+        guard canSelectAttention(windowID: windowID, sessionID: sessionID),
+              let target = library.store(for: windowID) else { return }
+        if windowID != library.activeWindowID {
+            guard WindowRegistry.shared.raise(windowID) else { return }
+            takeFrontmost(windowID)
+        }
+        target.noteUserActivity()
+        let indicator = target.selectSession(sessionID)
+        revealActiveBlockedPane(captured: indicator)
     }
 
     /// Front and focus the window a recent-closed reopen restored into. The id is published here rather

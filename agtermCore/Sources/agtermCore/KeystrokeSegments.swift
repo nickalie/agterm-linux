@@ -25,4 +25,16 @@ public enum KeystrokeSegments {
         }
         return segments
     }
+
+    /// The same keystrokes as typed text for `zmx type`: the runs as UTF-8 and one CR per Return. The
+    /// daemon encodes each CR as a Return key for the keyboard mode its program asked for, which is what
+    /// the surface's own key path does.
+    public static func ptyBytes(_ text: String) -> [UInt8] {
+        split(text).flatMap { segment -> [UInt8] in
+            switch segment {
+            case .text(let run): Array(run.utf8)
+            case .returnKey: [0x0D]
+            }
+        }
+    }
 }

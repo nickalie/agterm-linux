@@ -152,17 +152,25 @@ paths:
 
 - With `attentionButtonEnabled` off by default, `customTitlebar` places a bell after recent sessions and
   before scratch/split/quick-terminal controls. It derives live state from
-  `AppStore.attentionSessions`: empty is disabled `bell` at about 0.35 opacity; non-blocked is enabled
-  `bell` in `chromeText`; any blocked is enabled `bell.fill` in `blockedStatusColor`. There is no count
-  or pulse.
+  `WindowLibrary.attentionAcrossWindows`, every open window's `AppStore.attentionSessions` in one
+  `AppStore.attentionPrecedes` order: empty is disabled `bell` at about 0.35 opacity; non-blocked is
+  enabled `bell` in `chromeText`; any blocked is enabled `bell.fill` in `blockedStatusColor`. There is no
+  count or pulse. That getter reads a private open-set version the library bumps on every store load and
+  drop, because `stores` is observation-ignored and a background window closing changes neither
+  `windows` nor `frontmostWindowID`.
 - `attentionSessions` filters on `AgentStatus.needsAttention`, so `active` never reaches the bell, its
   popover, the Dock group, or the `.attention` palette — the same membership rule attention navigation
   already used. The installed hooks hold a working agent in `active` almost continuously, and answering a
   prompt promotes `blocked` to `active`, so including it made the list read as "where agents live" rather
   than "what waits on you". The sidebar glyph is unchanged; only the attention surfaces narrow.
 - Clicking opens the mouse popover of `SessionPopoverRow`s with `StatusGlyph`, ordered
-  blocked then completed; selection reveals the tagged blocked pane. Ctrl-Shift-I, Navigate > Go to
-  Attention, and Show Attention in the palette retain the searchable keyboard surface.
+  blocked then completed, subtitled by `attentionSubtitle` (window name first once more than one
+  window is open). Selection closes the popover, then `AppActions.selectAttention` on the next turn:
+  it rechecks the owning window's modal gate, raises it through `WindowRegistry.raise` plus
+  `takeFrontmost` when it is not the active one, and reveals the tagged blocked pane through
+  `revealActiveBlockedPane` exactly as the per-window path does. Ctrl-Shift-I, Navigate > Go to
+  Attention, and Show Attention in the palette retain the searchable keyboard surface over the same
+  list. The Dock menu stays scoped to its captured window.
 - The button ID is `attention-button`, with help and value `none`, `attention`, or `blocked`.
   `WindowContentView` mirrors `GhosttyApp.attentionButtonEnabled` into state and refreshes on
   `.agtermAppearanceChanged`, not `model.settings`. This mouse form of controllable attention selection is

@@ -38,6 +38,7 @@ final class MockControlActions: ControlActions {
         case sessionSplit(target: String?, window: String?, String?, SplitAxis?)
         case sessionSplitClose(target: String?, window: String?)
         case sessionSwap(target: String?, window: String?)
+        case sessionLead(target: String?, window: String?, pane: StatusPane?)
         case sessionScratch(target: String?, window: String?, String?, command: String?)
         case sessionFocus(target: String?, window: String?, String?)
         case sessionResize(target: String?, window: String?, ControlSplitResize)
@@ -47,6 +48,8 @@ final class MockControlActions: ControlActions {
         case font(target: String?, window: String?, pane: StatusPane?, String)
         case keymapReload
         case keymapList
+        case hooksReload
+        case hooksList
         case version
         case configReload
         case notify(target: String?, window: String?, title: String?, body: String)
@@ -60,8 +63,11 @@ final class MockControlActions: ControlActions {
         case zmxReset
         case zmxTree(host: String?)
         case zmxAttach(host: String, session: String)
+        case zmxPresent(session: String)
+        case claimOverlayJob(String)
         case sidebarVisibility(ControlToggleMode)
         case sidebarViewMode(ControlSidebarViewMode)
+        case flaggedViewLayout(ControlFlaggedLayoutMode)
         case expand(window: String?)
         case collapse(window: String?)
         case sidebarWidth(points: Double, window: String?)
@@ -124,12 +130,15 @@ final class MockControlActions: ControlActions {
     var unresolvedFocusTargets: [String] = []
     var nextSidebarVisibilityResponse = ControlResponse(ok: true)
     var nextSidebarViewModeResponse = ControlResponse(ok: true)
+    var nextFlaggedViewLayoutResponse = ControlResponse(ok: true)
     var nextExpandResponse = ControlResponse(ok: true)
     var nextCollapseResponse = ControlResponse(ok: true)
     var nextSidebarWidthResponse = ControlResponse(ok: true)
     var nextFontResponse = ControlResponse(ok: true)
     var nextNotifyResponse = ControlResponse(ok: true)
     var nextKeymapListResponse = ControlResponse(ok: true)
+    var nextHooksReloadResponse = ControlResponse(ok: true)
+    var nextHooksListResponse = ControlResponse(ok: true)
     var nextVersionResponse = ControlResponse(ok: true)
     var nextKeymapResponse = ControlResponse(ok: true)
     var nextConfigResponse = ControlResponse(ok: true)
@@ -347,6 +356,11 @@ final class MockControlActions: ControlActions {
         return nextSessionSwapResponse
     }
 
+    func takeSessionLead(_ target: String?, window: String?, pane: StatusPane?) -> ControlResponse {
+        calls.append(.sessionLead(target: target, window: window, pane: pane))
+        return ControlResponse(ok: true, result: ControlResult(id: "session-id"))
+    }
+
     func scratchSession(_ target: String?, window: String?, mode: String?,
                         command: String?) -> ControlResponse {
         calls.append(.sessionScratch(target: target, window: window, mode, command: command))
@@ -392,6 +406,16 @@ final class MockControlActions: ControlActions {
     func listKeymap() -> ControlResponse {
         calls.append(.keymapList)
         return nextKeymapListResponse
+    }
+
+    func reloadHooks() -> ControlResponse {
+        calls.append(.hooksReload)
+        return nextHooksReloadResponse
+    }
+
+    func listHooks() -> ControlResponse {
+        calls.append(.hooksList)
+        return nextHooksListResponse
     }
 
     func appIdentity() -> ControlResponse {
@@ -455,6 +479,16 @@ final class MockControlActions: ControlActions {
         return nextRemoteTreeResponse
     }
 
+    func openPresentation(session: String) -> ControlResponse {
+        calls.append(.zmxPresent(session: session))
+        return ControlResponse(ok: true, result: ControlResult(id: session))
+    }
+
+    func claimOverlayJob(_ job: String) -> ControlResponse {
+        calls.append(.claimOverlayJob(job))
+        return ControlResponse(ok: true, result: ControlResult(id: job))
+    }
+
     func attachRemoteSession(host: String, session: String) async -> ControlResponse {
         calls.append(.zmxAttach(host: host, session: session))
         return nextRemoteAttachResponse
@@ -468,6 +502,11 @@ final class MockControlActions: ControlActions {
     func setSidebarViewMode(_ mode: ControlSidebarViewMode) -> ControlResponse {
         calls.append(.sidebarViewMode(mode))
         return nextSidebarViewModeResponse
+    }
+
+    func setFlaggedViewLayout(_ mode: ControlFlaggedLayoutMode) -> ControlResponse {
+        calls.append(.flaggedViewLayout(mode))
+        return nextFlaggedViewLayoutResponse
     }
 
     func expandSidebar(window: String?) -> ControlResponse {

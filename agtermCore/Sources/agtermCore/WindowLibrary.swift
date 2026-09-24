@@ -79,14 +79,23 @@ public final class WindowLibrary {
     /// "none open"; sites that only compare or reassign the raw id are unaffected either way.
     public var frontmostWindowID: UUID?
 
-    /// Live per-window stores. `@ObservationIgnored`: read imperatively (scene/control), never by a view.
-    @ObservationIgnored private var stores: [UUID: AppStore]
+    /// Live per-window stores. `@ObservationIgnored`: read imperatively (scene/control); a view reaches
+    /// them only through `store(for:)`, `isOpen` and `attentionAcrossWindows`, whose `openSetVersion` read
+    /// carries the observation.
+    @ObservationIgnored var stores: [UUID: AppStore]
+
+    /// Bumped on every open-set change, the observable stand-in for `stores` membership: a background
+    /// window opening or closing changes neither `windows` nor (necessarily) `frontmostWindowID`, so a
+    /// view reading the attention list or a row's eligibility would otherwise keep its stale answer.
+    private(set) var openSetVersion = 0
 
     /// The state directory (AGTERM_STATE_DIR-aware): the index here, per-window files in `windows/`.
     @ObservationIgnored private let directory: URL
     @ObservationIgnored let recentClosedStore: RecentClosedStore
     /// One bounded run-identified ring shared by every window store for this library/app lifetime.
     @ObservationIgnored private let controlEventRing: ControlEventRing
+    /// Every event after the ring sequences it, debounced `tree.changed` included: what `events.read` will show.
+    @ObservationIgnored public var onControlEvent: ((ControlEvent) -> Void)?
     @ObservationIgnored private let paneFinalizer: (([UUID]) -> Void)?
     @ObservationIgnored private let launchPaneDrop: (([UUID]) -> Void)?
     @ObservationIgnored private let launchInventorySink: ((Set<UUID>?) -> Void)?
@@ -148,7 +157,10 @@ public final class WindowLibrary {
 
     // MARK: - Lookup
 
+    /// The open window's store, nil for a closed or unknown id. Reads `openSetVersion` so a view deciding
+    /// on membership re-renders when a background window opens or closes.
     public func store(for id: UUID?) -> AppStore? {
+        _ = openSetVersion
         guard let id else { return nil }
         return stores[id]
     }
@@ -169,7 +181,7 @@ public final class WindowLibrary {
     }
 
     public func isOpen(_ id: UUID) -> Bool {
-        stores[id] != nil
+        store(for: id) != nil
     }
 
     /// Auto-hide-inactive-sidebars driver: the frontmost open window shows its sidebar, every OTHER open one
@@ -368,6 +380,7 @@ public final class WindowLibrary {
         store.addSession(toWorkspace: workspace.id, cwd: FileManager.default.homeDirectoryForCurrentUser.path)
         windows.append(info)
         stores[info.id] = store
+        openSetVersion += 1
         // mark frontmost now so the window-keyed seams target it immediately instead of waiting on its
         // first `didBecomeKey` — which loses to the File-menu focus returning to the previous window.
         frontmostWindowID = info.id
@@ -391,6 +404,7 @@ public final class WindowLibrary {
         let snapshot = loadSnapshotForStore(persistence)
         store.restore(from: snapshot, launchRestore: launchRestore)
         stores[id] = store
+        openSetVersion += 1
         let carriedCaptures = snapshot.workspaces.contains { workspace in
             workspace.sessions.contains { $0.foregroundCommand != nil || $0.splitForegroundCommand != nil }
         }
@@ -455,12 +469,13 @@ public final class WindowLibrary {
         store.dropLaunchPanes(store.workspaces.flatMap(\.sessions))
         for workspace in store.workspaces {
             for session in workspace.sessions {
-                session.cancelPendingAsk()
+                store.releaseLeavingSession(session)
                 store.emitSessionClosed(session, workspace: workspace.id)
             }
         }
         store.scheduleTreeChanged()
         stores[id] = nil
+        openSetVersion += 1
         // the persisted `frontmost` is what the next launch's `reopen` fallback picks, and nil there
         // sends it to `windows.first`. Pin unconditionally on the close that empties the open set, so a
         // frontmost left nil or stale by `removeWindow` still reopens the exit window; otherwise hand it
@@ -490,6 +505,8 @@ public final class WindowLibrary {
     /// persists. No-ops on the last window. Clears `frontmostWindowID` if it pointed at the removed one.
     public func removeWindow(_ id: UUID) {
         guard canRemoveWindow, let index = windows.firstIndex(where: { $0.id == id }) else { return }
+        // after the guard: a rejected delete of the last window must keep its live claim.
+        pendingClaim.removeAll { $0 == id }
         // before the pane inventory below, which reads `workspaces` and so cannot see a soft-closed
         // session; without this its daemon outlives the window with nothing left to finalize it
         stores[id]?.finalizeAllPendingCloses()
@@ -498,7 +515,7 @@ public final class WindowLibrary {
             store.dropLaunchPanes(store.workspaces.flatMap(\.sessions))
             for workspace in store.workspaces {
                 for session in workspace.sessions {
-                    session.cancelPendingAsk()
+                    store.releaseLeavingSession(session)
                     store.emitSessionClosed(session, workspace: workspace.id)
                 }
             }
@@ -517,9 +534,10 @@ public final class WindowLibrary {
         let sessionIDsToSweep: [UUID] = stores[id].map { $0.workspaces.flatMap(\.sessions).map(\.id) }
             ?? persistenceStore(for: id).load().workspaces.flatMap(\.sessions).map(\.id)
         for sessionID in sessionIDsToSweep {
-            WatermarkStorage.removeRenderedText(sessionID: sessionID, stateDir: directory)
+            WatermarkStorage.removeAllRenderedText(sessionID: sessionID, stateDir: directory)
         }
         stores[id] = nil
+        openSetVersion += 1
         windows.remove(at: index)
         if frontmostWindowID == id { frontmostWindowID = nil }
         // best-effort: a missing/never-written per-window file is fine to "fail" to remove.
@@ -686,6 +704,7 @@ public final class WindowLibrary {
         store.save()
         windows = [info]
         stores[info.id] = store
+        openSetVersion += 1
         frontmostWindowID = info.id
         saveIndex()
         return true
@@ -713,13 +732,11 @@ public final class WindowLibrary {
                     self.scheduleTreeChanged(for: windowID)
                     return
                 }
-                self.controlEventRing.append(ControlEventDraft(
-                    kind: draft.kind,
-                    window: windowID.uuidString,
-                    workspace: draft.workspace,
-                    session: draft.session,
-                    payload: draft.payload
-                ))
+                // two steps: optional chaining on the observer would skip the append itself when it is nil
+                let event = self.controlEventRing.append(ControlEventDraft(
+                    kind: draft.kind, window: windowID.uuidString, workspace: draft.workspace,
+                    session: draft.session, payload: draft.payload))
+                self.onControlEvent?(event)
             },
             paneFinalizer: paneFinalizer,
             launchPaneDrop: launchPaneDrop
@@ -973,7 +990,9 @@ public final class WindowLibrary {
         let debouncer = treeEventDebouncers[windowID] ?? Debouncer()
         treeEventDebouncers[windowID] = debouncer
         debouncer.schedule(after: 0.1) { [weak self] in
-            self?.controlEventRing.append(ControlEventDraft(kind: .treeChanged, window: windowID.uuidString))
+            guard let self else { return }
+            let event = self.controlEventRing.append(ControlEventDraft(kind: .treeChanged, window: windowID.uuidString))
+            self.onControlEvent?(event)
         }
     }
 

@@ -28,6 +28,10 @@ extension ControlServer: ControlActions {
     func openSessionOverlay(_ target: String?, window: String?,
                             options: ControlSessionOverlayOpenOptions) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
+            if let response = openRemoteOverlay(in: store, sessionID: id, options: options) { return response }
+            if store.session(withID: id)?.remoteOverlays.slot(options.pane) != nil {
+                return ControlResponse(ok: false, error: options.pane == nil ? "overlay already open" : PaneOverlayError.alreadyOpen)
+            }
             if let pane = options.pane {
                 if let failure = store.openPaneOverlay(id, pane: pane, command: options.command,
                                                        cwd: options.cwd, wait: options.wait,
@@ -62,8 +66,9 @@ extension ControlServer: ControlActions {
     /// discards the HUD state and its body file with it.
     func closeSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
-            let closed = pane.map { store.closePaneOverlay(id, pane: $0) } ?? store.closeOverlay(id)
-            guard closed else {
+            // a remote job first: an origin HUD opened during its run shares the slot and must not absorb the close
+            guard store.closeRemoteOverlay(id, pane: pane)
+                    || pane.map({ store.closePaneOverlay(id, pane: $0) }) ?? store.closeOverlay(id) else {
                 return ControlResponse(ok: false, error: "no overlay")
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
@@ -79,6 +84,10 @@ extension ControlServer: ControlActions {
     /// leave the two disagreeing.
     func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
+            if let resized = store.resizeRemoteOverlay(id, sizePercent: sizePercent) {
+                return resized ? ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+                    : ControlResponse(ok: false, error: OverlayResultError.viewerGone)
+            }
             let session = store.session(withID: id)
             let hud = session?.hudActive == true
             if sizePercent == nil, hud {
@@ -89,10 +98,12 @@ extension ControlServer: ControlActions {
                 return ControlResponse(ok: false, error: "no overlay")
             }
             if hud, let session,
-               !self.writeHudBody(session, pane: self.paneMetrics(for: session, pane: session.hudTargetPane)) {
+               !self.writeHudBody(session, pane: self.paneMetrics(for: session, pane: session.hudTargetPane,
+                                                                  fontSize: self.liveHudFontSize(session))) {
                 store.resizeOverlay(id, sizePercent: previousSize)
                 return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
+            if hud { store.publishHudResize(forSession: id, now: self.hudClock()) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -102,15 +113,21 @@ extension ControlServer: ControlActions {
             guard let session = store.session(withID: id) else {
                 return ControlResponse(ok: false, error: "no such session")
             }
-            // the app's painter is not the caller's program: without this the shared slot would answer
-            // "overlay still running" for a HUD that will never report a status.
-            if pane == nil, session.hudActive {
-                return ControlResponse(ok: false, error: OverlayHudError.noResult)
+            if let slot = session.remoteOverlays.slot(pane), !slot.ended {
+                return ControlResponse(ok: false, error: OverlayResultError.stillRunning)
             }
             let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
-                ?? (session.overlayActive, session.overlayExitCode)
+                ?? (session.programOverlayActive, session.overlayExitCode)
             if running {
                 return ControlResponse(ok: false, error: OverlayResultError.stillRunning)
+            }
+            if exitCode == nil, let failure = session.remoteOverlays.failure(pane) {
+                return ControlResponse(ok: false, error: OverlayResultError.ended(failure))
+            }
+            // a HUD opened after a program clears its result, so one recorded here is a remote job's that
+            // ended under a HUD; the painter itself never reports a status
+            if exitCode == nil, pane == nil, session.hudActive {
+                return ControlResponse(ok: false, error: OverlayHudError.noResult)
             }
             guard let code = exitCode else {
                 return ControlResponse(ok: false, error: OverlayResultError.noResult)
@@ -320,9 +337,13 @@ extension ControlServer: ControlActions {
                 return ControlResponse(ok: false, error: "invalid scratch mode: \(mode ?? "toggle")")
             }
             let want = parsedMode.desiredValue(current: session.scratchActive)
+            // replacing a visible scratch's command ends in the same shown state it started in, so neither
+            // the close nor the re-show below may emit pane.scratch; a hidden one still emits its single shown.
+            let respawningVisible = want && session.scratchActive && session.scratchSurface != nil
+                && !(command ?? "").isEmpty
             if want, let command, !command.isEmpty {
                 // closeScratch clears scratchActive, so the toggle below re-shows it and the factory uses it.
-                if session.scratchSurface != nil { store.closeScratch(id) }
+                if session.scratchSurface != nil { store.closeScratch(id, emitVisibility: !respawningVisible) }
                 session.scratchCommand = command
             }
             if want, store.selectedSessionID != id {
@@ -331,7 +352,7 @@ extension ControlServer: ControlActions {
                 store.selectSession(id)
             }
             if want != session.scratchActive {
-                store.toggleScratch(id)
+                store.toggleScratch(id, emitVisibility: !respawningVisible)
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
@@ -496,7 +517,7 @@ extension ControlServer: ControlActions {
         }
     }
 
-    /// Flag/unflag the target for the flagged working-set view (the durable `Session.flagged` the flat
+    /// Flag/unflag the target for the flagged working-set view (the durable `Session.flagged` the flagged
     /// sidebar mode projects). `on|off|toggle` is computed against `flagged`, so both are idempotent;
     /// `clear` ignores the target, unflags every session in the resolved store, and reports ok with no id.
     func setSessionFlag(_ target: String?, window: String?, mode: String?) -> ControlResponse {

@@ -54,6 +54,9 @@ public protocol ControlActions {
     /// Exchange the two live pane roles. The default below keeps existing hosts source-compatible and
     /// reports that the optional operation is unsupported.
     func swapSessionPanes(_ target: String?, window: String?) async -> ControlResponse
+    /// Take the lead of a pane's zmx daemon for this Mac, as a key press on the pane's cover does. The
+    /// default below keeps existing hosts source-compatible.
+    func takeSessionLead(_ target: String?, window: String?, pane: StatusPane?) -> ControlResponse
     func scratchSession(_ target: String?, window: String?, mode: String?, command: String?) -> ControlResponse
     func focusSessionPane(_ target: String?, window: String?, pane: String?) -> ControlResponse
     func resizeSplit(_ target: String?, window: String?, resize: ControlSplitResize) -> ControlResponse
@@ -66,6 +69,9 @@ public protocol ControlActions {
     func font(_ target: String?, window: String?, pane: StatusPane?, action: String) -> ControlResponse
     func reloadKeymap() -> ControlResponse
     func listKeymap() -> ControlResponse
+    /// `hooks.reload` / `hooks.list`, app-global like the keymap pair.
+    func reloadHooks() -> ControlResponse
+    func listHooks() -> ControlResponse
     func appIdentity() -> ControlResponse
     func reloadGhosttyConfig() -> ControlResponse
     func sendNotification(_ target: String?, window: String?, title: String?, body: String) -> ControlResponse
@@ -73,6 +79,7 @@ public protocol ControlActions {
     func listThemes() -> ControlResponse
     func setSidebarVisibility(_ mode: ControlToggleMode) -> ControlResponse
     func setSidebarViewMode(_ mode: ControlSidebarViewMode) -> ControlResponse
+    func setFlaggedViewLayout(_ mode: ControlFlaggedLayoutMode) -> ControlResponse
     func expandSidebar(window: String?) -> ControlResponse
     func collapseSidebar(window: String?) -> ControlResponse
     func setSidebarWidth(_ points: Double, window: String?) -> ControlResponse
@@ -163,6 +170,10 @@ public protocol ControlActions {
     /// Create a local session attached to `session` on `host`. Resolves the remote itself before inserting
     /// anything, so a session that has gone since the tree was read creates nothing.
     func attachRemoteSession(host: String, session: String) async -> ControlResponse
+    /// Accept a viewer's presentation stream. After an ok answer the host speaks frames on that connection.
+    func openPresentation(session: String) -> ControlResponse
+    /// Claim a remote overlay job for the helper asking. After an ok answer the connection carries job frames.
+    func claimOverlayJob(_ job: String) -> ControlResponse
     /// Attach into an open local window, defaulting to the frontmost window after discovery.
     func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse
 }
@@ -187,22 +198,26 @@ public struct ControlDispatcher {
                 .sessionReveal, .sessionMove, .sessionFlag, .sessionContext, .sessionSeen, .sessionStatus,
                 .sessionRestore:
             return await dispatchSessionCommand(request)
-        case .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionScratch, .sessionFocus, .sessionResize,
-                .surfaceZoom, .surfaceCursor, .sessionType,
+        case .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionLead, .sessionScratch, .sessionFocus,
+                .sessionResize, .surfaceZoom, .surfaceCursor, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult, .sessionOverlayCopy,
                 .sessionOverlayText, .sessionBackground,
                 .sessionText:
             return await dispatchSessionSurfaceCommand(request)
+        case .sessionOverlayJobRun:
+            return dispatchSessionOverlayCommand(request)
         case .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand:
             return dispatchWorkspaceCommand(request)
         case .quick, .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList,
-                .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
-                .sidebarCollapse, .sidebarWidth, .restoreClear, .restoreCapture, .version:
+                .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarFlaggedLayout,
+                .sidebarExpand, .sidebarCollapse, .sidebarWidth, .restoreClear, .restoreCapture, .version:
             return dispatchAppCommand(request)
-        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach:
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxPresent:
             return await dispatchZmxCommand(request)
+        case .hooksReload, .hooksList:
+            return dispatchHooksCommand(request)
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename,
@@ -552,6 +567,11 @@ public struct ControlDispatcher {
             return actions.closeSessionSplit(request.target, window: request.args?.window)
         case .sessionSwap:
             return await actions.swapSessionPanes(request.target, window: request.args?.window)
+        case .sessionLead:
+            switch parseSurfacePane(request.args?.pane) {
+            case .pane(let pane): return actions.takeSessionLead(request.target, window: request.args?.window, pane: pane)
+            case .rejected(let rejection): return rejection
+            }
         case .sessionScratch:
             return actions.scratchSession(request.target, window: request.args?.window, mode: request.args?.mode,
                                           command: request.args?.command)
@@ -604,72 +624,9 @@ public struct ControlDispatcher {
         case .sessionSearch:
             return await actions.searchSession(request.target, window: request.args?.window,
                                                text: request.args?.text, to: request.args?.to)
-        case .sessionOverlayOpen:
-            guard let command = request.args?.command, !command.isEmpty else {
-                return ControlResponse(ok: false, error: "session.overlay.open requires a command")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
-            }
-            let pane: OverlayPane?
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let parsed): pane = parsed
-            }
-            if pane != nil, request.args?.sizePercent != nil {
-                return ControlResponse(ok: false, error: PaneOverlayError.sizePercentConflict)
-            }
-            if let percent = request.args?.sizePercent, !(1...100).contains(percent) {
-                return ControlResponse(ok: false, error: "session.overlay.open: --size-percent must be 1...100")
-            }
-            return actions.openSessionOverlay(request.target, window: request.args?.window,
-                                              options: ControlSessionOverlayOpenOptions(
-                                                command: command,
-                                                cwd: request.args?.cwd,
-                                                wait: request.args?.wait ?? false,
-                                                sizePercent: request.args?.sizePercent,
-                                                backgroundColor: request.args?.color,
-                                                follow: request.args?.follow ?? false,
-                                                pane: pane
-                                              ))
-        case .sessionOverlayClose:
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let pane):
-                return actions.closeSessionOverlay(request.target, window: request.args?.window, pane: pane)
-            }
-        case .sessionOverlayResize:
-            // pane overlays are always full, so ANY `--pane` is refused here, valid spelling or not.
-            if request.args?.pane != nil {
-                return ControlResponse(ok: false, error: PaneOverlayError.resizeUnsupported)
-            }
-            let wantsFull = request.args?.full == true
-            let percent = request.args?.sizePercent
-            if wantsFull, percent != nil {
-                return ControlResponse(ok: false, error: "session.overlay.resize: --full is mutually exclusive with --size-percent")
-            }
-            if !wantsFull, percent == nil {
-                return ControlResponse(ok: false, error: "session.overlay.resize requires --size-percent or --full")
-            }
-            if let percent, !(1...100).contains(percent) {
-                return ControlResponse(ok: false, error: "session.overlay.resize: --size-percent must be 1...100")
-            }
-            return actions.resizeSessionOverlay(request.target, window: request.args?.window,
-                                                sizePercent: wantsFull ? nil : percent)
-        case .sessionOverlayResult:
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let pane):
-                return actions.sessionOverlayResult(request.target, window: request.args?.window, pane: pane)
-            }
-        case .sessionOverlayCopy:
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let pane):
-                return actions.copySessionOverlaySelection(request.target, window: request.args?.window, pane: pane)
-            }
-        case .sessionOverlayText:
-            return dispatchSessionOverlayText(request)
+        case .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
+             .sessionOverlayCopy, .sessionOverlayText:
+            return dispatchSessionOverlayCommand(request)
         case .sessionBackground:
             return dispatchSessionBackground(request)
         case .sessionText:
@@ -717,6 +674,11 @@ public struct ControlDispatcher {
                 return ControlResponse(ok: false, error: "invalid sidebar mode: \(request.args?.mode ?? "toggle")")
             }
             return actions.setSidebarViewMode(mode)
+        case .sidebarFlaggedLayout:
+            guard let mode = ControlFlaggedLayoutMode.parse(request.args?.mode) else {
+                return ControlResponse(ok: false, error: "invalid flagged layout: \(request.args?.mode ?? "toggle")")
+            }
+            return actions.setFlaggedViewLayout(mode)
         case .sidebarExpand:
             return actions.expandSidebar(window: request.args?.window)
         case .sidebarCollapse:
@@ -817,19 +779,23 @@ public struct ControlDispatcher {
             return ControlResponse(ok: false,
                                    error: "invalid background mode: \(request.args?.mode ?? "") (image|text|color|clear)")
         }
-        return actions.setSessionBackground(request.target, window: request.args?.window,
-                                            options: ControlSessionBackgroundOptions(watermark: watermark))
+        switch parsePane(request.args?.pane) {
+        case .pane(let pane):
+            return actions.setSessionBackground(request.target, window: request.args?.window,
+                                                options: ControlSessionBackgroundOptions(watermark: watermark, pane: pane))
+        case .rejected(let rejection): return rejection
+        }
     }
 
     /// How much of a buffer a read covers, or the rejection its arm returns as-is. Shared by `session.text`
     /// and `session.overlay.text` so the two cannot drift; an unchecked nonpositive `lines` would fall
     /// through to the full buffer.
-    private enum BufferExtent {
+    enum BufferExtent {
         case extent(all: Bool, lines: Int?)
         case rejected(ControlResponse)
     }
 
-    private func parseBufferExtent(_ args: ControlArgs?) -> BufferExtent {
+    func parseBufferExtent(_ args: ControlArgs?) -> BufferExtent {
         let all = args?.all ?? false
         let lines = args?.lines
         if all, lines != nil {
@@ -864,27 +830,6 @@ public struct ControlDispatcher {
                                                                                   all: all,
                                                                                   lines: lines))
             }
-        }
-    }
-
-    /// The extent is checked before the pane, so the same flags produce the same first error here and on
-    /// `session.text`.
-    private func dispatchSessionOverlayText(_ request: ControlRequest) -> ControlResponse {
-        let all: Bool
-        let lines: Int?
-        switch parseBufferExtent(request.args) {
-        case .rejected(let response): return response
-        case .extent(let parsedAll, let parsedLines):
-            all = parsedAll
-            lines = parsedLines
-        }
-        switch parseOverlayPane(request.args?.pane) {
-        case .rejected(let response): return response
-        case .pane(let pane):
-            return actions.readSessionOverlayText(request.target, window: request.args?.window,
-                                                  options: ControlSessionOverlayTextOptions(pane: pane,
-                                                                                            all: all,
-                                                                                            lines: lines))
         }
     }
 

@@ -100,14 +100,21 @@ final class SplitRatioAccessorTests: XCTestCase {
         XCTAssertEqual(split.arrangedSubviews[0].frame.width, 200, accuracy: 1)
     }
 
+    // pins the macOS 27 fixture overwrite: an enclosing setPosition can undo the probe's first restore
     func testAFreshSplitSeedsTheDefaultRatioRatherThanTheMountedFrames() {
-        XCTAssertNil(session.splitRatio)
+        probe.removeFromSuperview()
         split.setPosition(320, ofDividerAt: 0)
         split.layoutSubtreeIfNeeded()
-        probe.layout()
-        split.layoutSubtreeIfNeeded()
+        XCTAssertNil(session.splitRatio)
+        XCTAssertEqual(split.arrangedSubviews[0].frame.width, 320, accuracy: 1)
 
+        split.arrangedSubviews[0].addSubview(probe)
+        probe.needsLayout = true
+        split.layoutSubtreeIfNeeded()
         XCTAssertEqual(session.splitRatio ?? -1, AppStore.splitRatioDefault, accuracy: 0.001)
+        XCTAssertEqual(split.arrangedSubviews[0].frame.width, 200, accuracy: 1)
+
+        split.layoutSubtreeIfNeeded()
         XCTAssertEqual(split.arrangedSubviews[0].frame.width, 200, accuracy: 1)
     }
 

@@ -21,6 +21,48 @@ public enum ConfigPaths {
         configDirectory.appendingPathComponent("keymap.conf")
     }
 
+    /// The hooks file path within a resolved config directory: `<dir>/hooks.conf`.
+    public static func hooksPath(configDirectory: URL) -> URL {
+        configDirectory.appendingPathComponent("hooks.conf")
+    }
+
+    /// The commented starter `hooks.conf`: the one-verb syntax, every event kind, the delivery contract and
+    /// example lines. Every line is a comment so a fresh file runs nothing.
+    public static func starterHooksConf() -> String {
+        let kinds = ControlEventKind.allCases.map(\.rawValue).joined(separator: ", ")
+        return """
+        # agterm hooks — run a shell line when a control event fires. Edit this file and run
+        # File ▸ Reload Hooks (or `agtermctl hooks reload`) to apply. Blank lines and lines starting
+        # with `#` are ignored.
+        #
+        #   on <kind> <shell...>
+        #
+        # Kinds: \(kinds).
+        # Several lines per kind are allowed and run independently; an identical kind+command line is
+        # skipped with a diagnostic. Everything after the kind is the shell line, passed to `/bin/sh -c`
+        # untouched, detached with no terminal, in the app's working directory, one process per line at
+        # a time. Further events for a busy line queue in order (256 pending, oldest dropped).
+        #
+        # The script gets the event as one JSON object on stdin, the shape `agtermctl events --json` prints,
+        # and these variables: AGT_EVENT_KIND, AGT_EVENT_STATUS, AGT_EVENT_HOST, AGT_SESSION_ID,
+        # AGT_WORKSPACE_ID, AGT_WINDOW_ID, AGT_SOCKET. Pass `--socket "$AGT_SOCKET"` to any agtermctl
+        # call. A hook whose command emits another event of its own kind triggers itself again; the
+        # queue bounds concurrency, it does not detect loops.
+        #
+        # Examples:
+        #
+        #   on status           ~/.config/agterm/hooks/status.sh
+        #   on session.closed   echo "$(date +%T) closed $AGT_SESSION_ID" >> ~/.local/state/agterm/sessions.log
+        #   (a redirection does not create its directory: mkdir -p ~/.local/state/agterm first)
+        #   on pane.scratch     ~/.config/agterm/hooks/scratch-layout.sh
+        #   on tree.changed     ~/.config/agterm/hooks/sync-outline.sh
+        #
+        # Uncomment and edit a line below to start.
+        # on status [ "$AGT_EVENT_STATUS" = blocked ] || exit 0; afplay /System/Library/Sounds/Glass.aiff
+
+        """
+    }
+
     /// The commented starter `keymap.conf`: the two-verb syntax, every `BuiltinAction` raw name with
     /// its shipped default chord (or "no default"), and the `{AGT_X}` token list. Every line is a
     /// comment so a fresh file rebinds nothing.
@@ -50,8 +92,8 @@ public enum ConfigPaths {
         #       shift+<base key> (shift+/ for ?, shift+= for +, shift+5 for %). Several
         #       alternatives may be joined by `|` with no spaces around it; the first single-chord
         #       alternative becomes the menu shortcut and the rest fire through a key monitor, so
-        #       they need a modifier on their first chord. A line offering no single chord leaves
-        #       the action with no menu shortcut at all. Examples:
+        #       their first chord needs a modifier or a function key (f1 through f20). A line offering
+        #       no single chord leaves the action with no menu shortcut at all. Examples:
         #
         #           map cmd+shift+l     toggle_split
         #           map cmd+t|ctrl+a>t  toggle_scratch
@@ -59,8 +101,8 @@ public enum ConfigPaths {
         #   command "<name>" [chord] <shell...>
         #       Define a custom command, shown in the action palette marked `custom`. The quoted
         #       name may contain spaces. An optional chord (single chord OR a leader like `ctrl+a>g`,
-        #       or several of either joined by `|`) binds it to a key; every alternative MUST include
-        #       a modifier on its first chord — one that does not is dropped, and a line left with
+        #       or several of either joined by `|`) binds it to a key; every alternative must start with
+        #       a modifier or a function key (f1 through f20). Others are dropped, and a line left with
         #       none becomes palette-only. Omit the chord for a palette-only command. The rest of the
         #       line is run via `/bin/sh -c`, detached with no terminal — so it suits fire-and-forget
         #       launches (GUI apps, scripts), NOT a bare interactive or full-screen TUI program, which
@@ -80,10 +122,10 @@ public enum ConfigPaths {
         #   global-hotkey <chord>
         #       Bind ONE system-wide chord that summons the quick terminal while any application is
         #       frontmost — the only binding here that fires when agterm does not have the keyboard.
-        #       Exactly one chord: no `|` alternatives, no leader sequence, and it must carry a
-        #       modifier. A second global-hotkey line replaces the first. macOS registers it by
-        #       physical key position, so it keeps working on a non-Latin layout. Because the system
-        #       owns it rather than agterm, it takes no part in the collision rules above. Note the
+        #       Exactly one chord: no `|` alternatives, no leader sequence. A modifier is required
+        #       except for function keys (f1 through f20). A second global-hotkey line replaces the
+        #       first. macOS registers it by physical key position, so it works on a non-Latin layout.
+        #       The system owns it, so it takes no part in the collision rules above. Note the
         #       precedence: the system hotkey WINS, agterm frontmost included, so a chord shared with a
         #       menu action fires this and the menu binding never sees it. There is no default because
         #       registering a chord takes it from every other application on your Mac, which is not a
@@ -93,6 +135,7 @@ public enum ConfigPaths {
         #       Examples:
         #
         #           global-hotkey ctrl+opt+space
+        #           global-hotkey f5  # takes F5 machine-wide, including from local map/command bindings
         #           global-hotkey ctrl+`            # same chord as the in-app quick_terminal binding
         #
         # Built-in actions (raw name → shipped default chord):
