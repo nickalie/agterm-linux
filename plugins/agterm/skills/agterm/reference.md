@@ -1404,6 +1404,7 @@ Key Mapping). Three verbs, line-based; blank lines and `#` comments ignored:
   agterm's own monitor, so it takes NO part in the collision rules below — it may share a chord with a
   menu item, but the global hotkey wins even when agterm is frontmost.
   `global-hotkey f5` takes F5 from every application and from agterm local map/command bindings.
+  macOS only: the GTK Linux frontend registers no global hotkey and ignores the line.
 
 Custom commands keep banner-only failure reporting by default, subject to the notification setting.
 To add a ten-second failure panel, put `--error-hud` after the optional chord, before the shell body:

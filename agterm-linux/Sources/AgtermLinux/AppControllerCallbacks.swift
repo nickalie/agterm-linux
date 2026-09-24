@@ -70,11 +70,19 @@ let onEmptyWindowKeyPressed: @MainActor @convention(c)
     }
 }
 
+/// Ends a consumed press whose release reaches the window rather than the terminal surface.
+let onWindowKeyReleased: @MainActor @convention(c)
+    (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> Void = { _, _, keycode, _, _ in
+        MainActor.assumeIsolated { _ = gKeyPressOwnership.release(keycode) }
+}
+
 @MainActor
 func installEmptyWindowKeyController(on window: OpaquePointer?) {
     let keys = gtk_event_controller_key_new()
     connect(keys, "key-pressed", unsafeBitCast(onEmptyWindowKeyPressed as @convention(c)
         (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean, to: GCallback.self))
+    connect(keys, "key-released", unsafeBitCast(onWindowKeyReleased as @convention(c)
+        (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> Void, to: GCallback.self))
     gtk_widget_add_controller(W(window), keys)
 }
 

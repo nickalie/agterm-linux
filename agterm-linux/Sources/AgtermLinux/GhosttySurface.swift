@@ -892,6 +892,7 @@ private let surfaceKeyPressed: @MainActor @convention(c) (OpaquePointer?, UInt32
 /// Ctrl release commits the Ctrl-Tab session-switch cycle; modifier-only releases also reach
 /// libghostty (macOS `flagsChanged` parity) so its hover/cursor state tracks the transition itself.
 private let surfaceKeyReleased: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> Void = { _, keyval, keycode, state, data in
+    MainActor.assumeIsolated { _ = gKeyPressOwnership.release(keycode) }
     if keyval == 0xFFE3 || keyval == 0xFFE4 {   // Control_L / Control_R
         MainActor.assumeIsolated { wrap(data)?.controller?.endSessionSwitch() }
     }

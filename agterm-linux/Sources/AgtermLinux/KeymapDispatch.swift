@@ -258,11 +258,13 @@ extension AppController {
 
     /// The single entry point for a terminal key press (called by GhosttySurface.keyPressed). Returns
     /// true when the key was consumed as an app shortcut / custom command; false to let libghostty encode
-    /// it for the terminal. Dispatch order: Esc leader-abort → reserved host chord → custom command
-    /// matcher → built-in → fixed shortcut → raw arrow/page navigation.
+    /// it for the terminal. Dispatch order: owned repeat → Esc leader-abort → reserved host chord → custom
+    /// command matcher → built-in → fixed shortcut → raw arrow/page navigation.
     func handleKey(keyval: UInt32, keycode: UInt32, state: UInt32, sessionID: UUID,
                    origin: GhosttySurface? = nil,
                    context: @autoclosure () -> ShortcutKeyContext? = nil) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if gKeyPressOwnership.isOwnedRepeat(keycode, now: now) { return true }
         // Reset the leader deadline to the FINAL armed state on every exit: a fresh leader (re)starts the
         // 1.5s timer, a fired/aborted leader cancels it (macOS-parity leader timeout — see syncLeaderDeadline).
         defer { syncLeaderDeadline() }
@@ -281,7 +283,7 @@ extension AppController {
             state: state,
             context: needsKeyContext ? context() : nil
         ) else {
-            // A non-Chord key (arrow/page/F-key) can't continue a leader sequence; abandon a half-typed
+            // A non-Chord key (page/navigation) can't continue a leader sequence; abandon a half-typed
             // one so a stale prefix can't complete across it.
             if customCommandEngine.isArmed { customCommandEngine.reset() }
             return rawNavigationShortcut(keyval: keyval, state: state)
@@ -294,20 +296,26 @@ extension AppController {
             return true
         }
 
+        // the monitor owns every press it consumes; a primary built-in chord, like a macOS menu key
+        // equivalent, refires on repeat unless it is a function key.
         switch customCommandEngine.advance(chord) {
         case .fired(let command):
+            gKeyPressOwnership.claim(keycode, now: now)
             runCustomCommand(command, origin: origin, allowSessionless: store.activeSession == nil)
             return true
         case .firedBuiltin(let action):
+            gKeyPressOwnership.claim(keycode, now: now)
             dispatchBuiltin(action, sessionID: sessionID)
             return true
         case .armed:
+            gKeyPressOwnership.claim(keycode, now: now)
             return true
         case .unmatched:
             break
         }
 
         if let action = resolvedBuiltinChords[chord] {
+            if bindableFunctionKeys.contains(chord.key) { gKeyPressOwnership.claim(keycode, now: now) }
             dispatchBuiltin(action, sessionID: sessionID)
             return true
         }

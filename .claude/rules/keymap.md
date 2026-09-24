@@ -285,6 +285,12 @@ paths:
   what frees the chord.
   `toggle_horizontal_split` ships `ctrl+shift+h`; `ctrl+shift+e` is deliberately NOT a default, the AT-SPI
   fixture binding a custom command to it (`LinuxKeymapTests` pins both halves).
+- **Linux F-keys and press ownership.** `namedShortcutChord` maps GDK `F1`...`F20` to `f1`...`f20`.
+  GTK 4 key events carry no repeat flag, so `LinuxKeyPressOwnership` (app-wide, like upstream's
+  `consumedKeyCodes`) counts a press of a still-owned keycode as its repeat. `handleKey` claims every press
+  the monitor consumes and a primary built-in's press only on an F-key, as macOS menus refire otherwise.
+  The surface's and the window's `key-released` end ownership; a release lost outside agterm lapses after
+  `repeatWindow`, so the next deliberate press fires. Pinned by the AT-SPI `v032-keymap-hud` hold check.
 - Three details the Linux seam depends on. Startup is deliberately NOT fanned out: window construction
   builds one new controller's cache, so it calls `loadKeymapAtStartup()` directly and a dirty `keymap.conf`
   banners once per window opened, which is per-window on purpose. Reporting belongs to the CALLER via

@@ -64,7 +64,7 @@ Ctrl+Shift+M toggles the most-recently-used dashboard because Ctrl+Shift+D remai
 Ctrl+Shift+H toggles the top/bottom split, the sibling macOS spells ⌘⇧D: Linux already spends Shift on
 every default, so the second arrangement takes H for horizontal rather than a second modifier.
 The quick terminal stays a per-window drop-down panel rather than the detached, app-wide floating panel
-upstream moved to in v0.24.0, and there is no `global-hotkey` verb to summon it: a system-wide hotkey needs
+upstream moved to in v0.24.0, and a `keymap.conf` `global-hotkey` line is ignored: a system-wide hotkey needs
 the `org.freedesktop.portal.GlobalShortcuts` portal on Wayland and an always-on-top detached panel needs
 layer-shell, neither of which GTK4 exposes to the frontend.
 Because the Linux panel belongs to one window, its shell keeps `AGTERM_WINDOW_ID`, and a bare
