@@ -49,6 +49,7 @@ enum HudMarkdown {
     /// sharing a list, since the parser does not say whether a list was tight or loose.
     static func lines(_ source: String) -> [Line] {
         let text = source.precomposedStringWithCanonicalMapping
+        #if canImport(Darwin)
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full,
                                                               failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: text, options: options) else {
@@ -63,6 +64,9 @@ enum HudMarkdown {
                        block: run.presentationIntent?.components ?? [])
         }
         return walker.finish()
+        #else
+        return portableLines(text)
+        #endif
     }
 
     /// rendersVisibleText reports whether `source` lays out to at least one non-space cell.
@@ -104,6 +108,7 @@ enum HudMarkdown {
         return out
     }
 
+    #if canImport(Darwin)
     fileprivate struct Segment {
         let text: String
         let inline: InlinePresentationIntent
@@ -325,6 +330,7 @@ enum HudMarkdown {
             return (lead, hang)
         }
     }
+    #endif
 }
 
 extension HudMarkdown {
