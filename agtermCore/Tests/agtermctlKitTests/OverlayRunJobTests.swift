@@ -14,9 +14,8 @@ struct OverlayRunJobTests {
 
         init() {
             var pair: [Int32] = [-1, -1]
-            socketpair(AF_UNIX, SOCK_STREAM, 0, &pair)
-            var noSigPipe: Int32 = 1
-            for fd in pair { setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size)) }
+            socketpair(AF_UNIX, streamSocketType, 0, &pair)
+            for fd in pair { suppressSigPipe(fd) }
             helper = pair[0]
             origin = pair[1]
         }

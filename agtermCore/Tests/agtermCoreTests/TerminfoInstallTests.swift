@@ -98,7 +98,7 @@ struct TerminfoInstallTests {
     }
 
     // sshd hands the command to the account's login shell, so it must parse under every common one
-    @Test(arguments: ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/tcsh", "/bin/csh"])
+    @Test(arguments: installedShells(["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/tcsh", "/bin/csh"]))
     func theRemoteCommandCompilesTheSourceUnderEveryLoginShell(_ shell: String) throws {
         let remote = try #require(TerminfoInstall.installCommand(TerminfoInstall.Connection(destination: "buildbox")).last)
         let home = try fixture.remoteHome(withTic: true)
@@ -111,7 +111,9 @@ struct TerminfoInstallTests {
         #expect(FileManager.default.fileExists(atPath: "\(home.path)/.terminfo"))
     }
 
-    @Test(arguments: ["/bin/sh", "/bin/tcsh"])
+    // the fixture's PATH keeps /bin, which a merged-/usr host shares with the real tic
+    @Test(.disabled(if: FileManager.default.fileExists(atPath: "/bin/tic")),
+          arguments: installedShells(["/bin/sh", "/bin/tcsh"]))
     func theRemoteCommandSaysSoAndExits3WhenTheHostHasNoTic(_ shell: String) throws {
         let remote = try #require(TerminfoInstall.installCommand(TerminfoInstall.Connection(destination: "buildbox")).last)
         let home = try fixture.remoteHome(withTic: false)
@@ -411,4 +413,9 @@ private struct Fixture {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         return file.path
     }
+}
+
+/// The login shells this host has; a Linux image need not ship csh or tcsh.
+private func installedShells(_ shells: [String]) -> [String] {
+    shells.filter { FileManager.default.isExecutableFile(atPath: $0) }
 }

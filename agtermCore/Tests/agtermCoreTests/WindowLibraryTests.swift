@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import agtermCore
 
@@ -1932,8 +1933,9 @@ final class WindowLibraryTests {
 
         let entries = library.attentionAcrossWindows
 
-        #expect(entries.map(\.session.id) == [blocked.id, active.id, completed.id])
-        #expect(entries.map(\.window.id) == [second.id, first, first])
+        #expect(entries.map(\.session.id) == [blocked.id, completed.id])
+        #expect(entries.map(\.window.id) == [second.id, first])
+        #expect(!entries.contains { $0.session.id == active.id })
     }
 
     @Test func attentionAcrossWindowsOrdersASharedRankNewestFirstAcrossWindows() throws {

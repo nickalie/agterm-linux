@@ -1179,7 +1179,7 @@ private final class RefusedSocket {
 
     init() throws {
         path = NSTemporaryDirectory() + "agterm-refused-\(UUID().uuidString.prefix(8)).sock"
-        fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        fd = systemSocket()
         guard fd >= 0 else { throw SocketClientError("refused socket() failed") }
         unlink(path)
         var addr = sockaddr_un()
