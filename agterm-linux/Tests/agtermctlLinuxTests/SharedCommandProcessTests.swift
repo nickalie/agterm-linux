@@ -102,6 +102,17 @@ struct SharedCommandProcessTests {
     }
 }
 
+@Test("--json prints the server line unchanged, fields this CLI does not model included")
+func jsonPassesTheServerLineThrough() throws {
+    let line = #"{"ok":true,"result":{"version":"9.9.9","futureField":{"nested":[1,2]}}}"#
+    let server = try OneShotControlServer(rawLine: line)
+    server.start()
+    let result = try runCLI(["version", "--json", "--socket", server.path])
+    server.stop()
+    #expect(result.status == 0)
+    #expect(result.output == line + "\n")
+}
+
 private struct CLIResult {
     let status: Int32
     let output: String
@@ -163,9 +174,13 @@ private final class OneShotControlServer: @unchecked Sendable {
         return receivedStorage
     }
 
-    init(path: String? = nil, response: ControlResponse = ControlResponse(ok: true)) throws {
+    /// The line sent back verbatim instead of encoding `response`.
+    private let rawLine: String?
+
+    init(path: String? = nil, response: ControlResponse = ControlResponse(ok: true), rawLine: String? = nil) throws {
         self.path = path ?? (NSTemporaryDirectory() + "agterm-cli-\(UUID().uuidString.prefix(8)).sock")
         self.response = response
+        self.rawLine = rawLine
         guard self.path.utf8CString.count <= MemoryLayout.size(ofValue: sockaddr_un().sun_path) else {
             throw TestServerError.pathTooLong
         }
@@ -211,7 +226,7 @@ private final class OneShotControlServer: @unchecked Sendable {
         lock.lock()
         receivedStorage = request
         lock.unlock()
-        guard var responseData = try? JSONEncoder().encode(response) else { return }
+        guard var responseData = rawLine.map({ Data($0.utf8) }) ?? (try? JSONEncoder().encode(response)) else { return }
         responseData.append(UInt8(ascii: "\n"))
         responseData.withUnsafeBytes { bytes in
             _ = write(connection, bytes.baseAddress, bytes.count)
