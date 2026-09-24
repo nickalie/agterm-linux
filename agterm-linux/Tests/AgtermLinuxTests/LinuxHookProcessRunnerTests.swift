@@ -56,6 +56,15 @@ final class LinuxHookProcessRunnerTests {
         Set(((try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd")) ?? []).compactMap(Int32.init))
     }
 
+    /// The process's open pipe ends. Parallel suites open their own, so a leak is a new one that never closes.
+    private func openPipes() -> Set<String> {
+        let fds = (try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd")) ?? []
+        return Set(fds.compactMap { fd in
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/\(fd)"))
+                .flatMap { $0.hasPrefix("pipe:") ? "\(fd) \($0)" : nil }
+        })
+    }
+
     @Test func stdinCarriesTheEventAndTheEnvironmentIsFullySet() throws {
         let stdin = scratch.appendingPathComponent("stdin").path
         let env = scratch.appendingPathComponent("env").path
@@ -121,7 +130,7 @@ final class LinuxHookProcessRunnerTests {
         let runner = runner(shell: scratch.appendingPathComponent("no-such-shell").path)
         let outcome = Outcome()
         let entry = HookEntry(identity: HookIdentity(kind: .status, command: "true"), line: 1)
-        let before = openDescriptors()
+        let before = openPipes()
 
         let error = #expect(throws: (any Error).self) {
             _ = try runner.launch(entry: entry, event: ControlEvent(seq: 1, ts: 1, kind: .status),
@@ -133,7 +142,8 @@ final class LinuxHookProcessRunnerTests {
         pumpMainLoop(for: 0.3)
         #expect(outcome.exits.isEmpty)
         #expect(outcome.deliveryFailures.isEmpty)
-        #expect(openDescriptors() == before, "a failed spawn closes both pipe ends")
+        pumpMainLoop(until: { openPipes().isSubset(of: before) }, timeout: 3)
+        #expect(openPipes().isSubset(of: before), "a failed spawn closes both pipe ends")
     }
 
     @Test func aDeliveryFailureArrivesWhileTheChildLivesAndBeforeExit() throws {
