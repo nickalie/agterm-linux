@@ -960,17 +960,6 @@ extension AppController: ControlActions {
         }
     }
 
-    func setSessionBackground(_ target: String?, window: String?,
-                              options: ControlSessionBackgroundOptions) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            _ = store.setBackgroundWatermark(options.watermark, forSession: id)
-            applySessionWatermark(id)
-            return ok(id)
-        }
-    }
-
     func clearRestoreCommands() -> ControlResponse {
         for ctl in gWindows.values {
             for session in ctl.store.workspaces.flatMap(\.sessions) {

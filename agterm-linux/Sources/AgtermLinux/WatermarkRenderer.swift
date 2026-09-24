@@ -3,7 +3,7 @@ import Foundation
 import agtermCore
 
 enum WatermarkRenderer {
-    static func materialize(_ watermark: BackgroundWatermark?, sessionID: UUID) -> String? {
+    static func materialize(_ watermark: BackgroundWatermark?, sessionID: UUID, paneKey: String? = nil) -> String? {
         guard let watermark else { return nil }
         switch watermark.kind {
         case .image:
@@ -13,12 +13,12 @@ enum WatermarkRenderer {
             return nil
         case .text:
             guard let text = watermark.text, WatermarkConfig.isValidText(text) else { return nil }
-            return renderText(text, colorHex: watermark.colorHex, sessionID: sessionID)
+            return renderText(text, colorHex: watermark.colorHex, sessionID: sessionID, paneKey: paneKey)
         }
     }
 
-    private static func renderText(_ text: String, colorHex: String?, sessionID: UUID) -> String? {
-        let out = WatermarkStorage.renderedTextURL(sessionID: sessionID, stateDir: nil)
+    private static func renderText(_ text: String, colorHex: String?, sessionID: UUID, paneKey: String?) -> String? {
+        let out = WatermarkStorage.renderedTextURL(sessionID: sessionID, paneKey: paneKey)
         _ = WatermarkStorage.ensureDirectory()
         let width = min(4096, max(1200, text.count * 150))
         let height = 420

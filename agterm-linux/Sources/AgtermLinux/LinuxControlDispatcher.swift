@@ -572,62 +572,6 @@ struct LinuxControlDispatcher {
         }
     }
 
-    private func dispatchSessionBackground(_ request: ControlRequest) -> ControlResponse {
-        if let fit = request.args?.fit, !WatermarkConfig.isValidFit(fit) {
-            return ControlResponse(ok: false, error: "invalid fit: \(fit) (contain|cover|stretch|none)")
-        }
-        if let position = request.args?.position, !WatermarkConfig.isValidPosition(position) {
-            return ControlResponse(ok: false, error: "invalid position: \(position)")
-        }
-        if let opacity = request.args?.opacity, !WatermarkConfig.isValidOpacity(opacity) {
-            return ControlResponse(ok: false, error: "invalid opacity: \(opacity) (0.0-1.0)")
-        }
-        let watermark: BackgroundWatermark?
-        switch request.args?.mode {
-        case "image":
-            guard let path = request.args?.path, !path.isEmpty else {
-                return ControlResponse(ok: false, error: "session.background image requires a path")
-            }
-            guard WatermarkConfig.isValidImagePath(path) else {
-                return ControlResponse(ok: false, error: "image path must not contain control characters")
-            }
-            watermark = BackgroundWatermark(kind: .image, imagePath: path, opacity: request.args?.opacity,
-                                            fit: request.args?.fit.flatMap(BackgroundWatermark.Fit.init(rawValue:)),
-                                            position: request.args?.position.flatMap(BackgroundWatermark.Position.init(rawValue:)),
-                                            repeats: request.args?.repeats)
-        case "text":
-            guard let text = request.args?.text, !text.isEmpty else {
-                return ControlResponse(ok: false, error: "session.background text requires text")
-            }
-            guard text.count <= WatermarkConfig.maxTextLength else {
-                return ControlResponse(ok: false,
-                                       error: "session.background text too long (max \(WatermarkConfig.maxTextLength) characters)")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
-            }
-            watermark = BackgroundWatermark(kind: .text, text: text, colorHex: request.args?.color,
-                                            opacity: request.args?.opacity,
-                                            fit: request.args?.fit.flatMap(BackgroundWatermark.Fit.init(rawValue:)),
-                                            position: request.args?.position.flatMap(BackgroundWatermark.Position.init(rawValue:)))
-        case "color":
-            guard let color = request.args?.color, !color.isEmpty else {
-                return ControlResponse(ok: false, error: "session.background color requires a color")
-            }
-            guard WatermarkConfig.isValidColorHex(color) else {
-                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
-            }
-            watermark = BackgroundWatermark(kind: .color, colorHex: color)
-        case "clear", .none:
-            watermark = nil
-        default:
-            return ControlResponse(ok: false,
-                                   error: "invalid background mode: \(request.args?.mode ?? "") (image|text|color|clear)")
-        }
-        return actions.setSessionBackground(request.target, window: request.args?.window,
-                                            options: ControlSessionBackgroundOptions(watermark: watermark))
-    }
-
     /// How much of a buffer a read covers, or the rejection its arm returns as-is. Shared by `session.text`
     /// and `session.overlay.text` so the two cannot drift; an unchecked nonpositive `lines` would fall
     /// through to the full buffer.
@@ -782,7 +726,7 @@ struct LinuxControlDispatcher {
     /// The role selector (`session.status`, `session.restore`, `session.paste`). Parses through
     /// `controlName`, so the documented `primary`/`split`/`top`/`bottom` aliases resolve.
     private func parseStatusPane(_ raw: String?) -> PaneSelection<StatusPane> {
-        parsePane(raw, error: "--pane must be left, right, or scratch") { StatusPane(controlName: $0) }
+        parsePane(raw, error: Self.statusPaneError) { StatusPane(controlName: $0) }
     }
 
     /// The surface I/O selector (`session.type`, `session.text`, `font.*`), which keeps its own rejection.

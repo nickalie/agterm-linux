@@ -6,12 +6,6 @@ import agtermCore
 /// Kept beside the main adapter so that already-large compatibility surface stays within the lint limit.
 @MainActor
 extension AppController {
-    func applySessionWatermark(_ id: UUID) {
-        surfaces[id]?.applyWatermarkFromSession()
-        splitSurfaces[id]?.applyWatermarkFromSession()
-        scratchSurfaces[id]?.applyWatermarkFromSession()
-    }
-
     func appIdentity() -> ControlResponse {
         ControlResponse(ok: true, result: ControlResult(app: LinuxAppMetadata.identity))
     }

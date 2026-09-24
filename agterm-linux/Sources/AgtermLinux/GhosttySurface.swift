@@ -236,7 +236,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
         ghostty_surface_set_focus(surface, true)
         applyColorScheme(appearanceSide)   // report the system light/dark scheme (OSC color-scheme queries)
         feed(GhosttyApp.shared.currentThemeOSC)   // push theme colors the embedded GL renderer won't adopt from config
-        if controller?.store.session(withID: sessionID)?.backgroundWatermark != nil {
+        if controller?.store.session(withID: sessionID)?.linuxBackground(for: role.statusPane) != nil {
             applyWatermarkFromSession()
         }
     }
@@ -342,12 +342,12 @@ final class GhosttySurface: PaneRoleMutableSurface {
         let session = controller?.store.session(withID: sessionID)
         let watermark = oscBackgroundColorHex.map {
             BackgroundWatermark(kind: .color, colorHex: $0)
-        } ?? session?.backgroundWatermark
+        } ?? session?.linuxBackground(for: role.statusPane)
         let hudFont = controller?.hudCreationFontSize(of: self)
         guard force || watermark != nil || dashboardFontOverride != nil || session?.fontSize != nil || hudFont != nil
         else { return }
         let resolvedImagePath = session.flatMap {
-            WatermarkRenderer.materialize(watermark, sessionID: $0.id)
+            WatermarkRenderer.materialize(watermark, sessionID: $0.id, paneKey: $0.backgroundPaneKey(for: role.statusPane))
         }
         let effectiveWindowOpacity = windowOpacity ?? linuxSettingsStore().load().backgroundOpacity ?? 1
         let overlay = WatermarkConfig.overlayText(watermark: watermark,
@@ -365,7 +365,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
 
     func reapplyWatermarkIfNeeded(windowOpacity: Double? = nil, settings: AppSettings? = nil) {
         guard oscBackgroundColorHex != nil
-                || controller?.store.session(withID: sessionID)?.backgroundWatermark != nil else { return }
+                || controller?.store.session(withID: sessionID)?.linuxBackground(for: role.statusPane) != nil else { return }
         reapplyBackgroundOverlay(windowOpacity: windowOpacity, settings: settings)
     }
 
@@ -380,7 +380,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// retained/re-applied per surface across config reloads.
     func applyOSCBackground(red: UInt8, green: UInt8, blue: UInt8) {
         let hex = String(format: "#%02X%02X%02X", red, green, blue)
-        let sessionColor = controller?.store.session(withID: sessionID)?.backgroundWatermark
+        let sessionColor = controller?.store.session(withID: sessionID)?.linuxBackground(for: role.statusPane)
             .flatMap { $0.kind == .color ? $0.colorHex : nil }
         let baseline = OSCBackgroundPolicy.baseline(
             oscOverlayActive: oscBackgroundColorHex != nil,
