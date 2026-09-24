@@ -817,6 +817,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   sink is the only banner source, one per hook until success or reload. `WindowLibrary.onControlEvent`
   fires after the ring append, so hooks and `events.read` see the same events; dispatch never waits on a
   hook, which is what makes a hook's own same-socket `agtermctl` call safe.
+  **Linux adapter:** `LinuxHookProcessRunner` spawns with `posix_spawn` and reaps with its own `waitpid`,
+  because Foundation's Linux `Process` reports termination only once every descendant has closed an
+  inherited socket, so a backgrounded job would hold the hook's slot. A writer thread owns the
+  non-blocking stdin pipe and quits at child exit; callbacks hop through `runOnMain`. The app-global
+  scheduler lives in `gHooks` (`LinuxHooks.swift`), and the Linux `notify` event is emitted by
+  `recordTerminalNotification`, without which `on notify` never fires.
 - `theme.set` operates on light and dark slots. Name/light aliases conflict; setting light preserves dark.
   Nil/empty means Ghostty built-in, while bare set clears both and disables sync. Dark enables sync,
   seeding missing light from current or Builtin Light; reserved `none` clears dark and sync but preserves

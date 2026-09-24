@@ -468,7 +468,7 @@ The GTK Preferences dialog has **General**, **Appearance**, **Interface**, **Not
 Common options use native controls and apply live: mouse behavior, whether clicking a workspace row expands or collapses it (on by default; the disclosure triangle toggles either way), new-session directories, command restoration, close behavior, font and light/dark themes, terminal opacity, toolbar mode, sidebar tint and text size, the palette and switcher text size, notifications, status colors and desktop bell, and auto-follow behavior.
 The palette size covers the command palette, the `agtermctl pick` picker, and the Ctrl+Tab switcher, and their panels grow with it so the same number of rows stays visible; the sidebar keeps its own independent size.
 The mute strength covers the inactive half of a split and the session left visible around a floating overlay or the quick terminal, never a HUD — a message about a session leaves it lit and typable.
-The Key Mapping page shows the active path and parse diagnostics and can open or reload `keymap.conf`.
+The Key Mapping page shows the active path and parse diagnostics and can open or reload `keymap.conf` and `hooks.conf`.
 
 The first launch on a machine opens a welcome dialog naming the optional integrations and offering the agent skill and the agent status hooks; it never appears again, and each button runs the normal Preferences ▸ Integrations flow, which previews the exact file plan before applying it.
 

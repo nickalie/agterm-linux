@@ -270,9 +270,9 @@ paths:
   the `keymap.reload` control arm, the Settings > Key Mapping reload button, and `setConfigDirectory`.
   Never add a fresh `gWindows` loop — hand-written per-site fanouts are what left the palette row and
   `keymap.reload` silently single-window, contradicting the app-global contract the docs already state.
-  `README.md` promises the Edit Keymap overlay reloads on editor exit, and Linux `editKeymap()`
-  (`AppControllerSurfaces.swift`) only OPENS the overlay, so wiring that up adds the fifth caller and owes
-  it the seam.
+  The fifth caller is the Edit Keymap overlay's close: `editKeymap()` records the session and
+  `reloadClosedEditorOverlays()` (`LinuxHooks.swift`, run from every `reconcile`) reloads through the seam
+  once that overlay is gone, the same path Edit Hooks takes.
 - **Linux re-validates the parsed keymap against ITS OWN chord set, and must carry every field forward.**
   `loadLinuxKeymap` (`KeymapDispatch.swift`) rebuilds the `Keymap` after dropping reserved/colliding
   overrides, so `builtinSequences` and `builtinUnbound` have to be re-stated in that initializer or the
