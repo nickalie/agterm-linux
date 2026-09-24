@@ -1085,6 +1085,119 @@ def verify_v029_control_parity(env):
         stop(process)
 
 
+def verify_v031_sidebar_parity(env, state):
+    """The v0.30-v0.31 sidebar and title bar additions: the flagged tree, the workspace title, the
+    cross-window attention list and `pick --select`."""
+    with open(os.path.join(state, "settings.json"), "w", encoding="utf-8") as destination:
+        json.dump({"attentionButtonEnabled": True, "shownInterfaceElements": ["workspaceName"]}, destination)
+
+    process, app = launch(env)
+    try:
+        first = wait_for(
+            lambda: next((item["id"] for item in window_list(env) if item["open"]), None),
+            "the first window was not registered",
+        )
+        control_json(env, "session", "rename", "attn-one", "--window", first, "--json")
+        alpha_id = window_tree(env, first)["workspaces"][0]["id"]
+        control_json(env, "workspace", "rename", "flag-alpha", "--target", alpha_id, "--window", first, "--json")
+        wait_for(lambda: named(app, "flag-alpha — attn-one", role="label"),
+                 "the title bar did not lead with the workspace name")
+
+        # the layout is app-wide, reported on every tree, and echoed by the command
+        assert window_tree(env, first).get("sidebarFlaggedLayout") == "flat", window_tree(env, first)
+        bad = raw_control_json(env, {"cmd": "sidebar.flagged-layout", "args": {"mode": "bogus"}})
+        assert not bad["ok"] and bad["error"] == "invalid flagged layout: bogus", bad
+        toggled = control_json(env, "sidebar", "flagged-layout", "--json")
+        assert toggled["ok"] and toggled["result"]["text"] == "tree", toggled
+        assert window_tree(env, first)["sidebarFlaggedLayout"] == "tree"
+        with open(os.path.join(state, "settings.json"), encoding="utf-8") as source:
+            assert json.load(source).get("flaggedViewLayout") == "tree", "the layout was not persisted"
+        flat = control_json(env, "sidebar", "flagged-layout", "flat", "--json")
+        assert flat["result"]["text"] == "flat", flat
+
+        beta_id = control_json(env, "workspace", "new", "flag-beta", "--window", first, "--json")["result"]["id"]
+        beta_row = control_json(env, "session", "new", "--workspace", beta_id, "--name", "beta-row",
+                                "--window", first, "--json")["result"]["id"]
+        control_json(env, "session", "flag", "on", "--target", beta_row, "--json")
+        control_json(env, "sidebar", "mode", "flagged", "--json")
+        wait_for(lambda: named(app, "beta-row  —  flag-beta", role="label"),
+                 "the flat flagged list did not name the row's workspace")
+        assert named(app, "flag-beta", role="label") is None, "the flat flagged list drew a workspace row"
+        control_json(env, "sidebar", "flagged-layout", "tree", "--json")
+        wait_for(lambda: named(app, "flag-beta", role="label"), "the flagged tree drew no workspace row")
+        wait_for(lambda: named(app, "beta-row", role="label"), "the flagged tree dropped the flagged row")
+        assert named(app, "flag-alpha", role="label") is None, "the flagged tree drew a workspace with no flags"
+        tree = window_tree(env, first)
+        assert tree["sidebarMode"] == "flagged" and tree["sidebarFlaggedLayout"] == "tree", tree
+        control_json(env, "sidebar", "mode", "tree", "--json")
+        control_json(env, "session", "select", "--target",
+                     window_tree(env, first)["workspaces"][0]["sessions"][0]["id"], "--window", first, "--json")
+
+        # a far-down --select row is the one Return picks; a query hiding it falls back to the first row
+        items = [{"id": f"item-{index}", "label": f"item-{index}"} for index in range(40)]
+        refused = raw_control_json(env, {"cmd": "pick.open",
+                                         "args": {"window": first, "items": items, "selection": "nope"}})
+        assert not refused["ok"] and refused["error"] == "pick select must name an item id", refused
+
+        def seeded_row_visible():
+            frame = named(app, "Select", role="frame")
+            row = named(frame, "item-35", role="label") if frame else None
+            if row is None:
+                return False
+            box = row.get_component_iface().get_extents(Atspi.CoordType.WINDOW)
+            height = frame.get_component_iface().get_extents(Atspi.CoordType.WINDOW).height
+            return box.height > 0 and box.y >= 0 and box.y + box.height <= height
+
+        def pick_with(args):
+            opened = raw_control_json(env, {"cmd": "pick.open", "args": dict(args, window=first, items=items)})
+            assert opened["ok"], opened
+            pick_id = opened["result"]["id"]
+            wait_for(lambda: window_tree(env, first).get("pickPending") == pick_id, "the picker never opened")
+            wait_for(lambda: named(app, "Select", role="frame"), "the picker window never appeared")
+            if "query" not in args:
+                wait_for(seeded_row_visible, "the --select row was not scrolled into view")
+            press_return(process.pid, window_title="Select")
+
+            def outcome():
+                response = raw_control_json(env, {"cmd": "pick.result", "target": pick_id})
+                result = response["result"]["pick"]
+                return result if result["result"] != "pending" else None
+            return wait_for(outcome, "the picker never resolved")
+
+        seeded = pick_with({"selection": "item-35"})
+        assert seeded["result"] == "picked" and seeded["id"] == "item-35" and seeded["index"] == 35, seeded
+        hidden = pick_with({"selection": "item-35", "query": "item-0"})
+        assert hidden["result"] == "picked" and hidden["id"] != "item-35", hidden
+
+        # the attention list spans windows, blocked first, and a pick raises the owning window
+        second = control_json(env, "window", "new", "attn-win", "--json")["result"]["id"]
+        control_json(env, "session", "rename", "attn-two", "--window", second, "--json")
+        blocked_id = window_tree(env, second)["workspaces"][0]["sessions"][0]["id"]
+        # an unselected row: a keystroke into the selected one would reset its status
+        control_json(env, "session", "status", "completed", "--target", beta_row, "--json")
+        control_json(env, "session", "status", "blocked", "--target", blocked_id, "--json")
+        select_window(env, first)
+        first_name = next(item["name"] for item in window_list(env) if item["id"] == first)
+        press_x11_key("ctrl+shift+i", process.pid, window_title="attn-one")
+        palette = wait_for(lambda: named(app, "Go to Attention", role="frame"),
+                           "Ctrl-Shift-I did not open the attention palette")
+        rows = wait_for(lambda: [labels[0] for labels in palette_row_labels(palette) if labels] or None,
+                        "the attention palette listed no rows")
+        assert len(rows) == 2, rows
+        assert rows[0].startswith("attn-two  —  attn-win · "), rows
+        assert rows[1].startswith(f"beta-row  —  {first_name} · flag-beta · "), rows
+        press_return(process.pid, window_title="Go to Attention")
+        wait_for(lambda: next(item for item in window_list(env) if item["id"] == second).get("active"),
+                 "picking another window's row did not raise it")
+        assert window_tree(env, second)["workspaces"][0]["sessions"][0]["active"]
+        print("OK: flagged tree, workspace title, pick --select and cross-window attention")
+    except AssertionError:
+        describe_tree(app)
+        raise
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2334,7 +2447,7 @@ def main():
     scenario = os.environ.get("AGTERM_ATSPI_SCENARIO")
     if scenario is None:
         for child_scenario in (
-            "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls",
+            "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -2384,6 +2497,8 @@ def main():
             verify_v027_control_parity(env)
         elif scenario == "v029-controls":
             verify_v029_control_parity(env)
+        elif scenario == "v031-sidebar":
+            verify_v031_sidebar_parity(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
