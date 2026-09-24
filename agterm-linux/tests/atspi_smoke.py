@@ -1369,6 +1369,79 @@ def verify_v032_keymap_hud(env):
 
 
 
+def verify_v032_pane_background(env, state):
+    """Per-pane session background: overrides over the default, refusals, read-back, and following the
+    terminal through swap and pane close, with each text override's own rendered file."""
+    process, app = launch(env)
+    try:
+        first = wait_for(
+            lambda: next((item["id"] for item in window_list(env) if item["open"]), None),
+            "the first window was not registered",
+        )
+        session_id = window_tree(env, first)["workspaces"][0]["sessions"][0]["id"]
+        watermarks = os.path.join(state, "watermarks")
+
+        def node():
+            return window_tree(env, first)["workspaces"][0]["sessions"][0]
+
+        def pane_files():
+            names = os.listdir(watermarks) if os.path.isdir(watermarks) else []
+            return sorted(name for name in names if name.startswith(f"{session_id}-"))
+
+        def background(*arguments):
+            return raw_control_json(env, {"cmd": "session.background", "target": session_id,
+                                          "args": dict(arguments, window=first)})
+
+        bad = background(("mode", "clear"), ("pane", "middle"))
+        assert not bad["ok"] and bad["error"] == "--pane must be left, right, or scratch", bad
+        unsplit = background(("mode", "color"), ("color", "#102030"), ("pane", "right"))
+        assert not unsplit["ok"] and unsplit["error"] == "session has no split pane", unsplit
+        no_scratch = background(("mode", "color"), ("color", "#102030"), ("pane", "scratch"))
+        assert not no_scratch["ok"] and no_scratch["error"] == "session has no scratch terminal", no_scratch
+
+        control_json(env, "session", "background", "color", "#201414", "--target", session_id, "--window", first, "--json")
+        control_json(env, "session", "split", "on", "--target", session_id, "--window", first, "--json")
+        wait_for(lambda: node().get("split"), "the split never opened")
+        assert "paneBackgrounds" not in node(), node()
+        control_json(env, "session", "background", "text", "PEER", "--pane", "right",
+                     "--target", session_id, "--window", first, "--json")
+        tree_node = node()
+        assert tree_node["background"]["colorHex"] == "#201414", tree_node
+        assert tree_node["paneBackgrounds"] == {"right": {"kind": "text", "text": "PEER"}}, tree_node
+        right_file = wait_for(lambda: pane_files() or None, "the right override never rendered its own file")
+        assert len(right_file) == 1 and right_file[0] != f"{session_id}.png", right_file
+
+        # a default change leaves the override standing
+        control_json(env, "session", "background", "clear", "--target", session_id, "--window", first, "--json")
+        assert "background" not in node() and node()["paneBackgrounds"]["right"]["text"] == "PEER", node()
+
+        control_json(env, "session", "swap", "--target", session_id, "--window", first, "--json")
+        assert node()["paneBackgrounds"] == {"left": {"kind": "text", "text": "PEER"}}, node()
+        assert pane_files() == right_file, "the swapped override did not keep its terminal's file"
+        control_json(env, "session", "swap", "--target", session_id, "--window", first, "--json")
+
+        control_json(env, "session", "split", "close", "--target", session_id, "--window", first, "--json")
+        wait_for(lambda: "paneBackgrounds" not in node(), "closing the split kept its override")
+        assert pane_files() == [], "closing the split left its override's file behind"
+
+        control_json(env, "session", "scratch", "on", "--target", session_id, "--window", first, "--json")
+        scratch_set = background(("mode", "text"), ("text", "SCRATCH"), ("pane", "scratch"))
+        assert scratch_set["ok"], scratch_set
+        assert node()["paneBackgrounds"] == {"scratch": {"kind": "text", "text": "SCRATCH"}}, node()
+        wait_for(lambda: pane_files() == [f"{session_id}-scratch.png"], "the scratch override never rendered")
+        typed = raw_control_json(env, {"cmd": "session.type", "target": session_id,
+                                       "args": {"text": "exit\n", "pane": "scratch", "window": first}})
+        assert typed["ok"], typed
+        wait_for(lambda: "paneBackgrounds" not in node(), "the scratch override outlived its terminal", timeout=20)
+        wait_for(lambda: pane_files() == [], "the scratch override's file outlived its terminal")
+        print("OK: per-pane background overrides, refusals, read-back and terminal-following")
+    except AssertionError:
+        describe_tree(app)
+        raise
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2619,7 +2692,8 @@ def main():
     if scenario is None:
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
-            "v030-hooks", "v032-keymap-hud", "dashboard-modal", "context-menu",
+            "v030-hooks", "v032-keymap-hud", "v032-pane-background",
+            "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -2674,6 +2748,8 @@ def main():
             verify_v030_hooks(env)
         elif scenario == "v032-keymap-hud":
             verify_v032_keymap_hud(env)
+        elif scenario == "v032-pane-background":
+            verify_v032_pane_background(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
