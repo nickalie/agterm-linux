@@ -70,8 +70,10 @@ layer-shell, neither of which GTK4 exposes to the frontend.
 Because the Linux panel belongs to one window, its shell keeps `AGTERM_WINDOW_ID`, and a bare
 `agtermctl surface zoom` with the panel up still zooms it.
 Remote sessions need key-based ssh to the far side, `agtermctl` on the PATH an ssh command gets there, and
-that machine running agterm 0.26.0 in Live sessions mode; the attach is a follower, so the remote screen
-arrives at the far side's geometry and does not reflow until the first classified keystroke reaches it.
+that machine running agterm in Live sessions mode. The attach claims each pane's lead, which needs the
+patched zmx on BOTH machines (the Linux payload bundles it); against an origin without it the attach
+follows until the first classified keystroke. A pane that does not lead is covered by a GTK panel, and a
+Super chord on it is swallowed the way a Command chord is on macOS.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces

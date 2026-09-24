@@ -1788,6 +1788,9 @@ Each pane's `lead` in `tree` reads `leader`, `follower` or `unowned`. It is abse
 daemon to lead, which is every local pane outside Live sessions mode (`agtermctl restore mode`), and when
 an agterm on either side predates the lead. `agtermctl session lead [--pane left|right]` takes the lead
 for this Mac, as pressing a key on the cover does.
+Both machines need agterm's patched zmx, which the macOS app and the Linux payload bundle. On the GTK
+Linux frontend the cover reads "in use from another machine", and a Super chord on it is swallowed like
+a Command chord on macOS; the refusal strings stay the same on both.
 
 On the Mac the session RUNS on, a covered pane stays fully drivable: `session type`, `session text` and
 `surface cursor` go through the session's daemon and answer for the real layout, so pane-to-pane

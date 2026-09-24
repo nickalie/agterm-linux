@@ -1437,6 +1437,16 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   It has no menu item or chord: the cover is its GUI surface.
 - The far side runs the ORIGIN's zmx, so both Macs need the patch. Against an older origin nothing is
   reported, no pane is covered, and the pre-patch behaviour holds: the attach follows until a typed key.
+  **Linux adapter:** `GhosttyApp.handleAction`'s SET_TITLE arm intercepts the report and applies it one
+  `runOnMain` hop later, since taking the lead frees the reporting surface. Pane identity comes from the
+  model by role (`GhosttySurface.leadPaneIdentity`), never `paneToken`, which is per-spawn for an unwrapped
+  pane. `LinuxPaneLeadCover` is added to the pane host at creation, so every pane overlay stacks above it,
+  and also to the zoom content overlay and each dashboard cell, whose paintable draws the terminal alone.
+  The takeover key is claimed in `gKeyPressOwnership`; a Super chord is swallowed as Command is.
+  `reattachPane` swaps the `GtkGLArea` inside its pane host or zoom overlay and reopens a dashboard showing
+  the pane. `zmx.attach` keeps its `RemoteBinding` in `gRemoteAttachBindings` until presentation binds it.
+  The AT-SPI suite cannot reach a covered pane: Live needs zsh as the account's login shell, and the
+  container runs as root under bash, so `LinuxZmxDaemonTests` drives the patched zmx directly instead.
 
 ## Session backgrounds
 
