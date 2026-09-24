@@ -483,6 +483,8 @@ The toolbar has three modes: **Normal**, **Compact** (the default), and **Hidden
 Hiding it does not disable **Ctrl+,**, keyboard shortcuts, or command-palette access.
 The Interface page independently shows or hides title-bar actions and sidebar footer actions, including the
 hover-revealed add-session button on each workspace row.
+Its **Workspace name** toggle, off by default, leads the title with the active session's workspace, as
+`workspace — session — window`, so a window with the sidebar collapsed still says where the session lives.
 These choices affect presentation only; the corresponding keyboard, palette, and control actions remain available.
 
 Upstream macOS can attach an optional sound to a delivered notification so Focus and Do Not Disturb govern

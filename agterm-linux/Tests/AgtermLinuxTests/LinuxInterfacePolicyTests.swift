@@ -33,4 +33,51 @@ struct LinuxInterfacePolicyTests {
         let css = LinuxInterfacePolicy.interfaceCSS(fontSize: 9)
         #expect(css.contains(".agterm-interface .agterm-palette-badge { font-size: 8.0pt; }"))
     }
+
+    @Test("the workspace name starts hidden and leads the identity once shown")
+    @MainActor
+    func workspaceNameToggle() {
+        let session = Session(initialCwd: "/work", customName: "build")
+        let store = AppStore(workspaces: [Workspace(name: "backend", sessions: [session])])
+        _ = store.selectSession(session.id)
+        let window = WindowInfo(name: "main")
+        let settings = AppSettings()
+        #expect(settings.isInterfaceElementHidden(.workspaceName))
+        let hidden = TitlebarComposition.compose(
+            LinuxInterfacePolicy.titlebarParts(store: store, hidden: settings.resolvedHiddenInterfaceElements,
+                                               window: window), mode: .compact)
+        #expect(hidden.title == "build — main")
+
+        let shown = LinuxInterfacePolicy.settingElement(.workspaceName, visible: true, in: settings)
+        #expect(shown.shownInterfaceElements == ["workspaceName"])
+        #expect(shown.hiddenInterfaceElements == nil)
+        let composed = TitlebarComposition.compose(
+            LinuxInterfacePolicy.titlebarParts(store: store, hidden: shown.resolvedHiddenInterfaceElements,
+                                               window: window), mode: .compact)
+        #expect(composed.title == "backend — build — main")
+        #expect(LinuxInterfacePolicy.settingElement(.workspaceName, visible: false, in: shown)
+            .shownInterfaceElements == nil)
+    }
+
+    @Test("the title names the selected session's workspace, not an empty one made current")
+    @MainActor
+    func workspaceFollowsActiveSession() {
+        let session = Session(initialCwd: "/work")
+        let store = AppStore(workspaces: [Workspace(name: "home", sessions: [session])])
+        _ = store.selectSession(session.id)
+        let empty = store.addWorkspace(name: "empty")
+        _ = store.selectWorkspace(empty.id)
+        #expect(store.currentWorkspaceID == empty.id)
+        let parts = LinuxInterfacePolicy.titlebarParts(store: store, hidden: [], window: nil)
+        #expect(parts.workspaceName == "home")
+    }
+
+    @Test("a default-shown element still toggles through the hidden list")
+    func defaultShownElementToggle() {
+        let hidden = LinuxInterfacePolicy.settingElement(.sessionName, visible: false, in: AppSettings())
+        #expect(hidden.hiddenInterfaceElements == ["sessionName"])
+        #expect(hidden.shownInterfaceElements == nil)
+        #expect(LinuxInterfacePolicy.settingElement(.sessionName, visible: true, in: hidden)
+            .hiddenInterfaceElements == nil)
+    }
 }

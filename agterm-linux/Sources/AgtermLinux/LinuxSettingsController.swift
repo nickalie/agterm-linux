@@ -133,14 +133,8 @@ extension AppController {
     }
 
     func setInterfaceElementVisible(_ element: InterfaceElement, visible: Bool) {
-        var settings = linuxSettingsStore().load()
-        var hidden = Set(settings.hiddenInterfaceElements ?? [])
-        if visible {
-            hidden.remove(element.rawValue)
-        } else {
-            hidden.insert(element.rawValue)
-        }
-        settings.hiddenInterfaceElements = hidden.isEmpty ? nil : hidden.sorted()
+        let settings = LinuxInterfacePolicy.settingElement(element, visible: visible,
+                                                           in: linuxSettingsStore().load())
         try? linuxSettingsStore().save(settings)
         for controller in gWindows.values {
             controller.applyInterfaceElements(settings: settings)

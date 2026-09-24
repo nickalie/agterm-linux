@@ -744,16 +744,9 @@ extension AppController {
         }
         title.withCString { gtk_window_set_title(WIN(window), $0) }
         if let titleWidget {
-            let hidden = settings.resolvedHiddenInterfaceElements
             let composition = TitlebarComposition.compose(
-                TitlebarComposition.Parts(
-                    sessionName: hidden.contains(.sessionName) ? nil : (store.activeSession?.displayName ?? "agterm"),
-                    windowName: hidden.contains(.windowName) || windowInfo?.hasCustomName != true
-                        ? nil : windowInfo?.name,
-                    context: hidden.contains(.sessionContext) ? nil : store.activeSession?.context,
-                    detail: store.activeSession?.subtitleDetail ?? "",
-                    remoteHost: hidden.contains(.remoteHost) ? nil : store.activeSession?.remoteHost
-                ),
+                LinuxInterfacePolicy.titlebarParts(store: store, hidden: settings.resolvedHiddenInterfaceElements,
+                                                   window: windowInfo),
                 mode: settings.effectiveToolbarMode
             )
             // AdwWindowTitle takes plain strings, so the host cannot be styled or truncated on its own as
