@@ -273,10 +273,11 @@ extension AppController {
         "session-row".withCString { gtk_widget_set_name(W(row), $0) }
         gtk_widget_add_css_class(W(box), "agterm-session-row-content")
         // a session attached with `zmx attach` takes a cloud in place of the terminal glyph, the sidebar
-        // half of the title bar's remote host
-        let leadIcon = s.remoteHost == nil ? "utilities-terminal-symbolic" : "weather-overcast-symbolic"
-        if let lead = op(gtk_image_new_from_icon_name(leadIcon)) {
+        // half of the title bar's remote host; while its presentation stream is down it says so, naming the host
+        let notice = LinuxSidebarPolicy.presentationNotice(for: s)
+        if let lead = op(gtk_image_new_from_icon_name(LinuxSidebarPolicy.sessionIcon(for: s, notice: notice))) {
             gtk_widget_set_margin_start(W(lead), 6)
+            notice?.withCString { gtk_widget_set_tooltip_text(W(lead), $0) }
             gtk_box_append(cast(box), W(lead))
         }
         let flaggedView = store.sidebarMode == .flagged

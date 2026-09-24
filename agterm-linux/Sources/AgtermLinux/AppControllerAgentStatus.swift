@@ -9,7 +9,9 @@ extension AppController {
     /// active, Escape or bare Ctrl-C clears everything, all gated by Settings ▸ Agent Status ▸ Status reset.
     /// `AgentIndicator.afterKeystroke` owns the table.
     func applyKeystrokeToStatus(_ id: UUID, pane: StatusPane, keystroke: StatusKeystroke) {
+        // a status mirrored from an origin pane this machine has no counterpart for is not this pane's to clear
         guard let session = store.session(withID: id),
+              session.remotePresentation?.allowsKeystrokeStatusClear != false,
               let next = session.agentIndicator
                   .afterKeystroke(pane: pane, keystroke: keystroke, reset: statusResetMode)
         else { return }

@@ -53,4 +53,19 @@ enum LinuxSidebarPolicy {
         }
         return session.displayName
     }
+
+    /// The notice a remote row shows while its presentation stream is not up, nil otherwise.
+    @MainActor
+    static func presentationNotice(for session: Session) -> String? {
+        guard let host = session.remoteHost else { return nil }
+        return session.remotePresentation?.connection.rowNotice(host: host)
+    }
+
+    /// The row's leading glyph: a terminal, a cloud for an attached session, and a disconnected network for
+    /// one whose stream is down, where macOS slashes the cloud.
+    @MainActor
+    static func sessionIcon(for session: Session, notice: String?) -> String {
+        guard session.remoteHost != nil else { return "utilities-terminal-symbolic" }
+        return notice == nil ? "weather-overcast-symbolic" : "network-offline-symbolic"
+    }
 }

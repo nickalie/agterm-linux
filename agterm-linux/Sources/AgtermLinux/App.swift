@@ -149,6 +149,8 @@ private let onShutdown: @MainActor @convention(c) (OpaquePointer?, gpointer?) ->
     MainActor.assumeIsolated {
         colorSchemeChangeDebouncer.cancel()
         flushOnQuit()
+        gPresentation.shutdownStreams()
+        gPresentation.stopRemotePresentations()
         gControlServer.stop()
     }
 }
@@ -334,6 +336,13 @@ private let onRevealAction: @MainActor @convention(c) (OpaquePointer?, OpaquePoi
         controller.refreshSidebar()
         return
     }
+    let shouldFocus = !controller.quickVisible
+        && gtk_window_is_active(WIN(controller.windowPointer)) != 0
+    // a mirrored status for a pane with no counterpart here names no pane to reveal
+    guard session.remotePresentation?.statusOwnerUnknown != true else {
+        controller.reconcile(focusActive: shouldFocus)
+        return
+    }
     // Prefer the coordinator's pre-selection snapshot. An auto-reset indicator is cleared by
     // AppStore.selectSession before this host-side reconciliation runs.
     switch statusPane ?? session.agentIndicator.statusPane ?? .left {
@@ -348,7 +357,5 @@ private let onRevealAction: @MainActor @convention(c) (OpaquePointer?, OpaquePoi
     }
     // Quick is a visible terminal overlay with its own first responder. Reconcile the selection beneath
     // it, but do not steal keyboard focus from the terminal the user can actually see.
-    let shouldFocus = !controller.quickVisible
-        && gtk_window_is_active(WIN(controller.windowPointer)) != 0
     controller.reconcile(focusActive: shouldFocus)
 }

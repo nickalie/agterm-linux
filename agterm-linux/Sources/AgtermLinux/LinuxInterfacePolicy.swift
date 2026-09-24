@@ -29,7 +29,7 @@ enum LinuxInterfacePolicy {
                 ? nil : session.flatMap { store.workspace(forSession: $0.id)?.name },
             sessionName: hidden.contains(.sessionName) ? nil : (session?.displayName ?? "agterm"),
             windowName: hidden.contains(.windowName) || window?.hasCustomName != true ? nil : window?.name,
-            context: hidden.contains(.sessionContext) ? nil : session?.context,
+            context: hidden.contains(.sessionContext) ? nil : session?.effectiveContext,
             detail: session?.subtitleDetail ?? "",
             remoteHost: hidden.contains(.remoteHost) ? nil : session?.remoteHost
         )
