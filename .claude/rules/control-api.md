@@ -124,6 +124,10 @@ paths:
   `agtermctl` then resolves that same default, so an unset value routes agent status onto the live app.
   `refused` clears on a later successful acquire, since `start()` re-runs per window scene and the owner
   may have quit. Its `stop()` returns early without unlinking, leaving the owner's socket intact.
+  **Linux adapter:** the GTK `ControlServer` takes the same lock and advertises the same path; the CLI's
+  owner probe reads `/proc/locks` (`ProcLocks`), because Linux `F_GETLK` never sees a `flock`.
+  The zmx and ssh runners share `LinuxProcessCapture`, `posix_spawn` plus `waitpid` for the hook runner's
+  reason below.
 - One newline-delimited JSON request and response uses each connection, capped at 1 MiB. Unknown commands
   return structured errors. Mutations may return `result.id`; trees use `result.tree`.
   A decode failure reports the `DecodingError`'s CONTEXT `debugDescription`, not `localizedDescription`, so
