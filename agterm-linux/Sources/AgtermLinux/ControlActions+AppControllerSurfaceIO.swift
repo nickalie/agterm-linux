@@ -37,10 +37,11 @@ extension AppController {
 
     /// The surface `session.overlay.copy`/`.text` address: the pane's own overlay with `pane`, else the
     /// session-wide slot. Shared by both so `no overlay` and `overlay not realized` cannot come to mean
-    /// different things on one command than the other. A HUD is refused ahead of everything, the slot being
-    /// occupied saying nothing about whether agterm or a caller's program painted it.
+    /// different things on one command than the other. An overlay shown on another machine is refused first,
+    /// then a HUD, the slot being occupied saying nothing about whether agterm or a caller's program painted it.
     private func overlayReadSurface(_ id: UUID, pane: OverlayPane?) -> ResolveResponse<GhosttySurface> {
         guard let session = store.session(withID: id) else { return .failure(err("no such session")) }
+        if session.remoteOverlays.slot(pane) != nil { return .failure(err(OverlayResultError.shownElsewhere)) }
         let occupied: Bool
         let surface: GhosttySurface?
         if let pane {

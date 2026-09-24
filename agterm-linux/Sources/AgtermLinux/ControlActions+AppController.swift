@@ -618,19 +618,11 @@ extension AppController: ControlActions {
         } else {
             id = store.selectedSessionID
         }
-        var bannerTitle = title ?? ""
-        if let id {
-            let delivery = store.recordTerminalNotification(TerminalNotificationRecord(sessionID: id, windowID: windowID,
-                                                                                       pane: .main, title: bannerTitle,
-                                                                                       body: body, firingIsFocused: false,
-                                                                                       appActive: false), origin: .control)
-            bannerTitle = delivery?.title ?? bannerTitle
-            rebuildSidebar()
+        guard let id else {
+            if NotificationManager.bannersEnabled { NotificationManager.send(title: title ?? "", body: body, target: nil) }
+            return ok(id)
         }
-        let notificationTarget = id.map { TerminalNotification.identity(windowID: windowID, sessionID: $0, pane: .main) }
-        if NotificationManager.bannersEnabled {
-            NotificationManager.send(title: bannerTitle, body: body, target: notificationTarget)
-        }
+        deliverNotification(id, title: title ?? "", body: body, origin: .control)
         return ok(id)
     }
 
@@ -890,79 +882,6 @@ extension AppController: ControlActions {
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString,
                                                                    text: display.isEmpty ? nil : display,
                                                                    count: searchTotal))
-        }
-    }
-
-    func openSessionOverlay(_ target: String?, window: String?,
-                            options: ControlSessionOverlayOpenOptions) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            if let pane = options.pane {
-                if let failure = store.openPaneOverlay(id, pane: pane, command: options.command,
-                                                       cwd: options.cwd, wait: options.wait,
-                                                       backgroundColor: options.backgroundColor) {
-                    return paneOverlayFailure(failure, target: target)
-                }
-            } else {
-                guard store.openOverlay(id, command: options.command, cwd: options.cwd, wait: options.wait,
-                                        sizePercent: options.sizePercent,
-                                        backgroundColor: options.backgroundColor) else {
-                    return err("overlay already open")
-                }
-            }
-            if options.follow { selectSession(id, userInitiated: false) }
-            reconcile()
-            return ok(id)
-        }
-    }
-
-    private func paneOverlayFailure(_ failure: PaneOverlayOpenFailure, target: String?) -> ControlResponse {
-        switch failure {
-        case .unknownSession: return err("no such session: \(target ?? "active")")
-        case .alreadyOpen: return err(PaneOverlayError.alreadyOpen)
-        case .paneNotVisible: return err(PaneOverlayError.paneNotVisible)
-        }
-    }
-
-    func closeSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            let closed = pane.map { store.closePaneOverlay(id, pane: $0) } ?? store.closeOverlay(id)
-            guard closed else { return err("no overlay") }
-            reconcile()
-            return ok(id)
-        }
-    }
-
-    func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            guard store.resizeOverlay(id, sizePercent: sizePercent) else { return err("no overlay") }
-            reconcile()
-            // the surface stays mounted, so only the frame re-flows: a program never re-spawns and the HUD
-            // helper repaints in place off the body file `writeHudBody` rewrote.
-            resizeFloatingOverlayFrame(for: id)
-            store.session(withID: id)?.onHudGeometryChange?()
-            return ok(id)
-        }
-    }
-
-    func sessionOverlayResult(_ target: String?, window: String?, pane: OverlayPane?) -> ControlResponse {
-        switch resolveSessionResponse(target) {
-        case .failure(let response): return response
-        case .success(let id):
-            guard let session = store.session(withID: id) else { return err("no such session") }
-            // a HUD carries no process and so no result: `overlayActive` alone would answer the misleading
-            // "overlay still running" for a panel nothing is waiting on.
-            if pane == nil, session.hudActive { return err(OverlayResultError.noResult) }
-            let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
-                ?? (session.overlayActive, session.overlayExitCode)
-            if running { return err(OverlayResultError.stillRunning) }
-            guard let code = exitCode else { return err(OverlayResultError.noResult) }
-            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, exitCode: code))
         }
     }
 
