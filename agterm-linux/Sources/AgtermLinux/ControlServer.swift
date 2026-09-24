@@ -149,6 +149,8 @@ final class ControlServer: @unchecked Sendable {
     }
 
     @MainActor private static func route(for req: ControlRequest) -> ControllerRoute {
+        // app-global: the dispatcher refuses `--window` itself, which an unknown window must not preempt
+        if req.cmd == .hooksReload || req.cmd == .hooksList { return .controller(gController) }
         if let window = req.args?.window, !window.isEmpty {
             guard let library = gLibrary else {
                 return .failure("window not open")

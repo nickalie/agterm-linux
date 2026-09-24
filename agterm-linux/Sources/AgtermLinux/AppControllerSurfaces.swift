@@ -31,6 +31,7 @@ extension AppController {
         var live = Set(store.workspaces.flatMap { $0.sessions.map(\.id) })
         live.formUnion(store.pendingHeldSessionIDs())
         for id in Array(surfaces.keys) where !live.contains(id) { removeSession(id) }
+        reloadClosedEditorOverlays()
         rebuildSidebar()
         showActive(focus: focusActive)
         updateTitle()
@@ -381,7 +382,9 @@ extension AppController {
     func editKeymap() {
         guard let id = store.selectedSessionID else { return }
         let path = ConfigPaths.keymapPath(configDirectory: configDirectory()).path
-        store.openOverlay(id, command: ConfigPaths.editorCommand(forPath: path), sizePercent: 95)
+        if store.openOverlay(id, command: ConfigPaths.editorCommand(forPath: path), sizePercent: 95) {
+            noteKeymapEditorOverlay(id)
+        }
         reconcile()
     }
 

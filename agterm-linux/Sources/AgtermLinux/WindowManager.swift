@@ -90,8 +90,8 @@ extension WindowLibrary {
 
 /// Seed the comment-only starter config files on first launch (never overwriting an existing file), now
 /// that each is wired to be effective: `ghostty.conf` (the scoped layer GhosttyApp.buildConfig loads),
-/// `keymap.conf` (keymap dispatch), and `restore-denylist.conf` (tmux/screen/zellij, read by the
-/// restore-running-command feature). Resolves the config directory once for all three.
+/// `keymap.conf` (keymap dispatch), `hooks.conf` (event hooks), and `restore-denylist.conf`
+/// (tmux/screen/zellij, read by the restore-running-command feature). Resolves the config directory once.
 @MainActor func ensureStarterFiles() {
     let env = ProcessInfo.processInfo.environment
     let dir = ConfigPaths.configDirectory(setting: linuxSettingsStore().load().configDirectory,
@@ -104,6 +104,7 @@ extension WindowLibrary {
     }
     ensure(ConfigPaths.ghosttyConfigPath(configDirectory: dir), ConfigPaths.starterGhosttyConfig())
     ensure(ConfigPaths.keymapPath(configDirectory: dir), ConfigPaths.starterKeymapConf())
+    ensure(ConfigPaths.hooksPath(configDirectory: dir), ConfigPaths.starterHooksConf())
     ensure(ConfigPaths.restoreDenylistPath(configDirectory: dir), ConfigPaths.starterRestoreDenylist())
 }
 

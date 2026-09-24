@@ -65,8 +65,38 @@ extension AppController {
             }
         }
         adw_preferences_page_add(cast(page), cast(diagnostics))
+        adw_preferences_page_add(cast(page), cast(makeHooksSettingsGroup()))
         _ = settings
         return page
+    }
+
+    private func makeHooksSettingsGroup() -> OpaquePointer? {
+        let group = preferencesGroup("Hooks")
+        let file = OpaquePointer(adw_action_row_new())
+        "hooks.conf".withCString { adw_preferences_row_set_title(cast(file), $0) }
+        ConfigPaths.hooksPath(configDirectory: configDirectory()).path.withCString {
+            adw_action_row_set_subtitle(cast(file), $0)
+        }
+        for (title, callback) in [("Open", onOpenHooksConfig), ("Reload", onReloadHooksSettings)] {
+            adw_action_row_add_suffix(
+                cast(file), W(preferencesButton(title, handler: unsafeBitCast(callback, to: GCallback.self))))
+        }
+        adw_preferences_group_add(cast(group), W(file))
+        let diagnostics = gHooks?.diagnostics ?? []
+        for diagnostic in diagnostics {
+            let row = OpaquePointer(adw_action_row_new())
+            (diagnostic.line == 0 ? "File" : "Line \(diagnostic.line)").withCString {
+                adw_preferences_row_set_title(cast(row), $0)
+            }
+            diagnostic.message.withCString { adw_action_row_set_subtitle(cast(row), $0) }
+            adw_preferences_group_add(cast(group), W(row))
+        }
+        if diagnostics.isEmpty {
+            let row = OpaquePointer(adw_action_row_new())
+            "No hooks.conf issues".withCString { adw_preferences_row_set_title(cast(row), $0) }
+            adw_preferences_group_add(cast(group), W(row))
+        }
+        return group
     }
 
     func chooseConfigDirectory() {
@@ -98,6 +128,20 @@ private let onOpenKeymapConfig: @MainActor @convention(c) (OpaquePointer?, gpoin
         guard let controller = controllerForWidget(button) else { return }
         controller.dismissSettings()
         controller.editKeymap()
+    }
+}
+private let onOpenHooksConfig: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
+    MainActor.assumeIsolated {
+        guard let controller = controllerForWidget(button) else { return }
+        controller.dismissSettings()
+        controller.editHooks()
+    }
+}
+/// Reports through the rebuilt Hooks group, not a toast, which would land under the Settings dialog.
+private let onReloadHooksSettings: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in
+    MainActor.assumeIsolated {
+        gHooks?.reload()
+        controllerForWidget(button)?.rebuildSettings(page: .keyMapping)
     }
 }
 private let onOpenKeymapDirectory: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { button, _ in

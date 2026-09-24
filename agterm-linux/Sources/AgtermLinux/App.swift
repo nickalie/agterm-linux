@@ -89,6 +89,8 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     let spawnPlan = gLibrary.launchSpawnPlan()
     gSpawnPacer.arm(order: spawnPlan.order, burst: spawnPlan.burst)
     ensureStarterFiles()
+    // before any window opens, so a hook sees the first session.created the launch produces
+    gHooks = LinuxHookController.start(library: gLibrary)
     installAppCSS()
     installStatusColorCSS()
     installAppIcons()
@@ -106,6 +108,10 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     for id in toOpen { openWindow(id) }
     if let controller = gWindows.values.first {
         _ = controller.reloadConfigForAppearanceChange(appearanceSide)
+    }
+    if let message = hooksReloadToast(count: gHooks?.diagnostics.count ?? 0),
+       let id = gLibrary.frontmostWindowID ?? toOpen.first {
+        gWindows[id]?.showToast(message)
     }
     if welcomeDue, let id = gLibrary.frontmostWindowID ?? toOpen.first, let controller = gWindows[id] {
         WelcomeDialog.presentOnce(in: controller)

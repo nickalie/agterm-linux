@@ -218,6 +218,7 @@ extension AppController {
         // CONTENT, under the Settings dialog the user is still in. What they actually read is the Key
         // Mapping page's Diagnostics group, which the caller rebuilds right after with the per-line detail.
         reloadKeymapAllWindows(reportingIn: self)
+        gHooks?.reload()
         reloadConfig()
     }
 

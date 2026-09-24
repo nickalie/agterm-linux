@@ -27,6 +27,22 @@ enum NotificationManager {
         g_object_unref(n.map { UnsafeMutableRawPointer($0) })
     }
 
+    /// One banner per hook: repeated failures of the same line coalesce, apart from the pane-target ids.
+    static func hookFailureID(kind: String, command: String) -> String {
+        "agterm-hook-failure:\(kind):\(command)"
+    }
+
+    /// The scheduler's `onFailure` sink, which already limits it to once per hook until success or reload.
+    @MainActor static func sendHookFailure(kind: String, command: String, detail: String) {
+        guard bannersEnabled else { return }
+        let body = "on \(kind) \(command) (\(detail))"
+        guard let app = gApp else { sendViaNotifySend(title: "Hook failed", body: body); return }
+        let n = g_notification_new("Hook failed")
+        body.withCString { g_notification_set_body(n, $0) }
+        hookFailureID(kind: kind, command: command).withCString { g_application_send_notification(GAPP(app), $0, n) }
+        g_object_unref(n.map { UnsafeMutableRawPointer($0) })
+    }
+
     static func notificationID(_ target: String) -> String {
         "agterm-" + target.replacingOccurrences(of: ":", with: "-")
     }

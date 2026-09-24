@@ -1194,6 +1194,87 @@ def verify_v031_sidebar_parity(env, state):
     except AssertionError:
         describe_tree(app)
         raise
+def verify_v030_hooks(env):
+    """Round-trip hooks.conf over the real socket: list/reload, delivery, a same-socket call, the editor."""
+    state = env["AGTERM_STATE_DIR"]
+    config = os.path.join(state, "config")
+    os.makedirs(config)
+    hooks_path = os.path.join(config, "hooks.conf")
+    stdin_path = os.path.join(state, "hook-stdin.json")
+    env_path = os.path.join(state, "hook-env")
+    split_path = os.path.join(state, "hook-split")
+    ctl = shlex.quote(CTL)
+    with open(hooks_path, "w", encoding="utf-8") as target:
+        target.write(
+            f"on status cat > {shlex.quote(stdin_path)}; "
+            f"printf '%s\\n' \"$AGT_EVENT_KIND\" \"$AGT_EVENT_STATUS\" \"$AGT_SESSION_ID\" \"$AGT_SOCKET\""
+            f" > {shlex.quote(env_path)}\n"
+            f"on status [ \"$AGT_EVENT_STATUS\" = blocked ] || exit 0; "
+            f"{ctl} notify \"hook ran\" --target \"$AGT_SESSION_ID\" --socket \"$AGT_SOCKET\"\n"
+            f"on pane.split printf '%s' \"$AGT_EVENT_STATUS\" >> {shlex.quote(split_path)}\n"
+            "on tree.changed exit 3\n"
+        )
+    editor = os.path.join(state, "fake-editor")
+    with open(editor, "w", encoding="utf-8") as target:
+        target.write("#!/bin/sh\nprintf 'on notify true\\n' >> \"$1\"\nsleep 0.5\n")
+    os.chmod(editor, 0o755)
+    env = dict(env, VISUAL=editor, SHELL=shutil.which("bash") or "/bin/sh")
+
+    def listing():
+        return control_json(env, "hooks", "list", "--json")["result"]["hooks"]
+
+    process, app = launch(env)
+    try:
+        first = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, first)["workspaces"][0]["sessions"][0]["id"]
+
+        rows = listing()
+        assert rows["path"] == hooks_path, rows
+        assert [row["kind"] for row in rows["hooks"]] == ["status", "status", "pane.split", "tree.changed"], rows
+        assert rows["diagnostics"] == [], rows
+        for request in ({"cmd": "hooks.list", "args": {"window": first}},
+                        {"cmd": "hooks.reload", "target": session_id}):
+            refused = raw_control_json(env, request)
+            assert not refused["ok"] and refused["error"] == f"{request['cmd']} takes no target or --window", refused
+
+        anchor = raw_control_json(env, {"cmd": "events.read"})["result"]["events"]
+        blocked = control_json(env, "session", "status", "blocked", "--target", session_id, "--json")
+        assert blocked["ok"], f"the originating request must return on its own: {blocked}"
+        wait_for(lambda: os.path.exists(env_path), "the status hook never ran")
+        with open(env_path, encoding="utf-8") as source:
+            lines = source.read().split("\n")
+        assert lines[:4] == ["status", "blocked", session_id, env["AGTERM_CONTROL_SOCKET"]], lines
+        with open(stdin_path, encoding="utf-8") as source:
+            event = json.loads(source.read())
+        assert event["kind"] == "status" and event["session"] == session_id, event
+        assert event["payload"]["status"] == "blocked", event
+
+        def hook_notified():
+            page = raw_control_json(env, {"cmd": "events.read", "args": {
+                "run": anchor["run"], "after": str(anchor["next"]), "kinds": ["notify"]}})["result"]["events"]
+            return any(item["payload"].get("body") == "hook ran" for item in page["items"])
+        wait_for(hook_notified, "a hook's agtermctl call on the same socket never reached the ring")
+
+        control_json(env, "session", "split", "on", "--target", session_id, "--window", first, "--json")
+        control_json(env, "session", "split", "off", "--target", session_id, "--window", first, "--json")
+        wait_for(lambda: os.path.exists(split_path) and open(split_path, encoding="utf-8").read() == "shownhidden",
+                 "pane.split did not report shown then hidden")
+
+        control_json(env, "session", "rename", "renamed", "--target", session_id, "--json")
+        wait_for(lambda: listing()["hooks"][3].get("lastFailure") == "exit 3", "a failing hook reported no lastFailure")
+
+        with open(hooks_path, "a", encoding="utf-8") as target:
+            target.write("bogus line\n")
+        reloaded = control_json(env, "hooks", "reload", "--json")
+        assert reloaded["result"]["count"] == 1, reloaded
+        assert listing()["diagnostics"][0]["message"] == "unknown verb 'bogus'", listing()
+        assert listing()["hooks"][3].get("lastFailure") == "exit 3", "a reload keeps the last failure"
+
+        title = window_tree(env, first)["workspaces"][0]["sessions"][0]["name"]
+        wait_for(lambda: named(app, title, role="frame"), "the hooks window did not become accessible")
+        run_palette_action(app, process.pid, title, "Edit Hooks")
+        wait_for(lambda: any(row["kind"] == "notify" for row in listing()["hooks"]),
+                 "closing the Edit Hooks overlay did not reload hooks.conf")
     finally:
         stop(process)
 
@@ -2448,7 +2529,7 @@ def main():
     if scenario is None:
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
-            "dashboard-modal", "context-menu",
+            "v030-hooks", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -2499,6 +2580,8 @@ def main():
             verify_v029_control_parity(env)
         elif scenario == "v031-sidebar":
             verify_v031_sidebar_parity(env, state)
+        elif scenario == "v030-hooks":
+            verify_v030_hooks(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

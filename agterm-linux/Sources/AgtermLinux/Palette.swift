@@ -140,7 +140,8 @@ extension AppController {
         case .collapseWorkspaces: return { self.collapseOtherWorkspaces() }
         case .editKeymap: return { self.editKeymap() }
         case .reloadKeymap: return { reloadKeymapAllWindows(reportingIn: self) }
-        case .editHooks, .reloadHooks: return { self.showToast("Event hooks are not supported on Linux yet") }
+        case .editHooks: return { self.editHooks() }
+        case .reloadHooks: return { self.reloadHooksReporting() }
         case .editGhosttyConfig: return { self.editGhosttyConfig() }
         case .reloadConfig: return { self.reloadConfig() }
         case .clearFlagged: return { self.clearFlagged() }

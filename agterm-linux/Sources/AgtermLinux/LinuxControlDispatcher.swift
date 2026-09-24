@@ -41,6 +41,8 @@ struct LinuxControlDispatcher {
                 .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarFlaggedLayout, .sidebarExpand,
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
+        case .hooksReload, .hooksList:
+            return dispatchHooksCommand(request)
         case .version:
             return actions.appIdentity()
         case .restoreCapture:
