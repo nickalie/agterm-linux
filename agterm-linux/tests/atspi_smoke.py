@@ -1279,6 +1279,96 @@ def verify_v030_hooks(env):
         stop(process)
 
 
+def verify_v032_keymap_hud(env):
+    """F-key chords, AGT_PANE_ID, the opt-in failure panel, and the HUD's hide-after, markdown and font size."""
+    state = env["AGTERM_STATE_DIR"]
+    config = os.path.join(state, "config")
+    os.makedirs(config)
+    fired = os.path.join(state, "f5.log")
+    pane_marker = os.path.join(state, "pane-id.marker")
+    with open(os.path.join(config, "keymap.conf"), "w", encoding="utf-8") as target:
+        target.write(
+            f'command "F5 Count" f5 printf "%s\\n" "$AGT_PANE_ID" >> {fired}\n'
+            'command "Fail Panel" shift+f6 --error-hud --error-position top-right echo broken-thing >&2; exit 9\n'
+            'command "Quiet Fail" f7 exit 3\n'
+        )
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        def session_node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        listed = {item["name"]: item for item in control_json(env, "keymap", "list", "--json")["result"]["keymap"]["commands"]}
+        assert listed["F5 Count"]["shortcut"] == "f5" and not listed["F5 Count"]["errorHud"], listed
+        assert listed["Fail Panel"]["errorHud"] and listed["Fail Panel"]["errorPosition"] == "top-right", listed
+        assert not listed["Quiet Fail"]["errorHud"], listed
+
+        control_json(env, "session", "type", f'printf "%s" "$AGTERM_PANE_ID" > {pane_marker}\n',
+                     "--target", session_id, "--json")
+        pane_id = wait_for(lambda: os.path.exists(pane_marker) and open(pane_marker, encoding="utf-8").read().strip(),
+                           "the shell never reported AGTERM_PANE_ID")
+
+        focus_window(process.pid)
+        time.sleep(0.5)
+        # a held key autorepeats; the chord owns every repeat, so it fires once
+        for action in (["keydown", "F5"], ["sleep", "1.2"], ["keyup", "F5"]):
+            if action[0] == "sleep":
+                time.sleep(float(action[1]))
+            else:
+                subprocess.run(["xdotool", action[0], "--clearmodifiers", action[1]], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lines = wait_for(lambda: os.path.exists(fired) and open(fired, encoding="utf-8").read().split(),
+                         "a bare F5 never fired its custom command")
+        time.sleep(0.5)
+        lines = open(fired, encoding="utf-8").read().split()
+        assert lines == [pane_id], f"F5 fired {lines}, expected one run carrying {pane_id}"
+
+        press_x11_key("F7", process.pid)
+        wait_for(lambda: named(find_app(process.pid), "command failed (exit 3): Quiet Fail"),
+                 "the failing command posted no toast")
+        assert session_node().get("hud") is None, "a command without --error-hud posted a failure panel"
+
+        press_x11_key("shift+F6", process.pid)
+        panel = wait_for(lambda: session_node().get("hud"), "the opted-in failure never posted its panel")
+        assert panel["message"] == "Fail Panel: exit 9", panel
+        assert panel.get("detail") == "broken-thing", panel
+        assert panel["position"] == "top-right" and panel["hideAfter"] == 10, panel
+        control_json(env, "session", "hud", "close", "--target", session_id, "--json")
+        wait_for(lambda: session_node().get("hud") is None, "the failure panel did not close")
+
+        control_json(env, "session", "hud", "short-lived", "--hide-after", "1", "--target", session_id, "--json")
+        timed = wait_for(lambda: session_node().get("hud"), "the timed HUD never posted")
+        assert timed["hideAfter"] == 1, timed
+        wait_for(lambda: session_node().get("hud") is None, "the timed HUD never hid itself", timeout=6)
+
+        rejected = raw_control_json(env, {"cmd": "session.hud.open", "target": session_id,
+                                          "args": {"message": "x", "hideAfter": 86401}})
+        assert not rejected["ok"] and rejected["error"] == "session.hud.open: --hide-after must be 0...86400 seconds", rejected
+
+        markdown = os.path.join(state, "hud.md")
+        with open(markdown, "w", encoding="utf-8") as target:
+            target.write("# Deploy\n\n- build\n- **test**\n")
+        control_json(env, "session", "hud", "--file", markdown, "--markdown", "--font-size", "18",
+                     "--target", session_id, "--json")
+        rich = wait_for(lambda: session_node().get("hud"), "the markdown HUD never posted")
+        assert rich["markdown"] and rich["fontSize"] == 18 and rich["message"].startswith("# Deploy"), rich
+        time.sleep(1.0)
+        assert session_node().get("hud"), "the markdown HUD closed itself"
+        refused = raw_control_json(env, {"cmd": "session.hud.update", "target": session_id,
+                                         "args": {"message": "x", "fontSize": 12}})
+        assert not refused["ok"] and "fixed at open" in refused["error"], refused
+        empty = raw_control_json(env, {"cmd": "session.hud.update", "target": session_id,
+                                       "args": {"message": "[x]: /y", "markdown": True}})
+        assert not empty["ok"] and empty["error"] == "session.hud.update requires a message", empty
+        control_json(env, "session", "hud", "close", "--target", session_id, "--json")
+        print("OK: F-key chords, AGT_PANE_ID, the failure panel and HUD hide-after/markdown/font size")
+    finally:
+        stop(process)
+
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2529,7 +2619,7 @@ def main():
     if scenario is None:
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
-            "v030-hooks", "dashboard-modal", "context-menu",
+            "v030-hooks", "v032-keymap-hud", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -2582,6 +2672,8 @@ def main():
             verify_v031_sidebar_parity(env, state)
         elif scenario == "v030-hooks":
             verify_v030_hooks(env)
+        elif scenario == "v032-keymap-hud":
+            verify_v032_keymap_hud(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
