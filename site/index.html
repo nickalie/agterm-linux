@@ -54,7 +54,7 @@
         "author": { "@type": "Person", "name": "Umputun", "url": "https://github.com/umputun" },
         "codeRepository": "https://github.com/umputun/agterm",
         "downloadUrl": "https://github.com/umputun/agterm/releases",
-        "softwareVersion": "0.32.0"
+        "softwareVersion": "0.33.1"
       }
     </script>
   </head>
@@ -556,6 +556,108 @@
               With nothing scripted at all it handles everyday multi-project work: 512 bundled themes, a live-preview theme picker,
               and custom key mappings. Rebuild the layout with one of three restore modes: fresh shells, re-run captured commands,
               or primary and split processes kept alive across launches.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div style="max-width: 1140px; margin: 0 auto; padding: 100px 28px 40px">
+        <div
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            font-size: 12px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--accent, #6d82f3);
+            margin-bottom: 16px;
+          "
+        >
+          // sessions that survive
+        </div>
+        <h2
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            font-weight: 800;
+            font-size: clamp(28px, 4vw, 44px);
+            letter-spacing: -0.025em;
+            line-height: 1.05;
+            margin: 0 0 18px;
+            max-width: 20ch;
+          "
+        >
+          Close the app, keep the work.
+        </h2>
+        <p style="font-size: 18px; line-height: 1.55; color: #bfbab0; max-width: 60ch; margin: 0 0 44px">
+          A pane's process does not have to live inside agterm. Live sessions keep it running while the app restarts, and the same
+          sessions can be opened from another Mac.
+        </p>
+
+        <div class="survive-grid">
+          <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 36px">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px">
+              <span
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                  color: #e6e1d7;
+                  border: 1px solid rgba(255, 255, 255, 0.16);
+                  background: rgba(255, 255, 255, 0.04);
+                  padding: 3px 8px;
+                  border-radius: 6px;
+                "
+                >live</span
+              >
+              <h3
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-weight: 700;
+                  font-size: 19px;
+                  margin: 0;
+                  letter-spacing: -0.01em;
+                "
+              >
+                Live sessions
+              </h3>
+            </div>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 0">
+              Quit, update, or relaunch agterm while your primary and split panes keep running, an agent mid-turn included. The
+              next launch reattaches to those processes with their text and TUI state. Choose it under Settings ▸ General ▸ Restore
+              sessions; it takes effect after restarting agterm and needs zsh as the macOS login shell.
+              <a href="/docs#restore" style="color: #6d82f3">Restore modes</a>
+            </p>
+          </div>
+          <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 36px">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px">
+              <span
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                  color: #e6e1d7;
+                  border: 1px solid rgba(255, 255, 255, 0.16);
+                  background: rgba(255, 255, 255, 0.04);
+                  padding: 3px 8px;
+                  border-radius: 6px;
+                "
+                >ssh</span
+              >
+              <h3
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-weight: 700;
+                  font-size: 19px;
+                  margin: 0;
+                  letter-spacing: -0.01em;
+                "
+              >
+                Remote sessions
+              </h3>
+            </div>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 0">
+              Open a session running on another Mac as a row in this sidebar, split included, with
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #e6e1d7">agtermctl zmx attach HOST ID</span>.
+              Its status glyph, notifications, HUD and title-bar context follow it here, and its panes take this Mac's size. The
+              other Mac runs agterm in Live sessions mode and is reached over key-based ssh.
+              <a href="/docs#remote-sessions" style="color: #6d82f3">Remote sessions</a>
             </p>
           </div>
         </div>

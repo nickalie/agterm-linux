@@ -1072,7 +1072,15 @@
                   session unchanged. Mostly driven from the control API to launch an interactive program (a diff viewer, a process
                   monitor) — full-size, as a floating panel, or scoped to one split pane while the sibling pane stays live. The
                   same slot also holds a HUD, a small passive panel carrying a message instead of a program, which leaves the
-                  session focused and typable underneath. See the
+                  session focused and typable underneath. With <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--html</span>
+                  the overlay shows a local HTML page instead, such as a report or chart an agent just generated, or with
+                  <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--url</span> a web page such as a running dev server, under a strip
+                  naming the file or site with a close button and, with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--navigation</span>,
+                  back, forward, reload, open in browser, and Show in Finder for a file or Copy Link for a URL;
+                  ⌘W closes it like any overlay. A page runs no JavaScript of its
+                  own unless opened with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--js</span>. A link the page opens in your browser
+                  asks you first. Pages can match the terminal
+                  through the theme's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--agterm-*</span> CSS variables. See the
                   <a href="#agtermctl" style="color: #6d82f3">agtermctl reference</a>.
                 </p>
               </div>
@@ -2648,12 +2656,14 @@ agtermctl notify "needs input" --target "$AGT_SESSION_ID" --socket "$AGT_SOCKET"
             </div>
 
             <h3
+              id="remote-sessions"
               style="
                 font-family: &quot;JetBrains Mono&quot;, monospace;
                 font-weight: 600;
                 font-size: 16px;
                 color: #5ea1f2;
                 margin: 28px 0 12px;
+                scroll-margin-top: 88px;
               "
             >
               Remote sessions
@@ -2726,6 +2736,7 @@ agtermctl notify "needs input" --target "$AGT_SESSION_ID" --socket "$AGT_SOCKET"
               A remote session is never written to disk, so it does not come back after a relaunch. Its tree node carries
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remoteHost</span>.
               The title bar shows a cloud and the remote host, which you can hide with the Remote host toggle in Settings ▸ Interface.
+              The Ctrl-Tab switcher and the title-bar recent and attention lists mark the row with the same cloud and name the host.
             </p>
             <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 16px 0 0">
               A program in an attached session runs on the other Mac and talks to that Mac's agterm, so every attach also opens a
@@ -2757,8 +2768,10 @@ agtermctl notify "needs input" --target "$AGT_SESSION_ID" --socket "$AGT_SOCKET"
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 12px 0 0">
               One Mac attached to a session <em>presents</em> it, the first to ask while nobody does, and its row's
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">presentation</span> reads <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">mode: presenter</span>. A question (<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ask</span>) or a program overlay a
-              program then opens in that session is handed to the presenting Mac, where you are, and the answer or the program's exit status still
-              reaches the program on the other side. The overlay's program runs once, on the other Mac, inside an ssh terminal this
+              program then opens in that session is handed to the presenting Mac, where you are, only while the other Mac follows
+              another Mac's lead in its pane, or in every pane for one covering the whole session. Otherwise the request stays on the other Mac,
+              and one already open stays where it is when the lead changes. The answer or the program's exit status still
+              reaches the program on the other side. A handed-over overlay's program runs once, on the other Mac, inside an ssh terminal this
               Mac opens for it. If this Mac refuses a question, it goes back to the other side; if it cannot show an overlay, the
               overlay fails rather than opening over there. Closing such an overlay from a script asks for it to end, and its
               result says how it did.
@@ -3281,8 +3294,8 @@ agtermctl notify "needs input" --target "$AGT_SESSION_ID" --socket "$AGT_SOCKET"
               tool run → active, Stop → completed, permission prompt → blocked, plus a session start that pins
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">claude --resume &lt;id&gt;</span>
               as the pane's restore command and a session end that clears it), and an OpenCode lifecycle plugin.
-              When Claude Code runs as a worker under another agent, its status hooks stay silent, so the status of
-              the pane that spawned it is not overwritten.
+              When Claude Code runs as a worker under another agent with a shell process still between them, as in a
+              tool call, its hooks stay silent, so the status of the pane that spawned it is not overwritten.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               The scripts go to
@@ -3497,8 +3510,9 @@ command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' stop"
                 asks for the microphone again after every update. <strong style="color: #e6e1d7">Agterm ▸ Reset Live Sessions…</strong>
                 replaces every such session at once: the dialog says how many it resets, agterm quits and reopens itself with the
                 same sessions and layout, and each captured command starts again where possible. Other work running in those
-                sessions stops, and agent conversations may need to be resumed by hand. Sessions already under the host are left
-                alone, and a notification afterwards says how many sessions the reset covered.
+                sessions stops, and agent conversations may need to be resumed by hand. The same item also recreates sessions that
+                predate the last Live sessions update, so they pick up its changes. Other sessions under the host are left alone,
+                and a notification afterwards says how many sessions the reset covered.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx reset --force</span> does the same without the dialog.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx list</span> shows every daemon and the pane that claims it,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx prune</span> clears the ones nothing claims, and

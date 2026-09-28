@@ -175,6 +175,7 @@ renumbering. Do not reintroduce a count anywhere.
   `.split.close`, `.swap`, `.lead`,
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
+  `.overlay.reload`, `.overlay.navigate`,
   `.overlay.result`, `.overlay.copy`, `.overlay.text`, `.overlay.job.run`, `.hud.open`, `.hud.update`,
   `.hud.close`
 - `surface.zoom`, `surface.cursor`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`,
@@ -420,20 +421,87 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   so the Command-W ladder, `coverHidesActiveSession`, `searchTarget`, and session-close teardown are
   unchanged. It is control-native: no menu item, chord, or palette entry, a deliberate exemption from
   [[menu-actions]]'s shared-action-seam rule because there is nothing here for a human to invoke by hand.
-- Passivity is four deck exemptions plus two NSView-level gates, all reading ONE predicate,
-  `Session.programOverlayActive` (`overlayActive && !hudActive`): `gates.overlaid`, the floating click
-  catcher, `backdropWashActive`, the scratch's focus gate, `TerminalView.viewOnly` on the panel, and the
-  program-only key for the overlay-close refocus. `viewOnly` owns the NSView layer, where `mouseDown` makes
-  a surface first responder; the panel's ancestor `.allowsHitTesting(false)` currently blocks the click
-  before that, so the two are belt and braces and neither is the place to economise.
+- Passivity is four deck exemptions plus two NSView-level gates, each reading an occupant predicate and
+  never the raw slot: `gates.overlaid`, the floating click catcher, `backdropWashActive`, the scratch's focus
+  gate, `TerminalView.viewOnly` on the panel, and the cover-only key for the overlay-close refocus. The HTML
+  bullet below says which read `coverOverlayActive` and which `programOverlayActive`. `viewOnly` owns the
+  NSView layer, where `mouseDown` makes a surface first responder; the panel's ancestor
+  `.allowsHitTesting(false)` currently blocks the click before that, so the two are belt and braces and
+  neither is the place to economise.
   Keying the refocus on the raw slot instead yanks focus out of a search field or a rename on every
   close. Never spell it inline; two spellings will disagree. `OverlayPanelStyle` resolves
   every per-occupant parameter, so the modifier chain stays constant and only values flip. `overlayPanel`'s
   `.id` carries `Session.overlaySlotGeneration`, or a replacement keeping `overlayActive` true never re-runs
   `makeNSView` and `updateNSView` hits a torn-down view.
-- The same predicate governs focus routing: `Session.topmostSurface`, `focusTarget(wantSplit:)`,
+- The occupant predicates govern focus routing too: `Session.topmostSurface`, `focusTarget(wantSplit:)`,
   `onScreenSurface`, `AppActions.searchTarget`'s scratch rung, and the scratch factory's `suppressAutoFocus`.
   A raw `overlayActive` read at any of them hands first responder or a buffer read to the HUD painter.
+- An HTML page (`Session.htmlOverlay`, `PaneOverlay.html`) is a third occupant: it covers and owns input
+  like a program but has no terminal surface, zoom target or exit status. `programOverlayActive` excludes
+  it; `coverOverlayActive` (program or page) is the input-exclusion question. Cover sites: `gates.overlaid`,
+  the click catcher, `backdropWashActive`, the scratch focus gate, the overlay-close refocus key,
+  `suppressAutoFocus`, `searchTarget`'s scratch rung, `DeckPaneGates.coverActive`, the tree `overlay` field,
+  the remote overlay's local-hold check, and zoom's `uncovered`/`paneVisible`. Program-only sites:
+  `TerminalView.viewOnly`, zoom's `.overlay` and pane-overlay arms, and `overlay.result`'s running check.
+  Under a page `topmostSurface` and `focusTarget` return nil, never the hidden pane, and zoom's
+  `resolveTarget` returns nil. `dropUnrealizedPaneOverlays` never drops a page, which has no surface to
+  realize. Every path that empties a slot holding a page fires `HtmlOverlayReleases` once: `closeOverlay`,
+  `closePaneOverlay`, `teardownPaneOverlay`, and `Session.teardownOverlaySlot` at session, workspace,
+  pending-close and window teardown. The app's `HtmlOverlayRegistry` keys web views by the page's id, which
+  travels inside the slot value, so swaps, promotion and the soft-close window move the page intact.
+- A page's source is `HtmlSource`: a file with its grant, or a URL (`--url`, absolute http/https, no
+  `--cwd`). The dispatcher parses it once and the host gets `options.page`; the tree reports `file` or
+  `url`. A URL page is pinned to its ORIGINAL origin (`HtmlOrigin`, default ports equal): same-origin main
+  frame loads clicked or not, which is what lets dev-server redirects and client routing work, any
+  http(s) subframe loads, and a redirect elsewhere during an unclicked load is refused. A clicked link's
+  redirect reaches the policy as `.linkActivated` (WebKit reuses the triggering action), so it is handled
+  like the click and the retained page stays `loaded`. `HtmlOverlayPage.loadPending` makes every
+  load in flight (explicit, or started by the page) end `loaded` or `failed`: a policy cancel of its main
+  frame reports `navigation blocked: URL` and the `WebKitErrorDomain` 102 that follows is ignored. An
+  unreported 102, WebKit dropping a response it cannot show, restores `loaded` over a document the web
+  content process still shows, and fails a load that never committed. A failed page shows its error in the panel.
+- Every page gets its own `WKWebsiteDataStore.nonPersistent()`, set before the web view exists, so browser
+  storage lives exactly as long as the overlay and is shared with no other. `NSAllowsLocalNetworking` in
+  Info.plist lets plain http reach local addresses (not only loopback, and for file pages too); public
+  http stays subject to ATS.
+- `--cwd DIR` is WebKit's read grant. Without it the page is loaded from its TEXT with no base URL:
+  WebKit reads a single-file `allowingReadAccessTo` as the file's whole folder, measured in
+  `HtmlOverlayRegistryTests`, so the file-alone default needs no file URL at all, and a `--cwd` naming the
+  file itself is refused, as are `/` and the home directory.
+- A FILE page's default style is the terminal theme (`HtmlOverlayTheme`): a zero-specificity `:where(html)`
+  rule for scheme and text color, injected at document start. Its background is NOT in CSS: the file web view
+  draws no canvas (`drawsBackground`, the one private key) and the panel paints the theme or
+  `--background-color` behind it, so an authored `html` or `body` background still fills the canvas.
+- Every page's rule, a URL page's included, defines `--agterm-background`, `--agterm-foreground` and
+  `--agterm-color-0..15` (`GhosttyApp.terminalPalette`, slots kept, an invalid entry omitted). A URL page gets
+  only those variables and keeps the browser's opaque canvas, because a web app styled against a white canvas
+  turns unreadable over the theme backing. Inject the rule at document start in a dedicated content world.
+  Do not evaluate theme scripts in a live document: page callbacks can inherit evaluation's user gesture.
+  Reload file pages only when their computed theme changes; URL pages receive new variables on their next
+  load. The appearance notification also fires for unrelated settings.
+- A page's own JavaScript is off unless opened with `--js` (`HtmlOverlay.javascript`, read back as
+  `javascript`): `allowsContentJavaScript` is set on the configuration before the web view exists, and
+  nothing enables it later. User scripts and native `evaluateJavaScript` still run, so the theme survives,
+  and a test cannot use evaluation to show page script ran; tests that need page script open with it on.
+- A synthetic `a.click()` reaches the policy exactly like a real click (`.linkActivated`, button 0, no
+  flags), so every hand-off the page starts goes through `HtmlBrowser.confirm`, a nonblocking sheet with
+  Cancel as default; nothing in control dispatch waits on it. One pending prompt per page, a decline silences the
+  page until a native key or mouse event reaches its view, and closing, hiding or detaching the view ends
+  the prompt without opening. Open in Browser (toolbar or `navigate browser`) is an explicit request and
+  skips the prompt; it opens with the default browser app, never the file type's app, which could run it.
+- The panel always has an app-drawn identity strip (`HtmlOverlay.identity`: the file shown or the origin)
+  that the page cannot cover or retitle, with the close button; `--navigation` adds the buttons. The page
+  title reaches only `tree`, where agents must treat it as untrusted. Page views refuse drags and pastes
+  carrying files; WKWebView's paste commands exist only at runtime, so they are overridden by selector.
+- Reload is `overlay.reload --current` (bare `overlay.reload` loads the original source).
+  Back/forward/browser/finder share `overlay.navigate` with the toolbar, even without `--navigation`.
+  Finder reveals the current file via `pageURL`; browser opens the original file or current HTTP(S) URL.
+  Finder refuses URL sources without side effects.
+  Copy Link is a URL-page toolbar action only: it copies `browserURL` to the pasteboard.
+  Scripts read the current address from `tree`'s `htmlOverlays[].page`.
+  `HtmlSharing` isolates Finder and clipboard effects for hosted tests.
+  A page never takes the remote program-job path:
+  `open --html` is refused while a presenter owns the session, and one already open stays local.
 - One slot, asymmetric replacement: a second `hud.open` replaces the first, `overlay.open` closes a HUD and
   proceeds, and a HUD over a RUNNING program is refused `overlay already open`. `overlay.close`, Command-W,
   and session close tear a HUD down. `overlay.result` refuses with `OverlayHudError.noResult` because
@@ -1073,9 +1141,22 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - `zmx.reset` is Agterm ▸ Reset Live Sessions… without the dialog, and both run `LiveResetCoordinator`.
   The dispatcher refuses without `--force` before the host; the coordinator then refuses, in order, when
   Live is not both the configured and the launched mode, when the listing failed, when the claim walk is
-  incomplete or claims a pane twice, and when no pane is orphaned or app-attributed.
+  incomplete or claims a pane twice, and when no pane is selected.
   `LiveReset.select` in agtermCore joins `paneClaims()` to the listing; the dialog counts distinct sessions
-  and the reply carries `result.liveReset` (sessions, panes, pending) plus the dialog body as `text`.
+  and the reply carries `result.liveReset` (sessions, panes, pending, and `outdated` sessions when any) plus
+  the dialog body as `text`.
+- A pane is selected for one of two reasons, carried on each marker target. `outdated`: its daemon's
+  `created=` from `zmx list` is before the launch's `ZmxBuildRecord` cutoff, whatever its attribution, which
+  is what reaches supervised panes still running a zmx from before an update. `unsupervised`: otherwise, an
+  orphaned or app-attributed leader. A pane that qualifies for both is recorded as `outdated`.
+- `ZmxBuildRecord` is `zmx-build.json` in the state directory. The build phase copies `.zmx-build-stamp` into
+  the bundle as `Resources/zmx/BUILD`; `restoredRuntime` compares it with the record before
+  `LaunchOrchestration.run`, dates a different or missing id at the current whole second (zmx's `created`
+  resolution), and hands the cutoff to the consumer and the control server. Every app update replaces and
+  re-signs zmx, so a file time would flag every session after every update; only an id change moves the
+  cutoff. The first launch with no record treats every existing session as outdated once. The cutoff proves
+  only that a session predates the recorded change, so user text says "predate the last Live sessions update",
+  never that it runs an older zmx. No bundled id means no cutoff and no outdated selection.
   The connection thread quits only after it has written the reply to THAT request, decided from the
   request being `zmx.reset` and the response being ok, never from shared state: remote workers write
   other replies in parallel and must not quit the app. A reply that could not be written leaves the reset
@@ -1083,8 +1164,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   The quit writes `live-reset.json` in the state directory only after the exit capture ran and the
   checked snapshot save succeeded, then spawns the relauncher; a relauncher that cannot start removes the
   marker. The next launch consumes the marker before any kill and only NARROWS it: a target is killed when
-  it is still claimed, still listed with the same leader pid and still orphaned; gone restores normally;
-  anything else is skipped. Every selected leader is polled whatever the batched kill reported, and a
+  it is still claimed, still listed with the same leader pid, and still qualifies for its reason (created
+  before the cutoff, or orphaned); gone restores normally; anything else is skipped. `consume` accepts marker
+  versions 1 and 2, and a version-1 target reads as `unsupervised`. Every selected leader is polled whatever the batched kill reported, and a
   survivor's pane gets neither its replay nor its durable command at that launch.
   A confirmed reset arms and skips the quit alert only while Live is still both modes
   (`armablePending`): a mode change after confirmation leaves the next launch unable to suppress a
@@ -1093,7 +1175,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   before the budget expires leaves every selected pane suppressed. The Help item shows a refusal in user
   words through `presentRefusal`; only a cancel is silent.
   Read-back is `liveReset` on the tree top level and the `zmx list` header, omitted when nothing is
-  pending and no launch consumed a marker. XCUITest exemption: the command quits the app, so its
+  pending and no launch consumed a marker. Each `zmx list` row carries `outdated: true` for a daemon created
+  before the cutoff, omitted otherwise. XCUITest exemption: the command quits the app, so its
   coverage is hosted and package tests plus the isolated acceptance run, like `restore.mode`.
 
 ## Remote sessions
@@ -1300,8 +1383,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - A stream a viewer opens asks for the PRESENTER role. The origin grants it to one stream per session and
   refuses the rest, which stay mirrors and ask again only on their own reconnect; an origin predating the
   role answers mirror. The role goes with its stream. Read back the viewer's `presentation.mode` and the
-  origin's `presenters.presenter`. While a session has a presenter, a newly opened session-associated ask or
-  program overlay is handed to it; one already open stays where it is.
+  origin's `presenters.presenter`. A newly opened session-associated ask or program overlay goes to that
+  presenter only when its target pane reports `follower` on the origin, or every existing pane does for
+  session-wide placement; mixed, unknown or unowned roles stay local.
+  One already open stays where it is when the lead changes.
 - An ask handed over keeps its slot and its id on the origin, which reads back `ask.remote`; the viewer draws
   a replica, `ask.replica`, whose answer carries only the button id and is checked against the stored
   buttons. It ends when answered or escaped on the viewer, or when the origin cancels it or tears down its

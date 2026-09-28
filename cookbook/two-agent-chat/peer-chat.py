@@ -56,10 +56,14 @@ CODEX_CHOICE_RE = re.compile(r"^\d+\.\s")
 CODEX_PARTICLE_RE = re.compile(r"[\u2800-\u28FF]")
 CODEX_INDENT_RE = re.compile(r"^[\s\u2800-\u28FF]{0,2}")
 CODEX_EMPTY_PROMPT = "Ask Codex to do anything"
-# Codex prefixes footer rows with two spaces. Only the final row is stripped: a
-# multi-row shortcut overlay is indistinguishable from indented modal choices and
-# therefore fails closed instead of weakening the live-prompt guard.
+# Codex prefixes footer rows with two spaces. The final row is stripped, and the one
+# above it too when a blank row sets the pair apart: without that blank it may be a
+# wrapped draft's continuation. In that pair the final row may also be indented
+# further, as when a draft hides the shortcut hint and leaves only its right-aligned
+# notice. A longer indented region is never stripped, because shortcut rows and modal
+# choices share its shape, so it fails closed instead of weakening the live-prompt guard.
 CODEX_FOOTER_RE = re.compile(r"^ {2}\S.*$")
+CODEX_NOTICE_RE = re.compile(r"^ {3,}\S.*$")
 CLAUDE_PROMPT_RE = re.compile(r"^\s*❯[\s ]*(.*?)\s*$")
 # status-line commands can add padding beyond Claude Code's two-space indent.
 CLAUDE_FOOTER_RE = re.compile(r"^ {2,}\S.*$")
@@ -578,8 +582,16 @@ def trailing_input_block(text: str) -> list[str]:
     lines = text.splitlines()[-BOX_LINES:]
     while lines and codex_row_is_blank(lines[-1]):
         lines.pop()
-    if lines and CODEX_FOOTER_RE.match(lines[-1]):
-        lines.pop()
+    footer_rows = 1 if lines and CODEX_FOOTER_RE.match(lines[-1]) else 0
+    if (
+        len(lines) > 2
+        and codex_row_is_blank(lines[-3])
+        and CODEX_FOOTER_RE.match(lines[-2])
+        and (CODEX_FOOTER_RE.match(lines[-1]) or CODEX_NOTICE_RE.match(lines[-1]))
+    ):
+        footer_rows = 2
+    if footer_rows:
+        del lines[-footer_rows:]
         while lines and codex_row_is_blank(lines[-1]):
             lines.pop()
     start = len(lines)

@@ -96,7 +96,8 @@ struct agtermApp: App {
         let controlServer = ControlServer(library: library, actions: actions, settingsModel: settingsModel,
                                           identity: Self.appIdentity,
                                           zmxForegroundResolver: restored.foregroundResolver,
-                                          zmxClient: restored.zmxClient)
+                                          zmxClient: restored.zmxClient,
+                                          zmxOutdatedBefore: restored.zmxOutdatedBefore)
         _controlServer = State(initialValue: controlServer)
         let liveReset = LiveResetCoordinator(settingsModel: settingsModel,
                                              selection: { [weak controlServer] in controlServer?.liveResetSelection() })
@@ -171,7 +172,7 @@ struct agtermApp: App {
                         let qtVisible = QuickTerminalController.shared.holdsKey
                         return Self.makeScratchSurface(for: session, store: store,
                                                        env: surfaceEnv(for: session, pane: .scratch),
-                                                       suppressAutoFocus: session.programOverlayActive || qtVisible,
+                                                       suppressAutoFocus: session.coverOverlayActive || qtVisible,
                                                        actions: actions)
                     },
                     captureOnExit: captureOnExit,
@@ -295,6 +296,8 @@ struct agtermApp: App {
         /// finalizer/reap closures, where nothing else could reach it.
         let zmxClient: ZmxClient?
         let spawnContext: LaunchSpawnContext
+        /// zmxOutdatedBefore is this launch's `ZmxBuildRecord` cutoff.
+        var zmxOutdatedBefore: Date?
     }
 
     /// What the launch reap learned before any window mounted, read by every pane factory: the daemon names
@@ -336,15 +339,22 @@ struct agtermApp: App {
             })
         // the reap waits for the library so a confirmed Live sessions reset can narrow its marker against the
         // current claims first; both finish before any window mounts
-        let consumer = LiveResetConsumer.Dependencies(markerStore: LiveResetMarkerStore(directory: stateDirectory),
+        let outdatedBefore = ZmxBuildRecord.launchCutoff(bundledID: Self.bundledZmxBuildID(), directory: stateDirectory)
+        var consumer = LiveResetConsumer.Dependencies(markerStore: LiveResetMarkerStore(directory: stateDirectory),
                                                       probe: LiveAttributionProbe())
+        consumer.outdatedBefore = outdatedBefore
         let launch = LaunchOrchestration.Inputs(library: library, client: client, resolver: foregroundResolver,
                                                 context: context, launchDecision: ghostty.restoreLaunchDecision)
         if let outcome = LaunchOrchestration.run(launch, consumer: consumer) {
             ghostty.recordLiveResetOutcome(outcome)
         }
         return RestoredRuntime(library: library, foregroundResolver: foregroundResolver, zmxClient: client,
-                               spawnContext: context)
+                               spawnContext: context, zmxOutdatedBefore: outdatedBefore)
+    }
+
+    private static func bundledZmxBuildID() -> String? {
+        guard let url = Bundle.main.url(forResource: "BUILD", withExtension: nil, subdirectory: "zmx") else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
     }
 
     /// Opens the windows open at quit beyond the one SwiftUI auto-opened at launch (which claimed the launch
@@ -527,6 +537,8 @@ struct agtermApp: App {
         }
         // focus the surviving (now maximized) pane, else the session reselected to; the collapse/switch re-hosts
         // the target, hence the retry. `topmostSurface` prefers an overlay/scratch cover over the pane it hides.
+        if let survivor = store.session(withID: sessionID) ?? store.activeSession,
+           HtmlOverlayRegistry.shared.focusCover(of: survivor) { return }
         let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
         (target as? GhosttySurfaceView)?.focusAfterReparent()
     }
@@ -592,6 +604,7 @@ struct agtermApp: App {
             // is pending, but its async END must not return focus behind it.
             guard PickRegistry.shared.controller(for: windowID)?.modalPending != true else { return }
             actions.resignDismissedFieldEditor(for: windowID)
+            if HtmlOverlayRegistry.shared.focusCover(of: session) { return }
             if let surface = session.topmostSurface as? GhosttySurfaceView, !surface.deferFocusToAsk() { surface.focusAfterReparent() }
         }
         view.onSearchTotal = { total in store.session(withID: sessionID)?.searchTotal = total }

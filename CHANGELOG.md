@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.33.1 - 2026-09-28
+
+### Improved
+
+- **Show in Finder and Copy Link in HTML overlays.** With `--navigation`, a file page's bar gains Show in Finder, which reveals the currently displayed file in Finder, including a sibling page reached by navigation, and a URL page's bar gains Copy Link, which copies the current address with its query and fragment. `session overlay navigate finder` reveals the file from a script. Copy Link has no control command, since the socket never writes the clipboard; scripts read the current address from `tree`'s `htmlOverlays[].page` #663 @umputun
+- a new cookbook recipe, `html-doc-overlay`, gives Claude Code an `/agdoc` skill that builds a static HTML page about the issue, PR, plan, change or topic in hand from one of three templates and opens it in an overlay. The cookbook contribution rules now accept skill-only and README-only recipes, and the bundled agent skill asks for `--socket "$AGTERM_SOCKET"` when it is set and names `--window` for reading an HTML overlay back #662 @umputun
+
+## v0.33.0 - 2026-09-27
+
+### New Features
+
+- **HTML pages in overlays.** `session overlay open --html FILE` and `--url URL` show a generated report, chart or explainer, or a running dev server, in the session-wide, floating or per-pane overlay slots. A bar above the page names its file or origin and carries the close button, `--navigation` adds back, forward, reload and open in browser, and `overlay reload` and `overlay navigate back|forward|browser` drive it from the CLI. `tree` reads back the page metadata and load state. A page runs no JavaScript of its own unless opened with `--js`, a local file gets no file access beyond the directory `--cwd DIR` grants, and a browser open started by the page asks first. File pages follow the terminal theme through CSS variables for background, foreground and the 16 ANSI colors, and the bundled skill teaches agents to build explainers and reports on them. A page renders on the serving Mac, and opening one is refused while another Mac presents the session #659 @umputun
+
+### Improved
+
+- Ctrl-Tab and the recent and attention popovers read an attached session exactly like a local one, since it reports its cwd on the other Mac. Those rows now lead with the sidebar's cloud glyph and put the host ahead of the directory, e.g. `system · 192.168.1.33 · ~/.dot-files` #650 @umputun
+- **Reset Live Sessions** also selects panes whose zmx daemon predates the bundled zmx, such as daemons started before 0.32.0 that miss the attach-time lead claim. Live sessions keep their daemons through app updates, and the reset used to select only orphaned and app-attributed panes. The dialog, `zmx.reset`'s `outdated` count and an `outdated` flag on `zmx list` rows say which sessions that covers. As with any reset, running work in them stops #650 @umputun
+
+### Bug Fixes
+
+- a new session overlay or ask went to the attached Mac holding the presenter role even when the origin led the pane. After taking a pane's lead back on the origin, a `--block` overlay ran there but drew on the other Mac's screen, so nothing showed locally and the caller waited until a manual close. The handover now also requires the origin's pane to be a follower, and one already handed over stays where it is when the lead changes #661 @umputun
+- the Claude status hook silenced the pane's own agent when a compiled launcher started the real `claude` without `exec`, because every `claude` pid in the chain counted as a separate agent. A consecutive run of one agent name now counts once. Re-run **Help ▸ Install Agent Status Hooks** to pick it up #651 @TrevorBurnham #649
+- a remote session's pane showed nothing when ssh ended, never its `disconnected, exit N` line. libghostty runs a pane command through `exec`, which replaced the shell with ssh and dropped the rest of the wrapper #654 @wildsurfer
+- the `two-agent-chat` cookbook recipe refused every send to codex-cli 0.157, which draws two footer rows under its composer, and withheld the submit when the lower row was a right-aligned notice #656 3f066932 @umputun #652 #657
+
 ## v0.32.0 - 2026-09-24
 
 ### New Features

@@ -318,8 +318,8 @@ public final class AppStore {
                                           splitAxis: session.hasSplit ? session.splitAxis.rawValue : nil,
                                           splitRatio: session.hasSplit ? session.splitRatio : nil,
                                           splitFocused: session.hasSplit ? session.splitFocused : nil,
-                                          overlay: session.programOverlayActive,
-                                          overlaySizePercent: session.programOverlayActive
+                                          overlay: session.coverOverlayActive,
+                                          overlaySizePercent: session.coverOverlayActive
                                               ? session.overlaySizePercent : nil,
                                           paneOverlays: paneOverlays(session), hud: hudNode(session),
                                           ask: session.askPending.map {
@@ -357,7 +357,8 @@ public final class AppStore {
                                           splitCwd: session.hasSplit ? session.cwd(for: .right) : nil,
                                           liveAttribution: mainAttribution?.rawValue, splitLiveAttribution: splitAttribution?.rawValue,
                                           presentation: presentationNode(of: session), presenters: presentersNode(of: session),
-                                          remoteOverlays: remoteOverlayNodes(of: session))
+                                          remoteOverlays: remoteOverlayNodes(of: session),
+                                          htmlOverlays: htmlOverlayNodes(session))
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
                                         active: workspace.id == activeWorkspaceID,
@@ -532,7 +533,7 @@ public final class AppStore {
         finalizePaneIdentities([removed], alreadyFinalized: alreadyFinalized)
         removed.surface?.teardown()
         removed.splitSurface?.teardown()
-        removed.overlaySurface?.teardown()
+        removed.teardownOverlaySlot()
         removed.teardownPaneOverlays()
         removed.scratchSurface?.teardown()
         removed.discardHudBody() // a HUD whose surface never realized has no teardown to delete its body file
@@ -573,7 +574,7 @@ public final class AppStore {
         for session in workspace.sessions {
             session.surface?.teardown()
             session.splitSurface?.teardown()
-            session.overlaySurface?.teardown()
+            session.teardownOverlaySlot()
             session.teardownPaneOverlays()
             session.scratchSurface?.teardown()
             session.discardHudBody() // a HUD whose surface never realized has no teardown to delete its body file
