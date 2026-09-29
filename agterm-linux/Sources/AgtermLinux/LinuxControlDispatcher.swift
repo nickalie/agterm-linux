@@ -34,7 +34,7 @@ struct LinuxControlDispatcher {
                 .surfaceCursor,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionOverlayOpen,
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
-                .sessionOverlayCopy, .sessionOverlayText,
+                .sessionOverlayCopy, .sessionOverlayText, .sessionOverlayReload, .sessionOverlayNavigate,
                 .sessionBackground, .sessionText:
             return dispatchSessionSurfaceCommand(request)
         case .sessionType, .quickType, .quickText:
@@ -444,30 +444,9 @@ struct LinuxControlDispatcher {
             }
             return actions.setSurfaceZoom(request.target, window: request.args?.window, mode: mode)
         case .sessionOverlayOpen:
-            guard let command = request.args?.command, !command.isEmpty else {
-                return ControlResponse(ok: false, error: "session.overlay.open requires a command")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
-            }
-            let openPane: OverlayPane?
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let parsed): openPane = parsed
-            }
-            if openPane != nil, request.args?.sizePercent != nil {
-                return ControlResponse(ok: false, error: PaneOverlayError.sizePercentConflict)
-            }
-            return actions.openSessionOverlay(request.target, window: request.args?.window,
-                                              options: ControlSessionOverlayOpenOptions(
-                                                command: command,
-                                                cwd: request.args?.cwd,
-                                                wait: request.args?.wait ?? false,
-                                                sizePercent: request.args?.sizePercent,
-                                                backgroundColor: request.args?.color,
-                                                follow: request.args?.follow ?? false,
-                                                pane: openPane
-                                              ))
+            return dispatchOverlayOpen(request)
+        case .sessionOverlayReload, .sessionOverlayNavigate:
+            return dispatchOverlayPage(request)
         case .sessionOverlayClose:
             switch parseOverlayPane(request.args?.pane) {
             case .rejected(let response): return response
@@ -744,7 +723,7 @@ struct LinuxControlDispatcher {
     }
 
     /// The `session.overlay` `--pane` selector: `scratch` is rejected, there being no scratch pane to cover.
-    private func parseOverlayPane(_ raw: String?) -> PaneSelection<OverlayPane> {
+    func parseOverlayPane(_ raw: String?) -> PaneSelection<OverlayPane> {
         parsePane(raw, error: PaneOverlayError.invalidPane) { OverlayPane(controlName: $0) }
     }
 }

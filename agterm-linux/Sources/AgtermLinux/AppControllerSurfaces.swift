@@ -142,6 +142,7 @@ extension AppController {
     /// interactive throughout.
     private func syncPaneOverlays(_ s: Session, allowFocus: Bool) {
         for pane in OverlayPane.allCases {
+            if syncHtmlPane(s, pane, allowFocus: allowFocus) { continue }
             let wanted = s.paneOverlay(pane)
             if let wanted, paneOverlaySurfaces[s.id]?[pane] == nil {
                 guard let host = paneHosts[s.id]?[pane] else { continue }
@@ -187,6 +188,7 @@ extension AppController {
     /// Create/show/hide the ephemeral overlay terminal (runs `overlayCommand` over the session).
     private func syncOverlay(_ s: Session, allowFocus: Bool) {
         guard let stack = sessionStacks[s.id] else { return }
+        if syncHtmlCover(s, stack: stack, allowFocus: allowFocus) { return }
         if s.overlayActive {
             if overlaySurfaces[s.id] == nil, let cmd = s.overlayCommand {
                 let codePath = NSTemporaryDirectory() + "agterm-ovl-\(UUID().uuidString).code"
@@ -216,19 +218,11 @@ extension AppController {
                 }
                 s.overlaySurface = ov
                 overlaySurfaces[s.id] = ov
-                if s.overlaySizePercent != nil, let overlay = deckOverlay {
-                    let frame = OpaquePointer(gtk_frame_new(nil))
-                    gtk_widget_add_css_class(W(frame), "card")
-                    gtk_widget_add_css_class(W(frame), "agterm-quick")
-                    gtk_widget_set_overflow(W(frame), GTK_OVERFLOW_HIDDEN)   // clip GL child to the rounded card; see LinuxQuickCardPolicy
-                    gtk_widget_set_halign(W(frame), GTK_ALIGN_CENTER)
+                if s.overlaySizePercent != nil, let frame = makeFloatingOverlayFrame(s) {
                     // A HUD is passive: the click that would make its surface the focused widget must reach
                     // the session underneath instead, so the whole panel is untargetable.
                     if s.hudActive { gtk_widget_set_can_target(W(frame), 0) }
                     gtk_frame_set_child(cast(frame), W(ov.glArea))
-                    gtk_overlay_add_overlay(overlay, W(frame))
-                    gtk_widget_set_visible(W(frame), s.id == store.selectedSessionID ? 1 : 0)
-                    floatingOverlayFrames[s.id] = frame
                     applyFloatingOverlayGeometry(frame, session: s)
                 } else {
                     "overlay".withCString { _ = gtk_stack_add_named(stack, W(ov.glArea), $0) }
@@ -566,7 +560,9 @@ extension AppController {
         // a visible session dialog owns its region's keyboard, so the deck must not grab the pane back
         if focus, let active, sessionAskWantsFocus(active.id) { updateToggleIcons(); return }
         if focus, let active {
-            if active.programOverlayActive {
+            if LinuxHtmlOverlays.shared.focusCover(of: active) {
+                // the page holds the keyboard; the terminal beneath stays unfocused
+            } else if active.programOverlayActive {
                 overlaySurfaces[active.id]?.grabFocus()
             } else if active.scratchActive {
                 scratchSurfaces[active.id]?.grabFocus()
@@ -775,7 +771,7 @@ extension AppController {
         // a floating panel over this session mutes BOTH panes behind it; the quick terminal is
         // window-level, so it mutes whichever session the deck is showing. A HUD is exempt: it is a
         // message ABOUT the session, which stays lit, focused and typable under it.
-        let behindFloating = (floatingOverlayFrames[s.id] != nil && s.programOverlayActive)
+        let behindFloating = (floatingOverlayFrames[s.id] != nil && s.coverOverlayActive)
             || (quickVisible && s.id == store.selectedSessionID)
         let leftMuted = behindFloating || (s.isSplit && s.splitFocused)
         let rightMuted = behindFloating || (s.isSplit && !s.splitFocused)
@@ -790,6 +786,10 @@ extension AppController {
         }
         if let overlay = paneOverlaySurfaces[s.id]?[.right]?.glArea {
             gtk_widget_set_opacity(W(overlay), rightMuted ? dimmed : 1.0)
+        }
+        for (pane, muted) in [(OverlayPane.left, leftMuted), (.right, rightMuted)] {
+            guard let page = s.paneOverlay(pane)?.html else { continue }
+            LinuxHtmlOverlays.shared.existing(page.id)?.setDimmed(muted ? dimmed : 1.0)
         }
     }
 

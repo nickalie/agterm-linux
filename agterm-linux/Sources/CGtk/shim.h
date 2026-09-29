@@ -4,3 +4,4 @@
 #include <glib-unix.h>
 #include <epoxy/gl.h>
 #include "ghostty.h"
+#include "../AgtermWebKit/include/agterm_webkit.h"

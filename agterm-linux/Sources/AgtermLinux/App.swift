@@ -93,6 +93,7 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     gHooks = LinuxHookController.start(library: gLibrary)
     installAppCSS()
     installStatusColorCSS()
+    LinuxHtmlOverlays.shared.install()
     installAppIcons()
     gControlServer.start()
     // Quit cleanly on SIGTERM/SIGINT (session logout, `kill`, Ctrl+C) so flushOnQuit captures the
@@ -171,6 +172,9 @@ private let onShutdown: @MainActor @convention(c) (OpaquePointer?, gpointer?) ->
     .agterm-switcher { background-color: alpha(#1e2228, 0.96); padding: 10px; border-radius: 10px; border: 1px solid alpha(#ffffff, 0.12); }
     .agterm-switcher label { padding: 3px 0; opacity: 0.6; }
     .agterm-switcher label.agterm-switcher-current { opacity: 1; font-weight: bold; }
+    .agterm-html-strip { min-height: 28px; padding: 0 6px; background-color: alpha(@view_fg_color, 0.06); border-bottom: 1px solid alpha(@view_fg_color, 0.1); }
+    .agterm-html-strip button { min-height: 22px; min-width: 22px; padding: 2px; }
+    .agterm-html-identity { font-size: 0.9em; }
     .agterm-gl-error { color: #ffffff; background-color: alpha(#1e2228, 0.96); padding: 24px; border-radius: 10px; border: 1px solid alpha(#e5a50a, 0.5); }
     .agterm-dashboard { background-color: @window_bg_color; }
     .agterm-lead-cover { background-color: @view_bg_color; color: @view_fg_color; }
@@ -306,13 +310,15 @@ private let onRevealAction: @MainActor @convention(c) (OpaquePointer?, OpaquePoi
     guard let focus = LinuxNotificationRevealFocus.resolve(
         pane: pane, sessionExists: session != nil,
         hasSplit: session?.hasSplit ?? false,
-        coverActive: (session?.programOverlayActive ?? false) || (session?.scratchActive ?? false)
+        coverActive: (session?.coverOverlayActive ?? false) || (session?.scratchActive ?? false)
     ), let session else { return }
     let wantSplit = focus == .split
     session.splitFocused = wantSplit
     gtk_window_present(WIN(controller.windowPointer))
     controller.selectSession(id)
-    if focus == .overlay,
+    if focus == .overlay, LinuxHtmlOverlays.shared.focusCover(of: session) {
+        // a page covers the session and now holds the keyboard
+    } else if focus == .overlay,
        let cover = session.programOverlayActive ? controller.overlaySurfaces[id] : controller.scratchSurfaces[id] {
         cover.grabFocus()
     } else if session.hasSplit {

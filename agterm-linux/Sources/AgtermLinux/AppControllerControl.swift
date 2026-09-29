@@ -253,7 +253,9 @@ extension AppController {
     func searchTargetSurface(for id: UUID) -> GhosttySurface? {
         guard let s = store.session(withID: id) else { return nil }
         if s.programOverlayActive, let overlay = overlaySurfaces[id] { return overlay }
-        if s.scratchActive, let scratch = scratchSurfaces[id] { return scratch }
+        // a full page hides every terminal beneath it, so nothing is searchable
+        if s.htmlOverlayActive, s.fullOverlayActive { return nil }
+        if s.scratchActive, !s.coverOverlayActive, let scratch = scratchSurfaces[id] { return scratch }
         return focusedSurface(for: id)
     }
 
@@ -263,7 +265,7 @@ extension AppController {
     /// leaves `session.overlay.text` the only way to read the covering surface.
     func onScreenSurface(for id: UUID) -> GhosttySurface? {
         guard let s = store.session(withID: id) else { return nil }
-        if s.scratchActive, !s.programOverlayActive, let scratch = scratchSurfaces[id] { return scratch }
+        if s.scratchActive, !s.coverOverlayActive, let scratch = scratchSurfaces[id] { return scratch }
         return focusedSurface(for: id)
     }
 

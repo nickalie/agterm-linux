@@ -42,6 +42,7 @@ extension AppController {
     private func overlayReadSurface(_ id: UUID, pane: OverlayPane?) -> ResolveResponse<GhosttySurface> {
         guard let session = store.session(withID: id) else { return .failure(err("no such session")) }
         if session.remoteOverlays.slot(pane) != nil { return .failure(err(OverlayResultError.shownElsewhere)) }
+        if session.htmlCovers(pane) { return .failure(err(OverlayHtmlError.noRead)) }
         let occupied: Bool
         let surface: GhosttySurface?
         if let pane {

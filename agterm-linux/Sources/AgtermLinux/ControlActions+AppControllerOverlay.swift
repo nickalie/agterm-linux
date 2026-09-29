@@ -11,6 +11,8 @@ extension AppController {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            // a page never takes the remote program-job path: the store refuses it while a presenter owns the session
+            if let page = options.page { return openHtmlOverlay(id, page: page, options: options) }
             if let response = gPresentation.openRemoteOverlay(in: store, sessionID: id, options: options) { return response }
             if store.session(withID: id)?.remoteOverlays.slot(options.pane) != nil {
                 return err(options.pane == nil ? "overlay already open" : PaneOverlayError.alreadyOpen)
@@ -80,6 +82,7 @@ extension AppController {
         case .success(let id):
             guard let session = store.session(withID: id) else { return err("no such session") }
             if let slot = session.remoteOverlays.slot(pane), !slot.ended { return err(OverlayResultError.stillRunning) }
+            if session.htmlCovers(pane) { return err(OverlayHtmlError.noResult) }
             let (running, exitCode) = pane.map { (session.paneOverlay($0) != nil, session.paneOverlayExitCode($0)) }
                 ?? (session.programOverlayActive, session.overlayExitCode)
             if running { return err(OverlayResultError.stillRunning) }

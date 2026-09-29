@@ -1475,6 +1475,137 @@ def verify_v032_pane_background(env, state):
         stop(process)
 
 
+def verify_v033_html_overlay(env, state):
+    """HTML pages in the overlay slots on the WebKitGTK plugin: grant, JavaScript, reload, history, origin pin."""
+    site = os.path.join(state, "site")
+    report = os.path.join(state, "report")
+    os.makedirs(site)
+    os.makedirs(os.path.join(report, "pages"))
+    with open(os.path.join(state, "outside.svg"), "w", encoding="utf-8") as target:
+        target.write('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+    with open(os.path.join(report, "pages", "inside.svg"), "w", encoding="utf-8") as target:
+        target.write('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+    index = os.path.join(report, "index.html")
+
+    def write_report(title):
+        with open(index, "w", encoding="utf-8") as target:
+            target.write(f"<html><head><title>{title}</title></head><body>"
+                         "<h1>Report</h1><p style='color: var(--agterm-color-1)'>themed</p>"
+                         "<script>document.title = 'script-ran';</script></body></html>")
+
+    write_report("Report")
+    probe = os.path.join(report, "probe.html")
+    with open(probe, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>probing</title></head><body><script>"
+                     "const load = (src) => new Promise((done) => { const i = new Image();"
+                     " i.onload = () => done('ok'); i.onerror = () => done('refused'); i.src = src; });"
+                     "Promise.all([load('pages/inside.svg'), load('../outside.svg'), load('file://' + " + json.dumps(os.path.join(state, "outside.svg")) + ")])"
+                     ".then((r) => { document.title = r.join(','); });"
+                     "</script></body></html>")
+    with open(os.path.join(site, "index.html"), "w", encoding="utf-8") as target:
+        target.write("<html><head><title>Dev server</title></head><body>served</body></html>")
+    with open(os.path.join(site, "leave.html"), "w", encoding="utf-8") as target:
+        target.write("<html><head><title>Leaving</title></head><body><script>"
+                     "setTimeout(() => { location.href = 'http://localhost:' + location.port + '/'; }, 300);"
+                     "</script></body></html>")
+    server = subprocess.Popen([sys.executable, "-u", "-m", "http.server", "0", "--bind", "127.0.0.1", "--directory", site],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    port = None
+    try:
+        banner = server.stdout.readline()
+        port = int(re.search(r"port (\d+)", banner).group(1))
+    except (AttributeError, ValueError):
+        server.kill()
+        raise AssertionError(f"the test http server did not start: {banner!r}")
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, app = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        def request(cmd, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": session_id, "args": args})
+
+        def pages():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0].get("htmlOverlays") or []
+
+        def settled(pane=None, title=None):
+            def check():
+                page = next((item for item in pages() if item.get("pane") == pane), None)
+                if page and page["state"] != "loading" and (title is None or page.get("title") == title):
+                    return page
+                return None
+            return wait_for(check, f"the {pane or 'session-wide'} page never settled"
+                            + (f" on title {title}" if title else ""), timeout=30)
+
+        refused = request("session.overlay.open", url=f"http://127.0.0.1:{port}/", cwd=report)
+        assert not refused["ok"] and refused["error"] == "session.overlay.open: --cwd cannot be combined with --url", refused
+        outside = request("session.overlay.open", html=index, cwd=os.path.join(state, "site"))
+        assert not outside["ok"] and outside["error"] == "session.overlay.open: html file is outside cwd", outside
+
+        opened = request("session.overlay.open", html=index, cwd=report, navigation=True)
+        assert opened["ok"], opened
+        page = settled(title="Report")
+        assert page["state"] == "loaded" and page["file"] == index and page["cwd"] == report, page
+        assert page["page"] == index and page["navigation"] and not page["javascript"], page
+        assert named(find_app(process.pid), "index.html"), "the identity strip does not name the file"
+        assert request("session.overlay.result")["error"] == "no overlay result: the slot holds an html page"
+        assert request("session.overlay.text")["error"] == "no overlay to read: the slot holds an html page"
+        back = request("session.overlay.navigate", to="back")
+        assert not back["ok"] and back["error"] == "no page to go back to", back
+        screenshot = os.environ.get("AGTERM_UI_SCREENSHOT")
+        if screenshot and shutil.which("xwd"):
+            time.sleep(1.0)
+            subprocess.run(["xwd", "-root", "-silent", "-out", screenshot], check=False)
+
+        write_report("Rewritten")
+        assert request("session.overlay.reload")["ok"]
+        settled(title="Rewritten")
+        # the app's keymap reaches past a focused page, as a menu key equivalent does on macOS
+        focus_window(process.pid)
+        time.sleep(0.5)
+        type_x11_text("pagekeys", process.pid)
+        time.sleep(0.5)
+        under = request("session.text")["result"]["text"]
+        assert "pagekeys" not in under, "typing over the page reached the terminal beneath it"
+        press_x11_key("ctrl+shift+q", process.pid)
+        wait_for(lambda: not pages(), "Ctrl+Shift+Q over the focused page did not close it")
+        assert window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"] == session_id
+
+        opened = request("session.overlay.open", html=probe, cwd=report, javascript=True, sizePercent=70)
+        assert opened["ok"], opened
+        page = settled(title="ok,refused,refused")
+        assert page["javascript"], page
+        assert window_tree(env, window_id)["workspaces"][0]["sessions"][0]["overlaySizePercent"] == 70
+        assert request("session.overlay.close")["ok"]
+        wait_for(lambda: not pages(), "the floating page outlived its close")
+
+        text_only = request("session.overlay.open", html=index)
+        assert text_only["ok"], text_only
+        page = settled(title="Rewritten")
+        assert page["page"] == index and "cwd" not in page, page
+        assert request("session.overlay.close")["ok"]
+        wait_for(lambda: not pages(), "the text-loaded page outlived its close")
+
+        assert raw_control_json(env, {"cmd": "session.split", "target": session_id})["ok"]
+        opened = request("session.overlay.open", url=f"http://127.0.0.1:{port}/leave.html", pane="right", javascript=True)
+        assert opened["ok"], opened
+        settled(pane="right", title="Leaving")
+        time.sleep(2.0)
+        page = settled(pane="right")
+        assert page["state"] == "loaded" and page["page"] == f"http://127.0.0.1:{port}/leave.html", page
+        assert request("session.overlay.reload", pane="right", current=True)["ok"]
+        settled(pane="right", title="Leaving")
+        finder = request("session.overlay.navigate", to="finder", pane="right")
+        assert not finder["ok"] and finder["error"] == "show in Finder requires a file page", finder
+        assert request("session.overlay.close", pane="right")["ok"]
+        wait_for(lambda: not pages(), "the pane page outlived its close")
+        print("OK: HTML overlays load, grant, reload, pin their origin and read back on WebKitGTK")
+    finally:
+        stop(process)
+        server.kill()
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2725,7 +2856,7 @@ def main():
     if scenario is None:
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
-            "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead",
+            "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
             "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -2785,6 +2916,8 @@ def main():
             verify_v032_pane_background(env, state)
         elif scenario == "v032-pane-lead":
             verify_v032_pane_lead(env)
+        elif scenario == "v033-html-overlay":
+            verify_v033_html_overlay(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
