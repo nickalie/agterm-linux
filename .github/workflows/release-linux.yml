@@ -91,7 +91,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            libgtk-4-dev libadwaita-1-dev libepoxy-dev pkg-config \
+            libgtk-4-dev libadwaita-1-dev libepoxy-dev libwebkitgtk-6.0-dev pkg-config \
             librsvg2-dev libgirepository1.0-dev gobject-introspection \
             git curl jq ca-certificates xz-utils unzip zsh file imagemagick ripgrep \
             rpm cpio desktop-file-utils patchelf ncurses-bin \

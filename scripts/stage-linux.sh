@@ -20,12 +20,18 @@ fi
 
 BIN="$APP/.build/release/AgtermLinux"
 CTL="$APP/.build/release/agtermctl-linux"
+WEBKIT_PLUGIN="$APP/.build/release/libagterm-webkit.so"
 [[ -f "$BIN" ]] || {
   echo "no agterm-linux release build found — run 'swift build -c release' in agterm-linux/ first" >&2
   exit 1
 }
 [[ -f "$CTL" ]] || {
   echo "no agtermctl-linux release build found — run 'swift build -c release' in agterm-linux/ first" >&2
+  exit 1
+}
+
+[[ -f "$WEBKIT_PLUGIN" ]] || {
+  echo "no libagterm-webkit.so release build found — install libwebkitgtk-6.0-dev and rebuild" >&2
   exit 1
 }
 
@@ -44,6 +50,10 @@ install -m755 "$CTL" "$DEST/bin/agtermctl.bin"
   | while read -r lib; do
       [[ -f "$lib" ]] && cp -L "$lib" "$DEST/lib/"
     done
+
+# HTML overlays: the one library linked against WebKitGTK, which stays an optional host dependency, so it
+# sits outside lib/ and the app dlopens it through AGTERM_WEBKIT_PLUGIN
+install -Dm755 "$WEBKIT_PLUGIN" "$DEST/lib/agterm/libagterm-webkit.so"
 
 cp -R "$APP/vendor/ghostty/share/ghostty" "$DEST/share/ghostty"
 cp -R "$APP/vendor/ghostty/share/terminfo" "$DEST/share/terminfo"
@@ -96,6 +106,7 @@ export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 [[ -f "$HERE/share/agterm/VERSION" ]] && export AGTERM_VERSION="$(cat "$HERE/share/agterm/VERSION")"
 [[ -f "$HERE/share/agterm/COMMIT" ]] && export AGTERM_COMMIT="$(cat "$HERE/share/agterm/COMMIT")"
 [[ -x "$HERE/libexec/zmx" ]] && export AGTERM_ZMX="$HERE/libexec/zmx"
+[[ -f "$HERE/lib/agterm/libagterm-webkit.so" ]] && export AGTERM_WEBKIT_PLUGIN="$HERE/lib/agterm/libagterm-webkit.so"
 exec "$HERE/bin/agterm-linux.bin" "$@"
 LAUNCH
 chmod 0755 "$DEST/bin/agterm-linux"

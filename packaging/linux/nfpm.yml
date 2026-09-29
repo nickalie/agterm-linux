@@ -42,6 +42,8 @@ overrides:
       - libgtk-4-1 (>= 4.14)
       - libadwaita-1-0 (>= 1.5)
       - libepoxy0
+    recommends:
+      - libwebkitgtk-6.0-4
   rpm:
     depends:
       - bash
@@ -49,3 +51,5 @@ overrides:
       - gtk4 >= 4.14
       - libadwaita >= 1.5
       - libepoxy
+    recommends:
+      - webkitgtk6.0

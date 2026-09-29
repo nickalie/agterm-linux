@@ -49,6 +49,9 @@ export AGTERM_PACKAGE_ROOT="$PAYLOAD"
 "$NFPM" package --config "$ROOT/packaging/linux/nfpm.yml" --packager rpm --target "$RPM"
 
 cp -a "$PAYLOAD/." "$APPDIR/usr/"
+# WebKitGTK's helper processes are not relocatable, so the AppImage ships no HTML overlays; removing the
+# plugin before linuxdeploy also keeps it from bundling WebKitGTK as a dependency
+rm -rf "$APPDIR/usr/lib/agterm"
 ICON="$APPDIR/usr/share/icons/hicolor/512x512/apps/io.github.melonamin.agterm.png"
 (
   cd "$WORK"

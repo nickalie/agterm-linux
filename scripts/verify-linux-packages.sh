@@ -25,7 +25,7 @@ for artifact in "$TAR" "$DEB" "$RPM" "$APPIMAGE" "$CHECKSUMS"; do
   [[ -f "$artifact" ]] || { echo "missing release artifact: $artifact" >&2; exit 1; }
 done
 
-for command in dpkg-deb rpm rpm2cpio cpio desktop-file-validate file ldd; do
+for command in dpkg-deb rpm rpm2cpio cpio desktop-file-validate file ldd nm; do
   command -v "$command" >/dev/null || { echo "$command is required to verify Linux packages" >&2; exit 1; }
 done
 
@@ -56,6 +56,9 @@ verify_payload() {
   test -x "$payload/bin/agtermctl"
   test -x "$payload/bin/agtermctl.bin"
   test -f "$payload/lib/libghostty.so"
+  test -f "$payload/lib/agterm/libagterm-webkit.so"
+  nm -D --defined-only "$payload/lib/agterm/libagterm-webkit.so" | grep -q ' agterm_webkit_api_v1$'
+  ! find "$payload/lib" -maxdepth 1 -name 'libwebkitgtk*' -print -quit | grep -q .
   "$ROOT/scripts/verify-linux-resources.sh" "$payload/share"
   test -x "$payload/share/agterm/agent-status/agterm-agent-status.sh"
   test -x "$payload/share/agterm/agent-status/agterm-codex-status.sh"
@@ -135,6 +138,7 @@ test -f "$APPROOT/usr/share/agterm/agent-skill/SKILL.md"
 find "$APPROOT/usr/lib" -name 'libgtk-4.so.1' -print -quit | grep -q .
 find "$APPROOT/usr/lib" -name 'libadwaita-1.so.0' -print -quit | grep -q .
 find "$APPROOT/usr/lib" -name 'libghostty.so' -print -quit | grep -q .
+! find "$APPROOT/usr/lib" \( -name 'libagterm-webkit.so' -o -name 'libwebkitgtk*' \) -print -quit | grep -q .
 "$ROOT/scripts/verify-linux-resources.sh" "$APPROOT/usr/share"
 APPIMAGE_LIBRARY_PATH="$(find "$APPROOT/usr/lib" -type d -printf '%p:' | sed 's/:$//')"
 for binary in agterm-linux.bin agtermctl.bin; do
