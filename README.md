@@ -78,6 +78,11 @@ Every attach also opens a presentation stream (`ssh -T HOST agtermctl zmx presen
 status, context, `notify` notifications, HUD and split layout show here, and its asks and program overlays
 are handed to this machine. It interoperates with macOS peers from v0.32.0 in both directions; a row whose
 stream is down shows a disconnected-network glyph whose tooltip names the host, where macOS slashes the cloud.
+HTML overlays (`session overlay open --html|--url`) render in WebKitGTK 6.0, which the app loads at runtime
+through its `libagterm-webkit.so` plugin rather than linking, so agterm runs without it and refuses only those
+overlays, naming the package to install. The DEB and RPM recommend it; the AppImage ships no HTML overlays,
+because WebKitGTK's helper processes cannot be relocated into it. A page's file grant is enforced by a private
+URI scheme that serves only files under `--cwd`, and Show in Finder is Show in Files.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces
@@ -242,6 +247,8 @@ Requirements:
 
 - Swift 6.3.2.
 - GTK4, libadwaita, libepoxy, pkg-config, git, curl, ca-certificates, and xz.
+- WebKitGTK 6.0 development files (`libwebkitgtk-6.0-dev`) for HTML overlays; without them the build
+  leaves out the plugin, and packaging refuses to stage.
 - zsh, required by the shared `agtermCore` tests.
 - Zig 0.15.2 for the vendored libghostty build.
 

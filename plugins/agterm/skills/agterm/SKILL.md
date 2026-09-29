@@ -734,6 +734,8 @@ agtermctl session overlay reload --target "$AGTERM_SESSION_ID"   # after rewriti
   when the page links to other pages.
   `session overlay navigate finder` reveals the current file; scripts read a URL from `tree`'s `htmlOverlays[].page`.
 - `--size-percent N` makes it a floating panel, `--pane left|right` puts it over one split pane.
+- On Linux a page needs WebKitGTK 6.0 on the host; without it, and in the AppImage, the open is refused
+  with an install hint. Show in Finder is Show in Files there.
 - Build the page from the terminal theme, not a palette of your own, so it looks native in a dark or
   light theme (see below). A palette the user asks for wins.
 - Leave the page up for the user, who dismisses it with ⌘W or its close button. Call
