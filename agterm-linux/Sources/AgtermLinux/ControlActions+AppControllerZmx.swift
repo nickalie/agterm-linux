@@ -32,7 +32,8 @@ extension AppController {
         case .failure(let response): return response
         case .success(let result):
             let payload = ControlZmxInventory(restore: restoreStatus(), result: result,
-                                              endpoint: gZmx.client.endpoint)
+                                              endpoint: gZmx.client.endpoint,
+                                              outdatedBefore: gZmx.outdatedBefore)
             return ControlResponse(ok: true, result: ControlResult(zmx: payload))
         }
     }

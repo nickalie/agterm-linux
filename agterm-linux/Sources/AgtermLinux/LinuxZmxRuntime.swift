@@ -13,6 +13,8 @@ final class LinuxZmxRuntime {
     /// The daemons the launch reap saw alive. A SCHEDULING hint only: nil means the listing failed, and a
     /// name that died between the list and the attach merely spawns unpaced.
     var runningNames: Set<String>?
+    /// outdatedBefore is this launch's `ZmxBuildRecord` cutoff; nil when the zmx build id is not staged.
+    let outdatedBefore: Date?
 
     var requestedMode: RestoreMode { launchDecision.requested }
     var activeMode: RestoreMode { launchDecision.active }
@@ -24,8 +26,11 @@ final class LinuxZmxRuntime {
     init(settings: AppSettings) {
         launchDecision = settings.effectiveRestoreMode.launchDecision(
             liveUnavailableReason: LinuxZmxLaunch.liveUnavailableReason())
+        let executable = LinuxZmxLaunch.executablePath()
+        outdatedBefore = ZmxBuildRecord.launchCutoff(bundledID: LinuxZmxLaunch.buildID(executablePath: executable),
+                                                     directory: linuxStateDirectory())
         let client = LinuxZmxClient(
-            executablePath: LinuxZmxLaunch.executablePath(),
+            executablePath: executable,
             socketDirectory: ZmxSupport.socketDirectory(forStateDirectory: linuxStateDirectory().path))
         self.client = client
         foreground = LinuxZmxForegroundResolver(leaderProvider: { [client] timeout in

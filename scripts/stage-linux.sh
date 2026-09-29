@@ -56,6 +56,8 @@ cp -R "$APP/vendor/ghostty/share/terminfo" "$DEST/share/terminfo"
 }
 install -Dm755 "$APP/vendor/zmx/zmx" "$DEST/libexec/zmx"
 install -Dm644 "$APP/vendor/zmx/LICENSE" "$DEST/share/agterm/zmx-LICENSE"
+# the build id the app dates against its state directory's record, so `zmx list` can mark older daemons
+install -Dm644 "$APP/vendor/zmx/.zmx-build-stamp" "$DEST/share/agterm/zmx-BUILD"
 
 [[ -d "$APP/Resources/icons" ]] && cp -R "$APP/Resources/icons" "$DEST/share/icons"
 mkdir -p "$DEST/share/agterm"

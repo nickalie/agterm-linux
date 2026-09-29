@@ -30,6 +30,15 @@ enum LinuxZmxLaunch {
             .appendingPathComponent("libexec/zmx").path
     }
 
+    /// buildID is the setup stamp of the zmx at `executablePath`: the vendored tree's own stamp, or the one
+    /// `scripts/stage-linux.sh` stages beside the payload's license.
+    static func buildID(executablePath: String) -> String? {
+        let directory = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
+        let candidates = [directory.appendingPathComponent(".zmx-build-stamp"),
+                          directory.deletingLastPathComponent().appendingPathComponent("share/agterm/zmx-BUILD")]
+        return candidates.lazy.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.first
+    }
+
     /// Why Live sessions cannot run here, or nil when it can. Settings shows this beside the picker.
     static func liveUnavailableReason(
         environment: [String: String] = ProcessInfo.processInfo.environment,

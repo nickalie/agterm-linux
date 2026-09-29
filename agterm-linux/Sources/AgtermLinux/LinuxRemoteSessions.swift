@@ -173,7 +173,8 @@ extension AppController {
         let inventory = ControlZmxInventory(restore: restoreStatus(),
                                             result: ZmxInventory.join(observed: observed, claims: walk.claims,
                                                                       inventoryComplete: walk.complete),
-                                            endpoint: gZmx.client.endpoint)
+                                            endpoint: gZmx.client.endpoint,
+                                            outdatedBefore: gZmx.outdatedBefore)
         // a live store IS the open-window test: a closed window's panes are not attachable from here
         let windows = library.windows.compactMap { entry -> RemoteWindowProjection? in
             guard let controller = gWindows[entry.id] else { return nil }

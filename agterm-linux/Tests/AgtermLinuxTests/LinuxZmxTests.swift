@@ -18,6 +18,21 @@ struct LinuxZmxTests {
         #expect((derived as NSString).isAbsolutePath)
     }
 
+    @Test("the build id comes from the vendored stamp, else the payload's staged copy")
+    func buildIDLayouts() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agterm-zmx-build-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vendor = root.appendingPathComponent("vendor/zmx")
+        let share = root.appendingPathComponent("payload/share/agterm")
+        try FileManager.default.createDirectory(at: vendor, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: share, withIntermediateDirectories: true)
+        try "rev digest\n".write(to: vendor.appendingPathComponent(".zmx-build-stamp"), atomically: true, encoding: .utf8)
+        try "staged\n".write(to: share.appendingPathComponent("zmx-BUILD"), atomically: true, encoding: .utf8)
+        #expect(LinuxZmxLaunch.buildID(executablePath: vendor.appendingPathComponent("zmx").path) == "rev digest\n")
+        #expect(LinuxZmxLaunch.buildID(executablePath: root.appendingPathComponent("payload/libexec/zmx").path) == "staged\n")
+        #expect(LinuxZmxLaunch.buildID(executablePath: root.appendingPathComponent("elsewhere/zmx").path) == nil)
+    }
+
     @Test("live is refused when the account's login shell is not zsh")
     func liveNeedsZsh() {
         let reason = LinuxZmxLaunch.liveUnavailableReason(
