@@ -772,10 +772,11 @@ final class AppController {
         gtk_widget_add_css_class(W(box), "agterm-switcher")
         for id in sessionSwitcher.ordered {
             guard let s = store.session(withID: id), let label = op(gtk_label_new(s.displayName)) else { continue }
-            gtk_widget_set_margin_start(W(label), 18); gtk_widget_set_margin_end(W(label), 18)
             gtk_label_set_xalign(label, 0)
+            let row = Self.remoteLeading(label, session: s)
+            gtk_widget_set_margin_start(W(row), 18); gtk_widget_set_margin_end(W(row), 18)
             if id == sessionSwitcher.current { gtk_widget_add_css_class(W(label), "agterm-switcher-current") }
-            gtk_box_append(cast(box), W(label))
+            gtk_box_append(cast(box), W(row))
         }
         switcherBox = box
         gtk_overlay_add_overlay(overlay, W(box))

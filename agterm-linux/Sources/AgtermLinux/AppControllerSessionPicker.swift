@@ -70,7 +70,7 @@ extension AppController {
             let title = op(gtk_label_new(session.displayName))
             gtk_label_set_xalign(title, 0)
             gtk_widget_add_css_class(W(title), "heading")
-            gtk_box_append(cast(labels), W(title))
+            gtk_box_append(cast(labels), W(Self.remoteLeading(title, session: session)))
             let subtitle = op(gtk_label_new(entry.subtitle))
             gtk_label_set_xalign(subtitle, 0)
             gtk_widget_add_css_class(W(subtitle), "dim-label")
@@ -105,6 +105,16 @@ extension AppController {
         gtk_popover_popup(POPOVER(popover))
     }
 
+    /// remoteLeading leads `title` with the sidebar's cloud for a session attached from another machine.
+    static func remoteLeading(_ title: OpaquePointer?, session: Session) -> OpaquePointer? {
+        guard session.remoteHost != nil, let row = op(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)) else { return title }
+        let cloud = op(gtk_image_new_from_icon_name("weather-overcast-symbolic"))
+        "Remote".withCString { gtk_widget_set_tooltip_text(W(cloud), $0) }
+        gtk_box_append(cast(row), W(cloud))
+        gtk_box_append(cast(row), W(title))
+        return row
+    }
+
     /// The popover's row-stack cap at the default interface size, about ten rows.
     static let attentionRowsCap: Double = 440
 
@@ -115,7 +125,7 @@ extension AppController {
             .compactMap { store.session(withID: $0) }
             .map { session in
                 let workspace = store.workspace(forSession: session.id)?.name ?? ""
-                let detail = workspace.isEmpty ? session.subtitleDetail : "\(workspace) · \(session.subtitleDetail)"
+                let detail = workspace.isEmpty ? session.switcherDetail : "\(workspace) · \(session.switcherDetail)"
                 return SessionPickerRow(session: session, subtitle: detail, windowID: nil, enabled: true)
             }
     }
