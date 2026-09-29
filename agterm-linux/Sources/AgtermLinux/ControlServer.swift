@@ -232,7 +232,7 @@ final class ControlServer: @unchecked Sendable {
              .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus,
              .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch,
              .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
-             .sessionOverlayCopy, .sessionOverlayText,
+             .sessionOverlayCopy, .sessionOverlayText, .sessionOverlayReload, .sessionOverlayNavigate,
              .sessionHudOpen, .sessionHudUpdate, .sessionHudClose,
              .sessionBackground, .sessionResize, .sessionText, .sessionContext, .sessionSwap, .sessionLead, .notify,
              .fontInc, .fontDec, .fontReset:
