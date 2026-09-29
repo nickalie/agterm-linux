@@ -1600,6 +1600,22 @@ def verify_v033_html_overlay(env, state):
         assert not finder["ok"] and finder["error"] == "show in Finder requires a file page", finder
         assert request("session.overlay.close", pane="right")["ok"]
         wait_for(lambda: not pages(), "the pane page outlived its close")
+
+        def web_processes():
+            listing = subprocess.run(["pgrep", "-P", str(process.pid), "-f", "WebKitWebProcess"],
+                                     capture_output=True, text=True)
+            return len(listing.stdout.split())
+
+        before = web_processes()
+        second = control_json(env, "window", "new", "--json")["result"]["id"]
+        wait_for(lambda: any(item["id"] == second and item["open"] for item in window_list(env)),
+                 "the second window never opened")
+        other = window_tree(env, second)["workspaces"][0]["sessions"][0]["id"]
+        opened = raw_control_json(env, {"cmd": "session.overlay.open", "target": other, "args": {"html": index}})
+        assert opened["ok"], opened
+        wait_for(lambda: web_processes() > before, "the second window's page started no web process")
+        control_json(env, "window", "close", second, "--json")
+        wait_for(lambda: web_processes() <= before, "a closed window's page kept its web process", timeout=20)
         print("OK: HTML overlays load, grant, reload, pin their origin and read back on WebKitGTK")
     finally:
         stop(process)

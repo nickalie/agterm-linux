@@ -118,6 +118,11 @@ extension AppController {
         for s in scratchSurfaces.values { s.teardown() }
         for s in overlaySurfaces.values { s.teardown() }
         for panes in paneOverlaySurfaces.values { for s in panes.values { s.teardown() } }
+        // a page has no surface; the model releases it, and its web process with it, as macOS does here
+        for session in store.workspaces.flatMap(\.sessions) {
+            session.teardownOverlaySlot()
+            session.teardownPaneOverlays()
+        }
         library.closeWindow(windowID)
         gWindows[windowID] = nil
         if gController === self { gController = gWindows.values.first }
