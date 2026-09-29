@@ -140,6 +140,8 @@ struct LinuxRemotePresentationTests {
     @Test func anAskIsHandedToThePresenterAnsweredThereAndTakenBackWhenTheStreamGoes() throws {
         try withPair { pair in
             let (service, store, origin, viewer) = (pair.service, pair.store, pair.origin, pair.viewer)
+            try followRemotely(origin)
+            defer { ZmxLeadBook.shared.forget(pane: origin.paneIdentity) }
             let windowID = try #require(pair.host.library?.windowID(for: store))
             let buttons = [ControlAskButton(id: "yes", label: "Yes"), ControlAskButton(id: "no", label: "No")]
             let first = PendingAsk(id: UUID().uuidString, title: "deploy?", buttons: buttons)
@@ -169,6 +171,8 @@ struct LinuxRemotePresentationTests {
     @Test func aGuiAskTheOriginCannotPlaceAfterTheStreamGoesEndsPresentationLost() throws {
         try withPair { pair in
             let (service, store, origin, viewer) = (pair.service, pair.store, pair.origin, pair.viewer)
+            try followRemotely(origin)
+            defer { ZmxLeadBook.shared.forget(pane: origin.paneIdentity) }
             let windowID = try #require(pair.host.library?.windowID(for: store))
             pair.host.guiShown = true
             store.selectSession(viewer.id)
@@ -190,6 +194,8 @@ struct LinuxRemotePresentationTests {
     @Test func anOverlayJobIsClaimedOverTheSocketAndItsExitCodeIsTheOriginsResult() throws {
         try withPair { pair in
             let (service, store, origin, viewer) = (pair.service, pair.store, pair.origin, pair.viewer)
+            try followRemotely(origin)
+            defer { ZmxLeadBook.shared.forget(pane: origin.paneIdentity) }
             let ran = "/tmp/agt-rp-ran-\(UUID().uuidString.prefix(8))"
             defer { unlink(ran) }
             let options = ControlSessionOverlayOpenOptions(command: "echo ran >> \(ran); exit 7", cwd: "/tmp", wait: false,
@@ -379,4 +385,13 @@ final class BridgeTransport: RemotePresentationTransport {
               onClose: @escaping @MainActor (String) -> Void) -> RemotePresentationLink {
         process.open(argv, onLine: onLine, onClose: onClose)
     }
+}
+
+/// followRemotely makes the origin's pane a follower, which a handoff to the presenter requires (#661).
+@MainActor
+private func followRemotely(_ origin: Session) throws {
+    let attachment = ZmxLeadAttachment(claim: false)
+    ZmxLeadBook.shared.begin(attachment, pane: origin.paneIdentity)
+    _ = ZmxLeadBook.shared.apply(try #require(ZmxLeadNotice(title: "zmx-role;\(attachment.nonce):follower:1")),
+                                 pane: origin.paneIdentity)
 }
