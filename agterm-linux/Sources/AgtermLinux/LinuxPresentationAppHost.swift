@@ -145,6 +145,11 @@ extension GhosttySurface {
     /// The command exited and `waitAfterCommand` holds the surface on its exit prompt: the pane lead forgets
     /// the pane, a replica overlay records its end, and a replica pane is checked against the origin's layout.
     func exitHeld() {
+        // the wrapper is gone, so no key can end a wait; a replaced surface's late exit is not this pane's
+        if let session = controller?.store.session(withID: sessionID), session.surface === self || session.splitSurface === self,
+           let pane = leadPaneIdentity {
+            RemoteReconnectBook.shared.cancel(pane: pane)
+        }
         leadExitHeld()
         guard let controller, let session = controller.store.session(withID: sessionID) else { return }
         if role == .overlay {

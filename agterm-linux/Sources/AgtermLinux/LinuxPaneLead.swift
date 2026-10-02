@@ -40,6 +40,7 @@ extension GhosttySurface {
     /// Nil when the pane is not covered and the press takes its ordinary path; true when the cover consumed
     /// it. App shortcuts still run, as a macOS menu key equivalent does ahead of the covered view.
     func leadKeyGate(keyval: UInt32, keycode: UInt32, state: UInt32, event: OpaquePointer?) -> Bool? {
+        if let gate = reconnectKeyGate(keyval: keyval, keycode: keycode, state: state, event: event) { return gate }
         guard leadCovered else { return nil }
         if controller?.handleKey(keyval: keyval, keycode: keycode, state: state, sessionID: sessionID,
                                  origin: self, context: shortcutKeyContext(event: event, keycode: keycode)) == true {
@@ -78,6 +79,8 @@ extension GhosttySurface {
 enum PaneLeadKey {
     /// `GDK_SUPER_MASK`.
     static let superMask: UInt32 = 1 << 26
+    static let shiftMask: UInt32 = 1 << 0
+    static let controlMask: UInt32 = 1 << 2
 }
 
 /// What a fresh attach of an existing pane spawns with. It attaches and never creates: the trailing
@@ -116,24 +119,26 @@ extension AppController {
 
     /// Replaces `old` with a fresh attach of the same pane in the same slot. None of the pane's close paths
     /// run: the session, the daemon and the pane identity all stay, so the program inside keeps the
-    /// `AGTERM_PANE_ID` it was started with.
-    func reattachPane(_ old: GhosttySurface, claim: Bool) {
+    /// `AGTERM_PANE_ID` it was started with. The fresh attach is covered until its first report when `cover`;
+    /// false when nothing was attached.
+    @discardableResult
+    func reattachPane(_ old: GhosttySurface, claim: Bool, cover: Bool = true) -> Bool {
         let lead = ZmxLeadAttachment(claim: claim)
         guard let session = store.session(withID: old.sessionID), let pane = old.role.statusPane, pane != .scratch,
               let identity = session.paneIdentity(for: pane),
               let launch = reattachLaunch(old, session: session, identity: identity, pane: pane, lead: lead)
-        else { return }
+        else { return false }
         let id = session.id
         let slot: OverlayPane = pane == .right ? .right : .left
         let zoomTarget = TerminalZoomTarget.session(id, slot == .left ? .primary : .split)
         guard let container = terminalZoom.target == zoomTarget
-            ? zoomHost.flatMap({ op(adw_toolbar_view_get_content($0)) }) : paneHosts[id]?[slot] else { return }
+            ? zoomHost.flatMap({ op(adw_toolbar_view_get_content($0)) }) : paneHosts[id]?[slot] else { return false }
         // a dashboard cell's transient font is not the pane's: seeding from it would persist the small size
         let fontSize = old.dashboardFontOverride == nil ? old.currentFontSize() ?? session.fontSize : session.fontSize
         let fresh = GhosttySurface(sessionID: id, cwd: launch.workingDirectory, command: launch.command,
                                    env: launch.environment, controller: self, waitAfterCommand: launch.wait,
                                    role: old.role, fontSize: fontSize, backedByZmx: old.backedByZmx)
-        ZmxLeadBook.shared.begin(lead, pane: identity, reattaching: true)
+        ZmxLeadBook.shared.begin(lead, pane: identity, reattaching: cover)
         // the old client's exit must not close the pane the new one now owns
         _ = old.claimProcessExit()
         let hadFocus = gtk_widget_has_focus(W(old.glArea)) != 0
@@ -158,6 +163,7 @@ extension AppController {
         fresh.realizeWidgetIfNeeded()
         if hadFocus { fresh.grabFocus() }
         leadRoleChanged()
+        return true
     }
 
     private func reattachLaunch(_ old: GhosttySurface, session: Session, identity: UUID, pane: StatusPane,

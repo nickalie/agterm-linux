@@ -42,19 +42,20 @@ extension LinuxPresentationService {
         }
     }
 
-    /// Reconnects due clients and drops quiet links, once a second while any client runs.
+    /// Reconnects due clients and drops quiet links, once a second while any client or waiting pane remains.
     func tickRemoteClients() {
         for client in remoteClients.values { client.tick() }
     }
 
-    private func startRemoteTick() {
+    func startRemoteTick() {
         guard remoteTick?.isRunning != true else { return }
         remoteTick = LinuxRepeatingTimer(interval: 1) { [weak self] in
-            guard let self, !self.remoteClients.isEmpty else {
+            guard let self, !self.remoteClients.isEmpty || !RemoteReconnectBook.shared.isEmpty else {
                 self?.remoteTick = nil
                 return false
             }
             self.tickRemoteClients()
+            self.tickReconnects()
             return true
         }
     }

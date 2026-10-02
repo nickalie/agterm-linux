@@ -268,6 +268,11 @@ final class GhosttyApp: @unchecked Sendable {
                     runOnMain { MainActor.assumeIsolated { w.reportLead(notice) } }
                     return true
                 }
+                // the attach wrapper saying ssh lost the connection, never the pane's title
+                if let notice = RemoteLinkNotice(title: title) {
+                    runOnMain { MainActor.assumeIsolated { w.linkLost(notice) } }
+                    return true
+                }
                 w.applyTitle(staticTitle ?? title)
                 return true
             case GHOSTTY_ACTION_PWD:

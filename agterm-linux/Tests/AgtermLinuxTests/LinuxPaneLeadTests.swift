@@ -48,6 +48,27 @@ struct LinuxPaneLeadTests {
         #expect(launch.workingDirectory == "/home/u")
     }
 
+    @Test("a waiting pane retries on a press, swallows a lone modifier and leaves Ctrl+Shift chords to Ghostty")
+    func reconnectKeys() {
+        let chord = PaneLeadKey.controlMask | PaneLeadKey.shiftMask
+        #expect(ReconnectKey.classify(state: 0, modifier: false) == .retry)
+        #expect(ReconnectKey.classify(state: PaneLeadKey.controlMask, modifier: false) == .retry)
+        #expect(ReconnectKey.classify(state: 0, modifier: true) == .swallow)
+        #expect(ReconnectKey.classify(state: chord, modifier: false) == .terminal)
+    }
+
+    @Test("a remote re-attach reports a lost link under its own nonce")
+    func remoteReattachReportsALostLink() throws {
+        let local = UUID()
+        let binding = RemoteBinding(remoteSessionID: "s1", daemonsByLocalPane: [local: ZmxSupport.daemonName(for: UUID())],
+                                    presentationVersion: nil,
+                                    origin: RemoteBinding.Origin(host: "mac", endpoint: endpoint, sessionName: "work"))
+        let lead = ZmxLeadAttachment(nonce: "fresh2", claim: false)
+        let command = try #require(PaneReattach.remoteCommand(binding, pane: local, role: .left, lead: lead))
+        #expect(command.contains("agterm-remote;fresh2:lost"))
+        #expect(RemoteLinkNotice(title: "agterm-remote;fresh2:lost")?.nonce == "fresh2")
+    }
+
     @Test("a remote re-attach is rebuilt from the binding with a fresh nonce")
     func remoteReattachCarriesTheNewNonce() throws {
         let local = UUID()

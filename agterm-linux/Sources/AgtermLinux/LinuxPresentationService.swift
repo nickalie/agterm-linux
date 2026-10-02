@@ -61,6 +61,12 @@ final class LinuxPresentationService {
     var remoteTick: LinuxRepeatingTimer?
     /// The clock HUD deadlines and the clients' backoff read.
     var clock: () -> Date = Date.init
+    /// One reconnect probe, answered on the GTK thread; and the fresh attach of a pane whose host answered.
+    /// Injected by a test, so neither needs ssh nor a realized surface.
+    var probe: @MainActor ([String], @escaping @MainActor (Bool) -> Void) -> Void = LinuxPresentationService.runProbe
+    var reattach: @MainActor (GhosttySurface, Bool) -> Bool = { surface, cover in
+        surface.controller?.reattachPane(surface, claim: false, cover: cover) ?? false
+    }
     /// The one-shot deadlines, the hello and the overlay job windows. Injected by a test, `MainTimer` otherwise.
     var schedule: @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, body in
         _ = MainTimer.schedule(after: delay, body)
