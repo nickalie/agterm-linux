@@ -1720,6 +1720,34 @@ def verify_v034_html_bridge(env, state):
         stop(process)
 
 
+def verify_v034_session_placement(env, state):
+    """New Session lands after the selected session when the placement setting asks for it."""
+    with open(os.path.join(state, "settings.json"), "w", encoding="utf-8") as target:
+        json.dump({"newSessionPlacement": "afterCurrent"}, target)
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+
+        def ids():
+            return [item["id"] for item in window_tree(env, window_id)["workspaces"][0]["sessions"]]
+
+        first = ids()[0]
+        for _ in range(2):
+            assert raw_control_json(env, {"cmd": "session.new"})["ok"]
+        assert len(ids()) == 3 and ids()[0] == first, ids()
+        assert raw_control_json(env, {"cmd": "session.select", "target": first})["ok"]
+        before = ids()
+        focus_window(process.pid)
+        time.sleep(0.5)
+        press_x11_key("ctrl+shift+t", process.pid)
+        wait_for(lambda: len(ids()) == 4, "New Session never created a session")
+        after = ids()
+        assert after[0] == first and after[2:] == before[1:] and after[1] not in before, (before, after)
+        print("OK: New Session honors the placement setting")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2971,7 +2999,7 @@ def main():
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
-            "v034-html-bridge", "dashboard-modal", "context-menu",
+            "v034-html-bridge", "v034-session-placement", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -3034,6 +3062,8 @@ def main():
             verify_v033_html_overlay(env, state)
         elif scenario == "v034-html-bridge":
             verify_v034_html_bridge(env, state)
+        elif scenario == "v034-session-placement":
+            verify_v034_session_placement(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

@@ -2,6 +2,15 @@ import CGtk
 import Foundation
 import agtermCore
 
+extension AppSettings.NewSessionPlacement {
+    var displayName: String {
+        switch self {
+        case .end: "At the end of the workspace"
+        case .afterCurrent: "After the current session"
+        }
+    }
+}
+
 @MainActor
 extension AppController {
     func makeGeneralSettingsPage(_ settings: AppSettings) -> OpaquePointer? {
@@ -50,6 +59,14 @@ extension AppController {
                 preferencesButton(
                     "Choose…", handler: unsafeBitCast(onChooseSessionDirectory, to: GCallback.self))))
         adw_preferences_group_add(cast(sessions), W(custom))
+        let placements = AppSettings.NewSessionPlacement.allCases
+        adw_preferences_group_add(
+            cast(sessions),
+            W(
+                preferencesCombo(
+                    "New sessions are added", values: placements.map(\.displayName),
+                    selected: placements.firstIndex(of: settings.effectiveNewSessionPlacement) ?? 0,
+                    handler: unsafeBitCast(onSettingsSessionPlacement, to: GCallback.self))))
         adw_preferences_group_add(
             cast(sessions),
             W(
@@ -169,6 +186,14 @@ private let onSettingsFlaggedViewLayout: @MainActor @convention(c) (OpaquePointe
         let index = Int(adw_combo_row_get_selected(cast(row)))
         guard layouts.indices.contains(index) else { return }
         controllerForWidget(row)?.setFlaggedViewLayout(layouts[index])
+    }
+}
+private let onSettingsSessionPlacement: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        let placements = AppSettings.NewSessionPlacement.allCases
+        let index = Int(adw_combo_row_get_selected(cast(row)))
+        guard placements.indices.contains(index) else { return }
+        controllerForWidget(row)?.persist(\.newSessionPlacement, placements[index] == .end ? nil : placements[index].rawValue)
     }
 }
 private let onSettingsSessionDirectory: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in

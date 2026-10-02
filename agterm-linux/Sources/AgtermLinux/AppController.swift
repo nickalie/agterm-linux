@@ -336,8 +336,14 @@ final class AppController {
     func newSession() {
         guard let wsID = store.currentWorkspaceID else { return }
         noteUserActivity()
-        _ = store.addSession(toWorkspace: wsID, cwd: newSessionCwd())
+        _ = store.addSession(toWorkspace: wsID, cwd: newSessionCwd(), at: newSessionIndex(in: wsID))
         reconcile()
+    }
+    /// newSessionIndex applies the placement setting, which New Session honors and Open Directory, folder
+    /// drops and `session.new` do not; nil appends.
+    func newSessionIndex(in workspaceID: UUID) -> Int? {
+        store.newSessionInsertionIndex(inWorkspace: workspaceID,
+                                       placement: linuxSettingsStore().load().effectiveNewSessionPlacement)
     }
     func newSessionCwd() -> String {
         let active = store.activeSession

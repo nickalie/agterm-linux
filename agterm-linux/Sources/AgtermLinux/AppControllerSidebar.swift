@@ -8,7 +8,8 @@ extension AppController {
 
     func newSession(in workspaceID: UUID) {
         noteUserActivity()
-        guard store.addSession(toWorkspace: workspaceID, cwd: newSessionCwd()) != nil else { return }
+        guard store.addSession(toWorkspace: workspaceID, cwd: newSessionCwd(), at: newSessionIndex(in: workspaceID)) != nil
+        else { return }
         reconcile()
     }
 
