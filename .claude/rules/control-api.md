@@ -176,7 +176,7 @@ renumbering. Do not reintroduce a count anywhere.
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
   `.overlay.reload`, `.overlay.navigate`,
-  `.overlay.result`, `.overlay.copy`, `.overlay.text`, `.overlay.job.run`, `.hud.open`, `.hud.update`,
+  `.overlay.result`, `.overlay.submit`, `.overlay.copy`, `.overlay.text`, `.overlay.job.run`, `.hud.open`, `.hud.update`,
   `.hud.close`
 - `surface.zoom`, `surface.cursor`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`,
   `ask.open`, `ask.result`, `ask.cancel`
@@ -444,7 +444,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   the remote overlay's local-hold check, and zoom's `uncovered`/`paneVisible`. Program-only sites:
   `TerminalView.viewOnly`, zoom's `.overlay` and pane-overlay arms, and `overlay.result`'s running check.
   Under a page `topmostSurface` and `focusTarget` return nil, never the hidden pane, and zoom's
-  `resolveTarget` returns nil. `dropUnrealizedPaneOverlays` never drops a page, which has no surface to
+  `resolveTarget` returns nil. The font commands follow the page too: ⌘+/⌘−/⌘0 route to it when
+  `AppActions.htmlPageOwnsKeys` says so, and `font.*` when `Session.htmlHidesTerminal` does; both step the one
+  app-wide `HtmlZoom` factor, read back as `htmlOverlays[].zoom`, never the terminal the page hides.
+  `dropUnrealizedPaneOverlays` never drops a page, which has no surface to
   realize. Every path that empties a slot holding a page fires `HtmlOverlayReleases` once: `closeOverlay`,
   `closePaneOverlay`, `teardownPaneOverlay`, and `Session.teardownOverlaySlot` at session, workspace,
   pending-close and window teardown. The app's `HtmlOverlayRegistry` keys web views by the page's id, which
@@ -502,6 +505,33 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `HtmlSharing` isolates Finder and clipboard effects for hosted tests.
   A page never takes the remote program-job path:
   `open --html` is refused while a presenter owns the session, and one already open stays local.
+- A FILE page drives the control API from its own content; `site/docs.html#page-bridge` owns the user
+  contract. Pages are self-authored and trusted like a program overlay, which already inherits
+  `AGTERM_SOCKET`, so there are no permission tiers; a URL page gets none of it. Two surfaces, one path:
+  `HtmlOverlayBridge.adapterScript` handles `data-agterm` tags in its own content world, so it runs with
+  page JS off, and `--js` adds the page-world `agterm.request`. Both reach `HtmlOverlayPage.handleBridgeRequest`,
+  which refuses frames, resolves the page where it sits NOW through `htmlOverlaySlot`, builds the request
+  with `HtmlBridge` and dispatches through `HtmlOverlayRegistry.dispatch`, the closure `ControlServer` sets
+  to its own `dispatch` so the window cache refreshes and unmigrated commands still reach the app switch.
+  Each admitted request calls its reply closure exactly once; a page its command closed never sees it.
+- `HtmlBridge` speaks the wire protocol only (`{cmd, target, args}`, dotted names, typed fields) and
+  fills only what a page left out: its session for session-targeted commands (the `session.` names bar
+  `new`, `go` and `overlay.job.run`, plus `notify`, the `font.*` trio and a non-GUI `ask.open`), its pane
+  for its own overlay commands, its window as `target` for the window-object commands and as `args.window`
+  otherwise. An explicit target, `active`, window or batch resolves as over the socket; `zmx.attach` and
+  `dashboard` keep their ids and still land in the page's window, and `hooks.*`, which refuse any window,
+  get none. `sidebar` and `sidebar.mode` read no window, so a page drives the frontmost one.
+  `zmx.present`, `session.overlay.job.run` and `zmx.reset` are refused: a stream hand-off and post-reply work do not fit one request and reply.
+- The theme, adapter and helper scripts install as ONE set: removing user scripts removes them all, so a
+  separate install would lose the adapter at the next theme change. Release unregisters the handlers;
+  reload keeps them.
+- `HtmlPageOutcomes` keys every page's selector outcome by page id, outside the slot, so a caller blocked
+  on a page reads it after the page and its session are gone. A successful open registers `pending`;
+  `session.overlay.submit` records `submitted` before closing; `HtmlOverlayReleases.release` records
+  `dismissed` for a page still pending, before `onRelease`, which the registry keeps sole ownership of.
+  A soft close stays pending through the grace period. The open reply carries `pageID` and tree
+  `htmlOverlays` nodes carry `id`; `session.overlay.result --page` reads the outcome, and the CLI's
+  `--html --block` polls it with pick's exit codes.
 - One slot, asymmetric replacement: a second `hud.open` replaces the first, `overlay.open` closes a HUD and
   proceeds, and a HUD over a RUNNING program is refused `overlay already open`. `overlay.close`, Command-W,
   and session close tear a HUD down. `overlay.result` refuses with `OverlayHudError.noResult` because
@@ -1248,7 +1278,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   window size, and carries no lifetime deadline. Both pass `BatchMode=yes`, so key-based non-interactive
   auth is a precondition and a host-key or password prompt is a failure rather than a question a
   dispatcher could answer. The host is refused rather than escaped; paths and the remote command are
-  argv-quoted.
+  argv-quoted. The pane attach alone adds `LogLevel=ERROR`: ssh's disconnect chatter would land wherever the
+  remote program left the cursor, while a takeover or an unowned reattach runs with no probe first, so a
+  refused key or a changed host key must still print its reason.
 - Neither the host nor the session target is echoed into an error unless it PASSED validation. `invalid
   host` is a constant, and `zmx.attach` refuses a session carrying EMBEDDED whitespace or a control
   character through the same `RemoteSession.isPlain` the argv builders use — outer whitespace is trimmed
@@ -1297,13 +1329,22 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   a session; it never falls back or raises another window. The old `attachRemoteSession(host:session:)`
   witness remains callable. Hosts implementing only that form accept untargeted calls and refuse explicit
   window placement through the new overload's default.
-- The local cwd is this machine's home, not the remote one: libghostty chdirs the ssh process here and a
+- The local cwd is this machine's home, not the remote one: libghostty chdirs the pane process here and a
   path that exists on the far side may not exist locally. The attached shell reports its real cwd through
   the terminal stream.
 - Both panes set `commandWait`/`splitCommandWait`, so `shouldCloseOnChildExitAction` returns false, Ghostty
   holds its own press-any-key prompt, and the wrapper's one sanitized line — host, session, pane, exit
-  status — can be read under the last remote screen. It says nothing about reconnecting: the picker is a
-  keymap custom command the user supplies. There is NO timer, notification or session-wide coalescing.
+  status — can be read under the last remote screen. The wrapper runs as `/usr/bin/env /bin/sh -c`, since
+  libghostty's `exec -l` would otherwise replace the shell with ssh and drop it. On ssh's own 255 it instead
+  resets the reporting modes the remote left on, shows a reconnecting bar naming the host, reports `RemoteLinkNotice` (`OSC 2;agterm-remote;<lead nonce>:lost`, intercepted beside
+  `zmx-role;`) and waits on `cat`, which ends with the app's pty. The pane then never reaches `onExitHeld`;
+  `PaneLead.linkLost` believes only the current attachment's nonce and runs the same `remotePaneStopped`
+  cleanup. `RemoteReconnectBook` probes (`RemoteSession.probeCommand`) on the remote tick with
+  `RemoteRetryBackoff`, and a host that answers gets `reattachPane(claim: false)`, covered only when the
+  origin had reported a role or the attach it replaced dropped before its first report, and
+  `remotePaneResumed`. Re-running the attach in the shell was rejected: it
+  would claim the lead on every retry and skip that cleanup. A key on a waiting pane retries now; Command
+  chords pass.
   The held exit reaches the app at once through `onExitHeld`, which forgets the pane's lead and records the
   hold for remote layout, but it carries no ssh status: `/usr/bin/login` discards it. Each pane holding and
   closing on its own is also right when one half of a split dies.
@@ -1350,7 +1391,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   held after ssh exited. If it is the last realized replica, it stays until its ssh exits, then the row
   may close and following stops. Automatic primary removal is skipped while a local split is pending.
   A layout never removes a local replacement. Losing the stream alone keeps the panes; an ordinary ssh
-  disconnect still shows the disconnect line and holds for a keypress.
+  disconnect still shows the disconnect line, held or reconnecting per the exit-255 bullet above.
 - A mirrored status bypasses `applyControlStatus`: the blocked-owner rule already ran on the origin, and a
   second pass here would refuse a clear the origin accepted. The origin's pane travels as a stable pane
   identity and maps through `RemoteBinding`; one with no local counterpart maps to no pane, never to a
@@ -1481,10 +1522,11 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   so the program keeps its `AGTERM_PANE_ID`. The cover stays up from the swap until the new client's
   first report. An open search owned by the old surface is cleared synchronously, since END_SEARCH
   answers through a callback `destroySurface` clears first; a dashboard cell's transient font is carried
-  as the override and never seeds the new surface's own size. `wirePane`'s `onExitHeld` drops the
-  pane's lead state when an attach ends on its exit prompt, a failed take-over included, or the cover
-  would hide the line saying what died and swallow the key that closes it. The launch attaches and never creates: a trailing `/bin/sh -c` fails when the daemon is
-  gone, locally as for an attached pane, so a vanished session ends the pane. An attached pane is
+  as the override and never seeds the new surface's own size. `remotePaneStopped` drops the pane's
+  lead state when an attach ends on its exit prompt or waits to reconnect, a failed take-over included,
+  or the cover would hide the line saying what died and swallow the key that closes it. The launch
+  attaches and never creates: a trailing `/bin/sh -c` fails when the daemon is gone, locally as for an
+  attached pane, so a vanished session ends the pane. An attached pane is
   rebuilt from `RemoteBinding.Origin`, never from the pane's first command line, which carries that
   attachment's nonce.
 - The takeover key is consumed with its repeats and its release, and a Command chord on a covered pane

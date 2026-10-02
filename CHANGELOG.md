@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.34.0 - 2026-09-30
+
+### New Features
+
+- **HTML pages that drive agterm.** A page opened with `session overlay open --html` can run control commands. A button or form tagged `data-agterm="<command>"` sends that request with the page's JavaScript off, and a `--js` page also gets `agterm.request(cmd, {target, args})`, which resolves with the reply. A command left without a target acts on the page's own session, window or pane. A page can also answer the script that opened it: `session.overlay.submit` records a value and closes the page, and `session overlay open --html FILE --block` waits and prints the outcome, exiting 0 when answered and 2 when the page closes unanswered. `session overlay result --page ID` reads an outcome after the page is gone, and `session overlay submit --value TEXT` answers a page from the CLI. The open reply carries `pageID`, which `tree` reports as `htmlOverlays[].id`. URL pages and frames get no bridge, and commands that stream are refused #672 @umputun
+- **Remote panes reconnect after ssh loses the connection.** A pane attached with `zmx attach` used to end for good when ssh exited 255. It now keeps its last screen, shows a bar naming the host, and attaches again once the host answers, retried on the stream's backoff. Any key retries at once and ⌘W still closes the session. A changed host key or a removed key also exits 255, so such a pane keeps saying it is reconnecting without showing ssh's reason #655 @wildsurfer
+- Settings ▸ General ▸ Sessions gains **New sessions are added**: at the end of the workspace, as before, or right after the current session. It covers New Session from the menu, palette, keymap, Dock, sidebar footer and a workspace row's New Session and +. Open Directory, folder drops and `open -a` keep appending #665 @airs0urce
+
+### Bug Fixes
+
+- ⌘+, ⌘- and ⌘0 over an HTML overlay resized the terminal hidden under the page. They now zoom the page, and so does `font inc|dec|reset` when a page covers the addressed terminal. The zoom is one app-wide value that persists across pages and reads back as `tree`'s `htmlOverlays[].zoom` #670 @umputun
+- a Control-click on a sidebar row selected or toggled it instead of opening its context menu, and on a workspace row's + it created a session. Both now open the row menu #669 @umputun #668
+- reloading an HTML overlay whose first load never finished did nothing, so a failed page stayed failed. Reload now loads the source again ec925f62 @umputun
+
 ## v0.33.1 - 2026-09-28
 
 ### Improved

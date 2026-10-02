@@ -44,6 +44,7 @@ struct OverlayRunJobTests {
         func frames() -> [OverlayJobFrame] {
             close(helper)
             _ = done.wait(timeout: .now() + 5)
+            close(origin)
             return lock.withLock { received }
         }
 
@@ -142,6 +143,7 @@ struct OverlayRunJobTests {
 
     @Test func aReportTheAppNeverGetsLeavesTheHelpersStatusAlone() throws {
         let origin = FakeOrigin()
+        defer { close(origin.helper) }
         origin.serve(reply: Self.okReply, context: context("sleep 0.3; exit 5"))
         let runner = OverlayJobRunner(socket: origin.helper)
         let claimed = try runner.claim("job")
@@ -156,6 +158,7 @@ struct OverlayRunJobTests {
         let runner = OverlayJobRunner(socket: origin.helper)
 
         #expect(runner.run(try runner.claim("job"), baseEnvironment: Self.base) == 0)
+        #expect(origin.frames() == [.started, .exited(0)])
     }
 
     @Test func theTerminalTypeComesFromTheHelpersOwnTerminal() throws {
@@ -167,6 +170,7 @@ struct OverlayRunJobTests {
         base["TERM"] = "xterm-kitty"
 
         #expect(runner.run(try runner.claim("job"), baseEnvironment: base) == 0)
+        #expect(origin.frames() == [.started, .exited(0)])
     }
 
     @Test func theProgramGetsTheHelpersEnvironmentUnderTheContext() throws {
@@ -189,6 +193,7 @@ struct OverlayRunJobTests {
                                                                            "AGTERM_SESSION_ID": "stale"])
 
         #expect(status == 0)
+        #expect(origin.frames() == [.started, .exited(0)])
     }
 
     @Test func aCancelEndsTheProgramsDescendantsToo() throws {

@@ -4,10 +4,10 @@ description: >
   Drive agterm, a native macOS or GTK Linux terminal, through its agtermctl CLI. Use when running inside
   an agterm session and asked to control the terminal: create, rename, close, select or reorder sessions
   and workspaces; split panes; toggle the scratch terminal; run a program in an overlay and read its exit
-  status; build and show HTML explainers, reports, URLs or dev servers in an overlay; post a HUD or a
-  notification; show a picker or question dialog; display an image inline; type into a session,
-  copy its selection or search its scrollback; manage windows; change font size; set the theme; reload or
-  edit the keymap, event hooks and agterm-scoped ghostty config; subscribe to status,
+  status; create and show HTML pages, interactive ones too, URLs or dev servers in an overlay;
+  post a HUD or a desktop notification; show a picker or question dialog; display an image inline; type
+  into a session, copy its selection or search its scrollback; manage windows; change font size; set the
+  theme; reload or edit the keymap, event hooks and agterm-scoped ghostty config; subscribe to status,
   notification, lifecycle, pane-visibility and tree-change events.
   Covers the window/workspace/session addressing model and the AGTERM_* environment a spawned shell sees,
   attaching a session running on another machine, the cookbook recipes, the running version, and diagnosing
@@ -16,7 +16,7 @@ when_to_use: >
   Trigger on: agterm, agtermctl, AGTERM_SESSION_ID, and, from inside a session, plain requests such as
   split the pane, close the overlay, show a message over the session, show a question dialog, agtermctl ask,
   show an image inline, show this HTML page or artifact, make an HTML page or explainer for this and show
-  it, preview the report you generated, show this URL or the running dev server, search the scrollback, attach a session from another Mac, what recipes are there,
+  it, make a page that switches sessions or returns a choice, preview the report you generated, show this URL or the running dev server, search the scrollback, attach a session from another Mac, what recipes are there,
   the keymap editor will not open.
 allowed-tools: Bash(agtermctl *)
 ---
@@ -430,16 +430,18 @@ omitted when expanded).
   and `clear --pane` returns the pane to the default. `--opacity` 0.0–1.0. (An image/text watermark
   renders the pane opaque, overriding window translucency, so it shows; a `color` takes no opacity and
   honors the Settings window translucency instead.)
-- `session overlay open (<command> [--cwd DIR] [--wait] [--block] | --html FILE [--cwd DIR] [--navigation] [--js] | --url URL [--navigation] [--js]) [--size-percent N] [--background-color #rrggbb] [--follow] [--pane left|right]` ·
+- `session overlay open (<command> [--cwd DIR] [--wait] [--block] | --html FILE [--cwd DIR] [--navigation] [--js] [--block] | --url URL [--navigation] [--js]) [--size-percent N] [--background-color #rrggbb] [--follow] [--pane left|right]` ·
   `session overlay resize (--size-percent N | --full)` ·
   `session overlay close [--pane left|right]` ·
   `session overlay reload [--current] [--pane left|right]` ·
   `session overlay navigate back|forward|browser|finder [--pane left|right]` ·
-  `session overlay result [--pane left|right]` ·
+  `session overlay result [--pane left|right] | --page ID` ·
+  `session overlay submit --value TEXT [--pane left|right]` ·
   `session overlay copy [--pane left|right]` ·
   `session overlay text [--all] [--lines N] [--pane left|right]` — run a program (or show an HTML page, see
   [Displaying an HTML artifact](#displaying-an-html-artifact)) on top of a session; `--block`
-  waits for a PROGRAM to exit and exits with its status.
+  waits for a PROGRAM to exit and exits with its status, or for a PAGE to answer (see
+  [Interactive pages](#interactive-pages)).
   `session overlay copy` returns the selection made INSIDE the overlay and `session overlay text` its terminal buffer:
   `session copy` and `session text` both address the pane the overlay COVERS, so a selection made in the
   overlay reads there as `no selection` and `session text --pane right` returns the shell underneath.
@@ -609,7 +611,7 @@ Visibility/mode act on the frontmost window; `sidebar expand`/`collapse`/`width`
 
 **notify** — `notify <body> [--title T]` — post a desktop notification attributed to a session. Explicit control notifications deliver even when that session is focused; clicking one can reopen its encoded window. To signal that you need the user, prefer `session status` (`blocked`/`completed`), a persistent typed attention state rather than a one-shot banner; keep `notify` for a one-off nudge.
 
-**font** — `font inc|dec|reset [--pane left|right|scratch]` — change a session pane's font size (omitted/`left` = main pane, `right` = the split pane, `scratch` = the scratch terminal). Read the resulting size back from `tree` (`fontSize`/`splitFontSize`/`scratchFontSize` per pane).
+**font** — `font inc|dec|reset [--pane left|right|scratch]` — change a session pane's font size (omitted/`left` = main pane, `right` = the split pane, `scratch` = the scratch terminal). Read the resulting size back from `tree` (`fontSize`/`splitFontSize`/`scratchFontSize` per pane). A pane under an HTML overlay zooms the page instead, read back as `htmlOverlays[].zoom`.
 
 **keymap** — `keymap reload` — re-read `keymap.conf` (prints the parse-diagnostic count). `keymap list` — show the resolved keymap AND the live menu key equivalents: every built-in with its current binds (the menu chord first, then any `|`-separated alternatives a key monitor delivers), the custom commands, the parse diagnostics, and what the menu bar is actually dispatching. Use it to check a rebind took effect, to find a free chord, or to spot a chord the keymap resolved but the menu is not carrying.
 
@@ -780,9 +782,44 @@ Never declare `--agterm-*` yourself, on `:root` or anywhere: your value would re
 change reloads a file page and reaches a `--url` page at its next load. A `--url` page keeps browser styling: it gets the variables, which apply nothing
 unless the page uses them, and none of the default look.
 
-reference.md has the full detail under `session overlay open --html`: slot conflicts and the refusals,
-including `--wait`, `--block` and `session overlay result`, which a page has no use for. Outside agterm (see
-[Am I inside agterm?](#am-i-inside-agterm)) `open <file>` is the fallback.
+reference.md has the full detail under `session overlay open --html`: slot conflicts and the refusals.
+Outside agterm (see [Am I inside agterm?](#am-i-inside-agterm)) `open <file>` is the fallback.
+
+## Interactive pages
+
+A file page can drive agterm itself: switch sessions, rename, set a status, or hand a choice back to you,
+like `agtermctl pick` with a richer layout. Tag a button or form with `data-agterm` and the socket
+command name; it works with the page's JavaScript off. `data-agterm-target` is the target,
+`data-agterm-args` a JSON object of fixed arguments, a form's named inputs add fields (number inputs send
+numbers, checkboxes true/false), and `data-agterm-into="#id"` shows the reply or the error in that element.
+A button outside a form needs `type="button"`.
+
+```html
+<button type="button" data-agterm="session.select" data-agterm-target="3F2A">api</button>
+<form data-agterm="session.rename"><input name="name"><button>Rename</button></form>
+<button type="button" data-agterm="session.overlay.close">Done</button>
+```
+
+- A session command the page leaves untargeted acts on the page's own session (its own overlay commands
+  on its pane too), and a command addressing one window on the page's window; an explicit target or
+  `--window` is used as given. Global commands stay global, and `window.go`, `sidebar` and `sidebar.mode`
+  act from the frontmost window.
+- Rows written into the file are a snapshot. For a live list open the page with `--js` and call
+  `agterm.request(cmd, {target, args})`, which returns a promise with the reply: build rows from
+  `agterm.request('tree')` and redraw on a Refresh button.
+- To get a choice back, open with `--block` and give the page `session.overlay.submit` controls:
+
+```bash
+choice=$(agtermctl session overlay open --html /tmp/branches.html --block --target "$AGTERM_SESSION_ID" --follow)
+# exit 0: {"pageID":"…","outcome":"submitted","value":"main"}; exit 2: dismissed; 1: error
+```
+
+```html
+<button type="button" data-agterm="session.overlay.submit" data-agterm-args='{"value":"main"}'>main</button>
+```
+
+- Escape any outside text you put in such a page (an issue body, a log line): the page can run commands.
+- `--url` pages get none of this. reference.md has the rules under `session overlay submit`.
 
 ## Troubleshooting and reporting
 

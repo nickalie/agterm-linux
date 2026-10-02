@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Real UI tests: launch the actual app and drive the sidebar through the
@@ -353,6 +354,30 @@ final class SidebarUITests: XCTestCase {
                       "committing a rename should return focus to the session terminal")
     }
 
+    private func controlClick(_ element: XCUIElement) {
+        XCTAssertTrue(element.waitForHittable(timeout: 10), "row should be hittable for Control-click")
+        XCUIElement.perform(withKeyModifiers: .control) {
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        }
+    }
+
+    func testControlClickSessionRowOpensContextMenu() throws {
+        controlClick(sessionRow())
+        XCTAssertTrue(presentedMenuItem("Rename").isHittable, "Control-click should open the session row's context menu")
+    }
+
+    func testControlClickWorkspaceRowOpensContextMenuWithoutToggling() throws {
+        let session = sessionRow()
+        XCTAssertTrue(session.waitForExistence(timeout: 20), "seeded session row should be visible while expanded")
+        controlClick(app.staticTexts["workspace 1"])
+        let delete = presentedMenuItem("Delete Workspace")
+        XCTAssertTrue(delete.isHittable, "Control-click should open the workspace row's context menu")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(delete.waitForNonExistence(timeout: 5), "Esc should dismiss the context menu")
+        usleep(UInt32(NSEvent.doubleClickInterval * 1_000_000) + 300_000)
+        XCTAssertTrue(session.exists, "Control-click must not toggle the workspace's expansion")
+    }
+
     func testCloseSession() throws {
         let row = sessionRow()
         XCTAssertTrue(row.waitForExistence(timeout: 20))
@@ -452,6 +477,24 @@ final class SidebarUITests: XCTestCase {
         addBtn.click()
         XCTAssertTrue(pollSessionCount(workspace: "workspace 1", expected: 2, timeout: 5),
                       "workspace 1 should have 2 sessions after clicking the inline '+' button")
+    }
+
+    func testControlClickInlineAddSessionButtonOpensWorkspaceMenu() throws {
+        XCTAssertTrue(sessionRow().waitForExistence(timeout: 20), "seeded session should exist")
+        let ws = app.staticTexts["workspace 1"]
+        XCTAssertTrue(ws.waitForExistence(timeout: 5), "seeded workspace should exist")
+        let addBtn = app.descendants(matching: .any).matching(identifier: "workspace-add-session").firstMatch
+        let deadline = Date().addingTimeInterval(8)
+        while !addBtn.isHittable, Date() < deadline {
+            ws.hover()
+            usleep(200_000)
+        }
+        controlClick(addBtn)
+        let delete = presentedMenuItem("Delete Workspace")
+        XCTAssertTrue(delete.isHittable, "Control-click on '+' should open the workspace row's context menu")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        usleep(1_000_000)
+        XCTAssertTrue(pollSessionRowCount(1, timeout: 2), "Control-click on '+' must not create a session")
     }
 
     // the picker is system UI, so only its presentation is checked here; the resulting addSession(cwd:)

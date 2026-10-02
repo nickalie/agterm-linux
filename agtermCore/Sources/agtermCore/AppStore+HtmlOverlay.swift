@@ -47,6 +47,7 @@ extension AppStore {
             session.setPaneOverlayExitCode(nil, pane: pane)
             session.remoteOverlays.clearFailure(pane)
             session.setPaneOverlay(PaneOverlay(html: overlay, backgroundColor: backgroundColor), pane: pane)
+            HtmlPageOutcomes.shared.register(overlay.id)
             return nil
         }
         if session.hudActive { closeOverlay(sessionID) }
@@ -58,6 +59,20 @@ extension AppStore {
         session.overlayBackgroundColor = backgroundColor
         session.htmlOverlay = overlay
         session.overlayActive = true
+        HtmlPageOutcomes.shared.register(overlay.id)
+        return nil
+    }
+
+    /// submitHtmlOverlay answers the page in the slot `pane` addresses with `value`, then closes it. The answer is
+    /// recorded before the close, whose release would otherwise record the page dismissed.
+    public func submitHtmlOverlay(_ sessionID: UUID, pane: OverlayPane?, value: String) -> HtmlOverlayCommandFailure? {
+        let page: HtmlOverlay
+        switch htmlOverlay(sessionID, pane: pane) {
+        case .success(let found): page = found
+        case .failure(let failure): return failure
+        }
+        HtmlPageOutcomes.shared.submit(page.id, value: value)
+        if let pane { closePaneOverlay(sessionID, pane: pane) } else { closeOverlay(sessionID) }
         return nil
     }
 
@@ -120,7 +135,7 @@ extension AppStore {
         return slot.pane.map { closePaneOverlay(slot.session.id, pane: $0) } ?? closeOverlay(slot.session.id)
     }
 
-    func htmlOverlayNodes(_ session: Session) -> [ControlHtmlOverlayNode]? {
+    func htmlOverlayNodes(_ session: Session, zoom: Double?) -> [ControlHtmlOverlayNode]? {
         let slots: [(String?, HtmlOverlay?)] = [(nil, session.htmlOverlayActive ? session.htmlOverlay : nil)]
             + OverlayPane.allCases.map { ($0.rawValue, session.paneOverlay($0)?.html) }
         let nodes = slots.compactMap { pane, page in
@@ -133,7 +148,8 @@ extension AppStore {
                 return ControlHtmlOverlayNode(pane: pane, file: file, cwd: cwd, url: url, state: page.loadState.rawValue,
                                               error: page.loadError, page: page.current?.page, title: page.current?.title,
                                               canGoBack: page.current?.canGoBack, canGoForward: page.current?.canGoForward,
-                                              navigation: page.navigation ? true : nil, javascript: page.javascript)
+                                              navigation: page.navigation ? true : nil, javascript: page.javascript,
+                                              zoom: zoom, id: page.id.uuidString)
             }
         }
         return nodes.isEmpty ? nil : nodes

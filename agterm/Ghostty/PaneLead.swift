@@ -12,6 +12,11 @@ enum PaneLead {
     static var reattach: ((_ old: GhosttySurfaceView, _ claim: Bool) -> Void)?
     /// Tells the pane's store that read-back changed.
     static var roleChanged: ((_ view: GhosttySurfaceView) -> Void)?
+    /// Parks a pane whose ssh lost the connection until the host answers again. Installed by the app.
+    static var waitToReconnect: ((_ view: GhosttySurfaceView, _ cover: Bool) -> Void)?
+    /// Attaches a parked pane again without the claim, covered until its first report when `cover`. False
+    /// when nothing was attached.
+    static var reconnect: ((_ old: GhosttySurfaceView, _ cover: Bool) -> Bool)?
 
     /// The key that took a pane over, swallowed until it is released so neither its repeats nor its
     /// release reach the program through the new surface.
@@ -27,7 +32,16 @@ enum PaneLead {
         if role == .unowned { reattach?(view, false) }
     }
 
-    /// True when `event` belongs to a takeover and must not reach the terminal.
+    /// The attach wrapper's lost-connection report. Only the pane's current attachment is believed, and
+    /// only an origin that reported a role before will report one after the attach, so only it is covered.
+    /// A reconnect that lost the link before its first report inherits that from the attach it replaced.
+    static func linkLost(_ notice: RemoteLinkNotice, from view: GhosttySurfaceView) {
+        guard !view.isDestroyed, let pane = UUID(uuidString: view.paneToken),
+              ZmxLeadBook.shared.states[pane]?.attachment.nonce == notice.nonce else { return }
+        waitToReconnect?(view, ZmxLeadBook.shared.role(pane: pane) != nil || ZmxLeadBook.shared.reattaching(pane: pane))
+    }
+
+    /// True when `event` belongs to a takeover or a pane waiting to reconnect, and must not reach the terminal.
     static func consumes(_ event: NSEvent, in view: GhosttySurfaceView) -> Bool {
         // the takeover key's release can land on the destroyed old view, or on nothing while the new one
         // mounts, and never reach this. A fresh press of the same key proves it was released.
@@ -37,11 +51,25 @@ enum PaneLead {
             return true
         }
         if event.type == .keyDown, event.isARepeat, event.keyCode == takeoverKeyCode { return true }
+        let pane = UUID(uuidString: view.paneToken)
+        if RemoteReconnectBook.shared.waiting(pane: pane), let pane {
+            // Command chords outside the menu still reach Ghostty's keybinds
+            guard !event.modifierFlags.contains(.command) else { return false }
+            if event.type == .keyDown, !event.isARepeat {
+                // latched like a takeover key: still held when the fresh surface arrives, its repeats would
+                // otherwise reach a covered pane and take the lead with a claim
+                takeoverKeyCode = event.keyCode
+                RemoteReconnectBook.shared.retryNow(pane: pane, now: Date())
+            }
+            return true
+        }
         guard view.leadCovered else { return false }
         // a modifier alone is not the press the cover asks for, and app shortcuts stay the app's
         guard event.type == .keyDown, !event.modifierFlags.contains(.command) else { return true }
         // already on its way: the fresh surface is covered too until its first report
         guard !ZmxLeadBook.shared.reattaching(pane: UUID(uuidString: view.paneToken)) else { return true }
+        // a key held since before a drop sends only repeats while the pane waits, so it was never latched
+        guard !event.isARepeat else { return true }
         takeoverKeyCode = event.keyCode
         reattach?(view, true)
         return true

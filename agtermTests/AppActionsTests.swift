@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import XCTest
 @testable import agterm
 import agtermCore
@@ -25,6 +26,7 @@ final class AppActionsTests: XCTestCase {
 
     override func tearDown() async throws {
         await MainActor.run {
+            HtmlOverlayRegistry.shared.setZoom(1)
             actions = nil
             settings = nil
             library = nil
@@ -49,6 +51,69 @@ final class AppActionsTests: XCTestCase {
 
         XCTAssertEqual(opened, [], "an unraisable step must drop, not spawn a second scene for the store")
         XCTAssertEqual(library.frontmostWindowID, before, "a step that did not raise must not move frontmost")
+    }
+
+    private func coveredSession() throws -> Session {
+        let store = try XCTUnwrap(library.activeStore)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: try XCTUnwrap(store.currentWorkspaceID), cwd: "/tmp"))
+        let page = HtmlOverlay(source: .file(path: "/tmp/a/report.html", grantRoot: nil))
+        XCTAssertNil(store.openHtmlOverlay(session.id, pane: nil, overlay: page, sizePercent: nil))
+        store.selectSession(session.id)
+        return session
+    }
+
+    func testAPageOwnsTheFontKeysWhenFocusIsInsideIt() {
+        let webView = HtmlOverlayWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let inner = NSView()
+        webView.addSubview(inner)
+
+        XCTAssertTrue(AppActions.htmlPageOwnsKeys(responder: webView, session: nil))
+        XCTAssertTrue(AppActions.htmlPageOwnsKeys(responder: inner, session: nil))
+    }
+
+    func testACoveringPageOwnsTheFontKeysOnlyWhileNoTerminalHasFocus() throws {
+        let session = try coveredSession()
+
+        XCTAssertTrue(AppActions.htmlPageOwnsKeys(responder: nil, session: session))
+        XCTAssertTrue(AppActions.htmlPageOwnsKeys(responder: NSView(), session: session))
+        XCTAssertFalse(AppActions.htmlPageOwnsKeys(responder: GhosttySurfaceView(workingDirectory: NSTemporaryDirectory()),
+                                                   session: session))
+        XCTAssertTrue(try XCTUnwrap(library.activeStore).closeOverlay(session.id))
+        XCTAssertFalse(AppActions.htmlPageOwnsKeys(responder: nil, session: session))
+    }
+
+    func testAnAskCatcherOverACoveringPageLeavesTheKeysWithThePage() throws {
+        let session = try coveredSession()
+        let catcher = AskKeyCatcher.KeyCatcherView()
+
+        XCTAssertTrue(AppActions.htmlPageOwnsKeys(responder: catcher, session: session))
+    }
+
+    func testFontKeysUnderAnOpenDashboardLeaveThePageZoomAlone() throws {
+        let session = try coveredSession()
+        let dashboard = DashboardController()
+        dashboard.open(members: [DashboardMember(session: session.id, surface: .primary)])
+        let windowID = try XCTUnwrap(library.activeWindowID)
+        DashboardControllerRegistry.shared.register(windowID, controller: dashboard)
+        defer { DashboardControllerRegistry.shared.unregister(windowID) }
+
+        actions.increaseFontSize()
+
+        XCTAssertNil(settings.settings.htmlOverlayZoom)
+        XCTAssertEqual(HtmlOverlayRegistry.shared.zoom, 1)
+    }
+
+    func testFontKeysOverACoveringPageStepThePageZoom() throws {
+        _ = try coveredSession()
+
+        actions.increaseFontSize()
+        actions.decreaseFontSize()
+        actions.decreaseFontSize()
+
+        XCTAssertEqual(settings.settings.htmlOverlayZoom, 0.85)
+        XCTAssertEqual(HtmlOverlayRegistry.shared.zoom, 0.85)
+        actions.resetFontSize()
+        XCTAssertNil(settings.settings.htmlOverlayZoom)
     }
 
     private var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
@@ -95,5 +160,52 @@ final class AppActionsTests: XCTestCase {
         settings.setNewSessionCustomDirectory("/nowhere/custom")
         _ = try remoteActiveSession(reportedCwd: stateDir.appendingPathComponent("only-on-the-remote").path)
         XCTAssertEqual(actions.resolvedNewSessionCwd(), "/nowhere/custom")
+    }
+
+    func testNewSessionAfterCurrentLandsBehindTheSelectedSession() throws {
+        settings.setNewSessionPlacement(AppSettings.NewSessionPlacement.afterCurrent.rawValue)
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.currentWorkspaceID)
+        let first = try XCTUnwrap(store.activeSession)
+        _ = try XCTUnwrap(store.addSession(toWorkspace: workspace, cwd: home))
+        store.selectSession(first.id)
+
+        actions.newSession()
+
+        let sessions = try XCTUnwrap(store.workspaces.first { $0.id == workspace }).sessions
+        XCTAssertEqual(sessions.count, 3)
+        XCTAssertEqual(sessions[1].id, store.selectedSessionID)
+    }
+
+    func testOpenedDirectoryAppendsUnderAfterCurrent() throws {
+        settings.setNewSessionPlacement(AppSettings.NewSessionPlacement.afterCurrent.rawValue)
+        let store = try XCTUnwrap(library.activeStore)
+        let workspace = try XCTUnwrap(store.currentWorkspaceID)
+        let first = try XCTUnwrap(store.activeSession)
+        _ = try XCTUnwrap(store.addSession(toWorkspace: workspace, cwd: home))
+        store.selectSession(first.id)
+
+        XCTAssertTrue(actions.openSession(atDirectory: home))
+
+        let sessions = try XCTUnwrap(store.workspaces.first { $0.id == workspace }).sessions
+        XCTAssertEqual(sessions.count, 3)
+        XCTAssertEqual(sessions.last?.id, store.selectedSessionID)
+    }
+
+    func testNewSessionAfterCurrentAppendsWhenTheSelectionIsInAnotherWorkspace() throws {
+        settings.setNewSessionPlacement(AppSettings.NewSessionPlacement.afterCurrent.rawValue)
+        let store = try XCTUnwrap(library.activeStore)
+        let selected = try XCTUnwrap(store.selectedSessionID)
+        actions.newWorkspace()
+        let target = try XCTUnwrap(store.currentWorkspaceID)
+        for _ in 0..<2 { _ = try XCTUnwrap(store.addSession(toWorkspace: target, cwd: home, select: false)) }
+        XCTAssertEqual(store.currentWorkspaceID, target)
+        XCTAssertNotEqual(store.sessionLocation(ofSession: selected)?.workspace, target)
+
+        actions.newSession()
+
+        let sessions = try XCTUnwrap(store.workspaces.first { $0.id == target }).sessions
+        XCTAssertEqual(sessions.count, 3)
+        XCTAssertEqual(sessions.last?.id, store.selectedSessionID)
     }
 }

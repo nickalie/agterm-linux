@@ -38,6 +38,7 @@ final class ControlServerSessionActionsTests: XCTestCase {
 
     override func tearDown() async throws {
         await MainActor.run {
+            HtmlOverlayRegistry.shared.setZoom(1)
             server = nil
             actions = nil
             library = nil
@@ -45,6 +46,212 @@ final class ControlServerSessionActionsTests: XCTestCase {
             stateDir = nil
         }
         try await super.tearDown()
+    }
+
+    func testAPageOpensWithItsIdAndASubmitIsReadBackByThatId() throws {
+        let (_, session) = try addSession()
+        let options = ControlSessionOverlayOpenOptions(command: "", cwd: nil, wait: false, sizePercent: nil,
+                                                       backgroundColor: nil, follow: false, pane: nil,
+                                                       page: .file(path: "/tmp/pick.html", grantRoot: nil))
+        let opened = server.openSessionOverlay(session.id.uuidString, window: nil, options: options)
+        XCTAssertTrue(opened.ok, opened.error ?? "")
+        XCTAssertEqual(opened.result?.id, session.id.uuidString)
+        let pageID = try XCTUnwrap(opened.result?.pageID.flatMap(UUID.init(uuidString:)))
+        XCTAssertEqual(server.htmlPageResult(pageID).result?.pageOutcome?.outcome, .pending)
+
+        let submitted = server.submitSessionOverlay(session.id.uuidString, window: nil, pane: nil, value: "feature-x")
+        XCTAssertTrue(submitted.ok, submitted.error ?? "")
+        XCTAssertFalse(session.overlayActive)
+        XCTAssertEqual(server.htmlPageResult(pageID).result?.pageOutcome,
+                       ControlHtmlPageOutcome(pageID: pageID.uuidString, outcome: .submitted, value: "feature-x"))
+        let again = server.submitSessionOverlay(session.id.uuidString, window: nil, pane: nil, value: "x")
+        XCTAssertEqual(again.error, OverlayHtmlError.noOverlay)
+    }
+
+    func testATaggedButtonSwitchesSessionsThroughTheRealDispatch() async throws {
+        let (store, pageSession) = try addSession()
+        let (_, other) = try addSession()
+        store.selectSession(pageSession.id)
+        let file = stateDir.appendingPathComponent("switch.html")
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        try """
+            <title>S</title>
+            <button type="button" id="go" data-agterm="session.select" data-agterm-target="\(other.id.uuidString)">go</button>
+            """.write(to: file, atomically: true, encoding: .utf8)
+        let options = ControlSessionOverlayOpenOptions(command: "", cwd: nil, wait: false, sizePercent: nil,
+                                                       backgroundColor: nil, follow: false, pane: nil,
+                                                       page: .file(path: file.path, grantRoot: nil))
+        XCTAssertTrue(server.openSessionOverlay(pageSession.id.uuidString, window: nil, options: options).ok)
+        let overlay = try XCTUnwrap(pageSession.htmlOverlay)
+        let page = HtmlOverlayRegistry.shared.page(for: overlay, store: store)
+        defer { store.closeOverlay(pageSession.id) }
+        let deadline = Date().addingTimeInterval(10)
+        while page.webView.title != "S", Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+
+        _ = try await page.webView.evaluateJavaScript("document.getElementById('go').click()")
+        while store.selectedSessionID != other.id, Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(store.selectedSessionID, other.id)
+    }
+
+    @MainActor private final class Replies {
+        var values: [(Any?, String?)] = []
+    }
+
+    @MainActor private final class Gate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        var held = false
+        var dispatched = 0
+
+        func wait() async {
+            held = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func open() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    private func openPage(in store: AppStore, _ session: Session) throws -> HtmlOverlayPage {
+        let file = stateDir.appendingPathComponent("page-\(UUID().uuidString).html")
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        try "<title>P</title>".write(to: file, atomically: true, encoding: .utf8)
+        let options = ControlSessionOverlayOpenOptions(command: "", cwd: nil, wait: false, sizePercent: nil,
+                                                       backgroundColor: nil, follow: false, pane: nil,
+                                                       page: .file(path: file.path, grantRoot: nil))
+        XCTAssertTrue(server.openSessionOverlay(session.id.uuidString, window: nil, options: options).ok)
+        return HtmlOverlayRegistry.shared.page(for: try XCTUnwrap(session.htmlOverlay), store: store)
+    }
+
+    private func send(_ body: [String: Any], from page: HtmlOverlayPage) -> Replies {
+        let replies = Replies()
+        page.handleBridgeRequest(body, mainFrame: true) { replies.values.append(($0, $1)) }
+        return replies
+    }
+
+    private func settle(_ replies: Replies) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while replies.values.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(replies.values.count, 1, "a request is answered exactly once")
+    }
+
+    func testAPageClosingItselfIsAnsweredOnceAndRecordedDismissed() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        let replies = send(["cmd": "session.overlay.close"], from: page)
+        try await settle(replies)
+        XCTAssertNil(replies.values.first?.1)
+        XCTAssertFalse(session.overlayActive)
+        XCTAssertNil(HtmlOverlayRegistry.shared.existing(page.id))
+        XCTAssertEqual(HtmlPageOutcomes.shared.outcome(for: page.id)?.outcome, .dismissed)
+    }
+
+    func testAPageReloadingItselfIsAnsweredOnceAndKeepsItsPage() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        defer { store.closeOverlay(session.id) }
+        let revision = session.htmlOverlay?.reloadRevision ?? 0
+        let replies = send(["cmd": "session.overlay.reload"], from: page)
+        try await settle(replies)
+        XCTAssertNil(replies.values.first?.1)
+        XCTAssertEqual(session.htmlOverlay?.reloadRevision, revision + 1)
+        XCTAssertEqual(session.htmlOverlay?.reloadTarget, .current)
+        XCTAssertTrue(HtmlOverlayRegistry.shared.existing(page.id) === page)
+    }
+
+    func testAPageSubmittingItselfIsAnsweredOnceAndRecordedSubmitted() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        let replies = send(["cmd": "session.overlay.submit", "args": ["value": "v"]], from: page)
+        try await settle(replies)
+        XCTAssertNil(replies.values.first?.1)
+        XCTAssertEqual(HtmlPageOutcomes.shared.outcome(for: page.id)?.value, "v")
+        XCTAssertNil(HtmlOverlayRegistry.shared.existing(page.id))
+    }
+
+    func testAPageZoomingItselfThroughTheFontKeysKeepsItsIdAndOutcome() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        defer { store.closeOverlay(session.id) }
+        let increased = send(["cmd": "font.inc"], from: page)
+        try await settle(increased)
+        XCTAssertNil(increased.values.first?.1)
+        XCTAssertEqual(server.settingsModel.settings.htmlOverlayZoom, 1.15)
+        let id = session.id.uuidString
+        let node = server.controlTree(window: nil).result?.tree?.workspaces.flatMap(\.sessions).first { $0.id == id }
+        XCTAssertEqual(node?.htmlOverlays?.first?.zoom, 1.15)
+        XCTAssertEqual(node?.htmlOverlays?.first?.id, page.id.uuidString)
+        XCTAssertEqual(HtmlPageOutcomes.shared.outcome(for: page.id)?.outcome, .pending)
+
+        let reset = send(["cmd": "font.reset"], from: page)
+        try await settle(reset)
+        XCTAssertNil(reset.values.first?.1)
+        XCTAssertNil(server.settingsModel.settings.htmlOverlayZoom)
+        XCTAssertTrue(HtmlOverlayRegistry.shared.existing(page.id) === page)
+    }
+
+    func testACommandThatReloadsItsPageMidDispatchIsAnsweredOnce() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        defer { store.closeOverlay(session.id) }
+        let real = try XCTUnwrap(HtmlOverlayRegistry.shared.dispatch)
+        HtmlOverlayRegistry.shared.dispatch = { request in
+            page.applyTheme(HtmlOverlayTheme(background: "#123456", foreground: "#fedcba", dark: true))
+            return await real(request)
+        }
+        defer { HtmlOverlayRegistry.shared.dispatch = real }
+        let replies = send(["cmd": "version"], from: page)
+        try await settle(replies)
+        XCTAssertNil(replies.values.first?.1)
+    }
+
+    func testCommandWOverAPageRecordsItDismissed() throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        store.selectSession(session.id)
+        XCTAssertTrue(actions.closeActiveSession())
+        XCTAssertFalse(session.overlayActive)
+        XCTAssertEqual(HtmlPageOutcomes.shared.outcome(for: page.id)?.outcome, .dismissed)
+    }
+
+    func testARequestHeldAcrossAnAppSessionCloseStillAnswersOnceAndThePageGoesSilent() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        let real = try XCTUnwrap(HtmlOverlayRegistry.shared.dispatch)
+        let gate = Gate()
+        HtmlOverlayRegistry.shared.dispatch = { request in
+            gate.dispatched += 1
+            await gate.wait()
+            return await real(request)
+        }
+        defer { HtmlOverlayRegistry.shared.dispatch = real }
+
+        let held = send(["cmd": "session.rename", "args": ["name": "late"]], from: page)
+        let deadline = Date().addingTimeInterval(5)
+        while !gate.held, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(server.closeSession(session.id.uuidString, window: nil).ok)
+        gate.open()
+        try await settle(held)
+        XCTAssertNotNil(held.values.first?.1, "the rename reaches a session that is gone")
+
+        let later = send(["cmd": "session.rename", "args": ["name": "again"]], from: page)
+        try await settle(later)
+        XCTAssertEqual(later.values.first?.1, "page closed")
+        XCTAssertEqual(gate.dispatched, 1)
+    }
+
+    func testAPageRequestRefreshesTheCachedWindowList() async throws {
+        let (store, session) = try addSession()
+        let page = try openPage(in: store, session)
+        defer { store.closeOverlay(session.id) }
+        let replies = send(["cmd": "window.rename", "args": ["name": "from-page"]], from: page)
+        try await settle(replies)
+        XCTAssertNil(replies.values.first?.1)
+        let windowID = try XCTUnwrap(library.windowID(for: store)?.uuidString)
+        let cached = server.fastPathResponse(for: ControlRequest(cmd: .windowList))
+        XCTAssertEqual(cached?.result?.windows?.first { $0.id == windowID }?.name, "from-page")
     }
 
     private func overlayOptions(follow: Bool, pane: OverlayPane? = nil) -> ControlSessionOverlayOpenOptions {
@@ -362,6 +569,70 @@ final class ControlServerSessionActionsTests: XCTestCase {
             XCTAssertEqual(response.error, "session not realized", testCase.name)
             XCTAssertTrue(queued.granted, "\(testCase.name) must grant the pane before acting on it")
         }
+    }
+
+    func testFontUnderAPageStepsThePageZoomAndLeavesTheTerminal() throws {
+        let (store, target) = try addSession()
+        let queued = queuePane(in: target)
+        let page = HtmlOverlay(source: .file(path: "/tmp/a/report.html", grantRoot: nil))
+        XCTAssertNil(store.openHtmlOverlay(target.id, pane: nil, overlay: page, sizePercent: nil))
+        let id = target.id.uuidString
+
+        let increased = server.font(id, window: nil, pane: nil, action: "increase_font_size:1")
+
+        XCTAssertTrue(increased.ok, increased.error ?? "")
+        XCTAssertFalse(queued.granted, "the terminal under the page must not be touched")
+        XCTAssertEqual(server.settingsModel.settings.htmlOverlayZoom, 1.15)
+        let node = server.controlTree(window: nil).result?.tree?.workspaces.flatMap(\.sessions).first { $0.id == id }
+        XCTAssertEqual(node?.htmlOverlays?.first?.zoom, 1.15)
+
+        XCTAssertEqual(server.font(id, window: nil, pane: .right, action: "reset_font_size").error, "session has no split pane")
+        XCTAssertEqual(server.settingsModel.settings.htmlOverlayZoom, 1.15)
+        XCTAssertEqual(server.font(id, window: nil, pane: .scratch, action: "reset_font_size").error, "session has no scratch terminal")
+        XCTAssertTrue(server.font(id, window: nil, pane: nil, action: "reset_font_size").ok)
+        XCTAssertNil(server.settingsModel.settings.htmlOverlayZoom)
+        XCTAssertEqual(HtmlOverlayRegistry.shared.zoom, 1)
+    }
+
+    func testFontOnTheRightPaneUnderASessionWidePageZoomsThePage() throws {
+        let (store, target) = try addSession()
+        store.setSplitVisibility(target.id, shown: true)
+        let queued = queuePane(in: target, split: true)
+        let page = HtmlOverlay(source: .file(path: "/tmp/a/report.html", grantRoot: nil))
+        XCTAssertNil(store.openHtmlOverlay(target.id, pane: nil, overlay: page, sizePercent: nil))
+
+        let response = server.font(target.id.uuidString, window: nil, pane: .right, action: "decrease_font_size:1")
+
+        XCTAssertTrue(response.ok, response.error ?? "")
+        XCTAssertFalse(queued.granted)
+        XCTAssertEqual(server.settingsModel.settings.htmlOverlayZoom, 0.85)
+    }
+
+    func testFontOnAShownScratchUnderASessionWidePageZoomsThePage() throws {
+        let (store, target) = try addSession()
+        target.scratchSurface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        target.scratchActive = true
+        let page = HtmlOverlay(source: .file(path: "/tmp/a/report.html", grantRoot: nil))
+        XCTAssertNil(store.openHtmlOverlay(target.id, pane: nil, overlay: page, sizePercent: nil))
+
+        let response = server.font(target.id.uuidString, window: nil, pane: .scratch, action: "increase_font_size:1")
+
+        XCTAssertTrue(response.ok, response.error ?? "")
+        XCTAssertEqual(server.settingsModel.settings.htmlOverlayZoom, 1.15)
+    }
+
+    func testFontOnTheUncoveredPaneBesideAPanePageActsOnTheTerminal() throws {
+        let (store, target) = try addSession()
+        store.setSplitVisibility(target.id, shown: true)
+        let queued = queuePane(in: target)
+        let page = HtmlOverlay(source: .file(path: "/tmp/a/report.html", grantRoot: nil))
+        XCTAssertNil(store.openHtmlOverlay(target.id, pane: .right, overlay: page, sizePercent: nil))
+
+        let response = server.font(target.id.uuidString, window: nil, pane: .left, action: "increase_font_size:1")
+
+        XCTAssertEqual(response.error, "session not realized")
+        XCTAssertTrue(queued.granted)
+        XCTAssertNil(server.settingsModel.settings.htmlOverlayZoom)
     }
 
     func testReadsLeaveAQueuedPaneQueued() throws {

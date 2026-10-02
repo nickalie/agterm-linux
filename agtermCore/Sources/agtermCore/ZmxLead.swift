@@ -148,7 +148,7 @@ public final class ZmxLeadBook {
     /// to learn that a fresh attach replaced the surface.
     public private(set) var attachments = 0
 
-    public init() {}
+    init() {}
 
     /// Starts over for `pane`: reports of its previous attachment no longer match and are dropped.
     public func begin(_ attachment: ZmxLeadAttachment, pane: UUID, reattaching: Bool = false) {
