@@ -83,6 +83,8 @@ through its `libagterm-webkit.so` plugin rather than linking, so agterm runs wit
 overlays, naming the package to install. The DEB and RPM recommend it; the AppImage ships no HTML overlays,
 because WebKitGTK's helper processes cannot be relocated into it. A page's file grant is enforced by a private
 URI scheme that serves only files under `--cwd`, and Show in Finder is Show in Files.
+WebKitGTK names no frame on a script message, so a page's bridge handler exists only in agterm's isolated
+world; a `--js` page's `agterm.request` reaches it through a relay that accepts messages from the top window only.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces

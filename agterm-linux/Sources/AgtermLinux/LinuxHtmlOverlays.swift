@@ -40,6 +40,8 @@ final class LinuxHtmlOverlays {
     var sharing = LinuxHtmlSharing()
     private var pages: [UUID: LinuxHtmlOverlayPage] = [:]
     private(set) var terminal = HtmlOverlayTheme(background: "", foreground: "", dark: true)
+    /// zoom is the page zoom every page shows at, from settings.
+    private(set) var zoom = 1.0
     private static var backingColors: Set<String> = []
     private static var backingProvider: OpaquePointer?
 
@@ -60,12 +62,22 @@ final class LinuxHtmlOverlays {
         if let page = pages[overlay.id] { return page }
         guard case .success(let api) = LinuxWebKit.api() else { return nil }
         let page = LinuxHtmlOverlayPage(overlay: overlay, store: store, backgroundColor: backgroundColor,
-                                        theme: theme(backgroundColor: backgroundColor), api: api)
+                                        theme: theme(backgroundColor: backgroundColor), zoom: zoom, api: api)
         pages[overlay.id] = page
         return page
     }
 
     func existing(_ id: UUID) -> LinuxHtmlOverlayPage? { pages[id] }
+
+    func setZoom(_ zoom: Double) {
+        self.zoom = zoom
+        for page in pages.values { page.setZoom(zoom) }
+    }
+
+    /// windowID names the window `store` belongs to, so a page's untargeted request stays in its own window.
+    func windowID(of store: AppStore) -> String? {
+        gWindows.first { $0.value.store === store }?.key.uuidString
+    }
 
     func release(_ id: UUID) {
         pages.removeValue(forKey: id)?.close()

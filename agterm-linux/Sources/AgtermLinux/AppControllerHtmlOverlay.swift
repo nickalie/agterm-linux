@@ -61,6 +61,35 @@ extension AppController {
         if let overlay = deckOverlay { gtk_overlay_remove_overlay(overlay, W(frame)) }
     }
 
+    // MARK: - Zoom
+
+    /// resizeFont is the font keys, palette and menu: a page owning the keys zooms every page instead, since the
+    /// focused surface would be the terminal it hides. An open dashboard hides every page, so it keeps the terminal.
+    func resizeFont(_ action: String, origin: GhosttySurface? = nil) {
+        if origin == nil, htmlPageOwnsKeys {
+            stepHtmlOverlayZoom(action)
+            return
+        }
+        (origin ?? focusedSurface())?.performBindingAction(action)
+    }
+
+    /// htmlPageOwnsKeys is true when a page covers the active session while focus sits outside its terminals: on
+    /// the page itself, or on the sidebar.
+    private var htmlPageOwnsKeys: Bool {
+        guard !dashboard.isOpen, let session = store.activeSession, session.topmostHtmlOverlay != nil else { return false }
+        let id = session.id
+        let terminals = [surfaces[id], splitSurfaces[id], scratchSurfaces[id], overlaySurfaces[id]].compactMap { $0 }
+            + (paneOverlaySurfaces[id].map { Array($0.values) } ?? [])
+        return !terminals.contains { gtk_widget_has_focus(W($0.glArea)) != 0 }
+    }
+
+    /// stepHtmlOverlayZoom moves every page's zoom by a font binding action and persists it.
+    func stepHtmlOverlayZoom(_ action: String) {
+        guard let zoom = HtmlZoom.applying(fontAction: action, to: LinuxHtmlOverlays.shared.zoom) else { return }
+        persist(\.htmlOverlayZoom, zoom == 1 ? nil : zoom)
+        LinuxHtmlOverlays.shared.setZoom(zoom)
+    }
+
     // MARK: - Control
 
     func openHtmlOverlay(_ id: UUID, page source: HtmlSource, options: ControlSessionOverlayOpenOptions) -> ControlResponse {
@@ -75,7 +104,17 @@ extension AppController {
         }
         if options.follow { selectSession(id, userInitiated: false) }
         reconcile()
-        return ok(id)
+        return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, pageID: overlay.id.uuidString))
+    }
+
+    func submitSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?, value: String) -> ControlResponse {
+        switch resolveSessionResponse(target) {
+        case .failure(let response): return response
+        case .success(let id):
+            if let failure = store.submitHtmlOverlay(id, pane: pane, value: value) { return err(failure.message) }
+            reconcile()
+            return ok(id)
+        }
     }
 
     func reloadSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?, current: Bool) -> ControlResponse {

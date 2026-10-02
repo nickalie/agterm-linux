@@ -128,9 +128,9 @@ extension AppController {
         case .find: return { self.toggleSearch() }
         case .quickTerminal: return { self.toggleQuick() }
         case .toggleFullscreen: return { self.toggleWindowFullscreen() }
-        case .increaseFontSize: return { self.activeSurface()?.performBindingAction(FontBindingAction.increase) }
-        case .decreaseFontSize: return { self.activeSurface()?.performBindingAction(FontBindingAction.decrease) }
-        case .resetFontSize: return { self.activeSurface()?.performBindingAction(FontBindingAction.reset) }
+        case .increaseFontSize: return { self.resizeFont(FontBindingAction.increase) }
+        case .decreaseFontSize: return { self.resizeFont(FontBindingAction.decrease) }
+        case .resetFontSize: return { self.resizeFont(FontBindingAction.reset) }
         case .selectTheme: return { self.showThemePicker() }
         case .deleteWorkspace: return { if let id = self.store.currentWorkspaceID { self.store.removeWorkspace(id); self.reconcile() } }
         case .toggleFlaggedView: return { self.toggleFlaggedView() }

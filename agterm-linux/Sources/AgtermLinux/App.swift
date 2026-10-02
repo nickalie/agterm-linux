@@ -82,6 +82,7 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     // before the first store restores a session, so a restored row never renders under the wrong policy.
     SessionNaming.usesTerminalTitle = launchSettings.sessionNameFromTerminalTitle ?? false
     GhosttyApp.shared.flaggedViewLayout = launchSettings.effectiveFlaggedViewLayout
+    LinuxHtmlOverlays.shared.setZoom(launchSettings.effectiveHtmlOverlayZoom)
     // The restore policy freezes here, before the library reads its pane inventory: the launch reap, every
     // pane's spawn and a window reopened later all follow one decision.
     gZmx = LinuxZmxRuntime(settings: launchSettings)

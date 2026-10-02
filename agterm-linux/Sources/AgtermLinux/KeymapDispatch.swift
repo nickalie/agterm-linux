@@ -333,11 +333,11 @@ extension AppController {
         case .focusPane(let left):
             focusPane(left: left)
         case .fontIncrease:
-            (origin ?? focusedSurface())?.performBindingAction(FontBindingAction.increase)
+            resizeFont(FontBindingAction.increase, origin: origin)
         case .fontDecrease:
-            (origin ?? focusedSurface())?.performBindingAction(FontBindingAction.decrease)
+            resizeFont(FontBindingAction.decrease, origin: origin)
         case .fontReset:
-            (origin ?? focusedSurface())?.performBindingAction(FontBindingAction.reset)
+            resizeFont(FontBindingAction.reset, origin: origin)
         case .sessionSwitch(let reverse):
             quickSwitchSession(reverse: reverse)
         }
@@ -392,9 +392,9 @@ extension AppController {
         case .reopenRecent: reopenRecentClosed()
         case .undoClose: undoPendingClose()
         case .clearStatus: clearActiveStatus()
-        case .increaseFontSize: focusedSurface()?.performBindingAction(FontBindingAction.increase)
-        case .decreaseFontSize: focusedSurface()?.performBindingAction(FontBindingAction.decrease)
-        case .resetFontSize: focusedSurface()?.performBindingAction(FontBindingAction.reset)
+        case .increaseFontSize: resizeFont(FontBindingAction.increase)
+        case .decreaseFontSize: resizeFont(FontBindingAction.decrease)
+        case .resetFontSize: resizeFont(FontBindingAction.reset)
         case .toggleSplit: toggleSplit()
         case .toggleHorizontalSplit: toggleHorizontalSplit()
         case .toggleScratch: toggleScratch()

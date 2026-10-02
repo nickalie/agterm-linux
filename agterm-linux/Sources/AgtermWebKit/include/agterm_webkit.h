@@ -8,7 +8,7 @@
 #include <gtk/gtk.h>
 #include <stdbool.h>
 
-#define AGTERM_WEBKIT_ABI 1
+#define AGTERM_WEBKIT_ABI 2
 #define AGTERM_WEBKIT_ENTRY "agterm_webkit_api_v1"
 
 // Where a navigation lands. WebKitGTK does not say whether a navigation targets the main frame or a
@@ -43,14 +43,24 @@ typedef struct {
     // input is a native key or button press on the page, which script cannot synthesize
     void (*input)(void *context);
     void (*focus)(void *context);
+    // request is a page's control request as JSON; the app answers it once through `answer`, with `reply`
+    void (*request)(void *context, const char *json, void *reply);
 } agterm_web_callbacks;
+
+// The page bridge's scripts, NULL for a page without one. `adapter` and `relay` run in agterm's isolated
+// world, the only one the native handler is registered in; `helper` runs in the page's world.
+typedef struct {
+    const char *adapter;
+    const char *relay;
+    const char *helper;
+} agterm_web_bridge;
 
 typedef struct {
     unsigned abi;
     // create returns a floating GtkWidget. transparent leaves the canvas undrawn; theme_script runs at
     // document start in an isolated world, page JavaScript or not.
     GtkWidget *(*create)(const agterm_web_callbacks *callbacks, bool javascript, bool transparent,
-                         const char *theme_script);
+                         const char *theme_script, const agterm_web_bridge *bridge);
     void (*set_theme_script)(GtkWidget *view, const char *theme_script);
     void (*load_uri)(GtkWidget *view, const char *uri);
     // load_html shows text with no base URI, so the page can reach no file
@@ -67,6 +77,9 @@ typedef struct {
     char *(*title)(GtkWidget *view);
     // close stops the view and drops its callbacks, so nothing reaches a released context
     void (*close)(GtkWidget *view);
+    void (*set_zoom)(GtkWidget *view, double zoom);
+    // answer resolves a request with a JSON result, or rejects it with `error`, and frees `reply`
+    void (*answer)(void *reply, const char *result_json, const char *error);
 } agterm_webkit_api;
 
 typedef const agterm_webkit_api *(*agterm_webkit_entry)(void);

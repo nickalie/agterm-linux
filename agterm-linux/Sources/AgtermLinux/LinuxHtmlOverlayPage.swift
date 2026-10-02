@@ -38,7 +38,7 @@ final class LinuxHtmlOverlayPage {
     // in a loop, but it cannot make those events
     private var promptsSilenced = false
 
-    init(overlay: HtmlOverlay, store: AppStore, backgroundColor: String?, theme: HtmlOverlayTheme,
+    init(overlay: HtmlOverlay, store: AppStore, backgroundColor: String?, theme: HtmlOverlayTheme, zoom: Double,
          api: UnsafePointer<agterm_webkit_api>) {
         id = overlay.id
         self.overlay = overlay
@@ -56,12 +56,16 @@ final class LinuxHtmlOverlayPage {
         let handle = LinuxHtmlPageHandle()
         self.handle = handle
         var callbacks = agterm_web_callbacks(context: Unmanaged.passUnretained(handle).toOpaque(), decide: onDecide,
-                                             load: onLoad, changed: onChanged, input: onInput, focus: onFocus)
-        guard let created = theme.script(themed: Self.themed(overlay)).withCString({
-            api.pointee.create(&callbacks, overlay.javascript, Self.themed(overlay), $0)
+                                             load: onLoad, changed: onChanged, input: onInput, focus: onFocus,
+                                             request: onRequest)
+        guard let created = Self.withBridge(overlay, { bridge in
+            theme.script(themed: Self.themed(overlay)).withCString {
+                api.pointee.create(&callbacks, overlay.javascript, Self.themed(overlay), $0, bridge)
+            }
         }) else { preconditionFailure("WebKitGTK returned no web view") }
         view = OpaquePointer(created)
         _ = g_object_ref_sink(GOBJ(view))
+        api.pointee.set_zoom(W(view), zoom)
         handle.page = self
         build()
         loadOriginal()
@@ -70,6 +74,21 @@ final class LinuxHtmlOverlayPage {
     private static func themed(_ overlay: HtmlOverlay) -> Bool {
         if case .file = overlay.source { return true }
         return false
+    }
+
+    // a file page gets the bridge; a `--js` one also gets `agterm.request` and its relay. A URL page gets none.
+    private static func withBridge<R>(_ overlay: HtmlOverlay, _ body: (UnsafePointer<agterm_web_bridge>?) -> R) -> R {
+        guard themed(overlay) else { return body(nil) }
+        return LinuxHtmlBridge.adapterScript.withCString { adapter in
+            let scripts = overlay.javascript ? (LinuxHtmlBridge.relayScript, LinuxHtmlBridge.helperScript) : ("", "")
+            return scripts.0.withCString { relay in
+                scripts.1.withCString { helper in
+                    var bridge = agterm_web_bridge(adapter: adapter, relay: overlay.javascript ? relay : nil,
+                                                   helper: overlay.javascript ? helper : nil)
+                    return body(&bridge)
+                }
+            }
+        }
     }
 
     private func build() {
@@ -187,6 +206,10 @@ final class LinuxHtmlOverlayPage {
         gtk_widget_grab_focus(W(view))
     }
 
+    func setZoom(_ zoom: Double) {
+        api.pointee.set_zoom(W(view), zoom)
+    }
+
     func setDimmed(_ opacity: Double) {
         gtk_widget_set_opacity(W(panel), opacity)
     }
@@ -245,7 +268,8 @@ final class LinuxHtmlOverlayPage {
     }
 
     private func reloadShown() {
-        if !textLoaded, currentURI != nil {
+        // before a first commit WebKit has nothing to reload, so the source is loaded again instead
+        if !textLoaded, load.committed {
             load.begin()
             api.pointee.reload(W(view))
         } else {
@@ -410,6 +434,30 @@ final class LinuxHtmlOverlayPage {
     fileprivate func noteFocus() {
         LinuxHtmlOverlays.shared.pageFocused(id, store: store)
     }
+
+    /// handleBridgeRequest runs one request the page sent and answers it through `reply` exactly once. The page
+    /// is resolved where it sits NOW, so a request after a swap or a move acts from its new place. The dispatch
+    /// waits for the next main-loop turn, so a command that closes this page never runs inside WebKit's signal.
+    fileprivate func handleBridgeRequest(_ json: String, reply: UnsafeMutableRawPointer?) {
+        let api = api
+        let answer: @MainActor (String?, String?) -> Void = { result, error in
+            api.pointee.answer(reply, result, error)
+        }
+        guard let store, let slot = store.htmlOverlaySlot(id) else { return answer(nil, "page closed") }
+        let origin = HtmlBridgePage(window: LinuxHtmlOverlays.shared.windowID(of: store), session: slot.session.id,
+                                    pane: slot.pane)
+        let request: ControlRequest
+        switch LinuxHtmlBridge.request(json: json, page: origin) {
+        case .success(let built): request = built
+        case .failure(let refusal): return answer(nil, refusal.message)
+        }
+        _ = MainTimer.schedule(after: 0) {
+            ControlServer.dispatchFromPage(request) { response in
+                let (result, error) = LinuxHtmlBridge.reply(response)
+                answer(result, error)
+            }
+        }
+    }
 }
 
 /// LinuxHtmlStripAction is one strip button's target, held by its page for the button's life.
@@ -512,6 +560,21 @@ private let onChanged: @convention(c) (UnsafeMutableRawPointer?) -> Void = { con
 private let onInput: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
     let key = UInt(bitPattern: context)
     MainActor.assumeIsolated { page(key)?.noteInput() }
+}
+
+private typealias RequestCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+
+private let onRequest: RequestCallback = { context, json, reply in
+    let key = UInt(bitPattern: context)
+    let text = json.map { String(cString: $0) } ?? ""
+    let token = UInt(bitPattern: reply)
+    MainActor.assumeIsolated {
+        let reply = UnsafeMutableRawPointer(bitPattern: token)
+        guard let page = page(key) else {
+            return LinuxWebKit.answer(reply, nil, "page closed")
+        }
+        page.handleBridgeRequest(text, reply: reply)
+    }
 }
 
 private let onFocus: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in

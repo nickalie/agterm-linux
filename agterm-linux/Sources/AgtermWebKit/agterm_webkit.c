@@ -9,13 +9,24 @@
 // under the view's grant. file: stays a local scheme WebKit refuses to a non-local origin.
 #define GRANT_SCHEME "agterm-file"
 #define PAGE_KEY "agterm-page"
+#define BRIDGE_HANDLER "agterm"
+#define BRIDGE_WORLD "agterm-bridge"
 
 typedef struct {
     agterm_web_callbacks callbacks;
     bool active;
     char *grant_root;
     WebKitUserContentManager *content;
+    char *adapter;
+    char *relay;
+    char *helper;
 } page;
+
+// one pending page request: what `answer` needs to resolve it after the signal returned
+typedef struct {
+    WebKitScriptMessageReply *reply;
+    JSCContext *context;
+} pending_reply;
 
 static page *page_of(GtkWidget *view) {
     return view ? g_object_get_data(G_OBJECT(view), PAGE_KEY) : NULL;
@@ -24,6 +35,9 @@ static page *page_of(GtkWidget *view) {
 static void page_free(gpointer data) {
     page *state = data;
     g_free(state->grant_root);
+    g_free(state->adapter);
+    g_free(state->relay);
+    g_free(state->helper);
     g_clear_object(&state->content);
     g_free(state);
 }
@@ -289,24 +303,78 @@ static void on_focus(GtkEventControllerFocus *controller, gpointer data) {
     if (state->active) state->callbacks.focus(state->callbacks.context);
 }
 
-static void install_theme(page *state, const char *theme_script) {
-    webkit_user_content_manager_remove_all_scripts(state->content);
-    if (!theme_script) return;
-    WebKitUserScript *script = webkit_user_script_new_for_world(theme_script, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
-                                                                WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START,
-                                                                "agterm-theme", NULL, NULL);
+static void add_script(page *state, const char *source, WebKitUserScriptInjectionTime time, const char *world) {
+    if (!source) return;
+    WebKitUserScript *script = world
+        ? webkit_user_script_new_for_world(source, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, time, world, NULL, NULL)
+        : webkit_user_script_new(source, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, time, NULL, NULL);
     webkit_user_content_manager_add_script(state->content, script);
     webkit_user_script_unref(script);
 }
 
+// one set, because removing user scripts removes them all: the theme, and on a bridged page the bridge's
+static void install_scripts(page *state, const char *theme_script) {
+    webkit_user_content_manager_remove_all_scripts(state->content);
+    add_script(state, theme_script, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, "agterm-theme");
+    add_script(state, state->relay, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, BRIDGE_WORLD);
+    add_script(state, state->helper, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL);
+    add_script(state, state->adapter, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END, BRIDGE_WORLD);
+}
+
+static void answer(void *token, const char *result_json, const char *error) {
+    pending_reply *pending = token;
+    if (!pending) return;
+    JSCValue *value = result_json ? jsc_value_new_from_json(pending->context, result_json) : NULL;
+    if (value) {
+        webkit_script_message_reply_return_value(pending->reply, value);
+        g_object_unref(value);
+    } else {
+        webkit_script_message_reply_return_error_message(pending->reply, error ? error : "request failed");
+    }
+    webkit_script_message_reply_unref(pending->reply);
+    g_object_unref(pending->context);
+    g_free(pending);
+}
+
+// the handler lives only in agterm's isolated world, which no page script or frame can reach
+static gboolean on_bridge_message(WebKitUserContentManager *content, JSCValue *value, WebKitScriptMessageReply *reply,
+                                  gpointer data) {
+    (void)content;
+    page *state = data;
+    if (!state->active) {
+        webkit_script_message_reply_return_error_message(reply, "page closed");
+        return TRUE;
+    }
+    char *json = jsc_value_is_object(value) ? jsc_value_to_json(value, 0) : NULL;
+    if (!json) {
+        webkit_script_message_reply_return_error_message(reply, "invalid request");
+        return TRUE;
+    }
+    pending_reply *pending = g_new0(pending_reply, 1);
+    pending->reply = webkit_script_message_reply_ref(reply);
+    pending->context = g_object_ref(jsc_value_get_context(value));
+    state->callbacks.request(state->callbacks.context, json, pending);
+    g_free(json);
+    return TRUE;
+}
+
 static GtkWidget *create(const agterm_web_callbacks *callbacks, bool javascript, bool transparent,
-                         const char *theme_script) {
+                         const char *theme_script, const agterm_web_bridge *bridge) {
     register_scheme();
     page *state = g_new0(page, 1);
     state->callbacks = *callbacks;
     state->active = true;
     state->content = webkit_user_content_manager_new();
-    install_theme(state, theme_script);
+    if (bridge) {
+        state->adapter = g_strdup(bridge->adapter);
+        state->relay = g_strdup(bridge->relay);
+        state->helper = g_strdup(bridge->helper);
+        webkit_user_content_manager_register_script_message_handler_with_reply(state->content, BRIDGE_HANDLER,
+                                                                               BRIDGE_WORLD);
+        g_signal_connect(state->content, "script-message-with-reply-received::" BRIDGE_HANDLER,
+                         G_CALLBACK(on_bridge_message), state);
+    }
+    install_scripts(state, theme_script);
 
     WebKitSettings *settings = webkit_settings_new();
     webkit_settings_set_enable_javascript_markup(settings, javascript);
@@ -357,7 +425,7 @@ static GtkWidget *create(const agterm_web_callbacks *callbacks, bool javascript,
 
 static void set_theme_script(GtkWidget *view, const char *theme_script) {
     page *state = page_of(view);
-    if (state) install_theme(state, theme_script);
+    if (state) install_scripts(state, theme_script);
 }
 
 static void load_uri(GtkWidget *view, const char *uri) {
@@ -394,9 +462,16 @@ static char *title(GtkWidget *view) { return g_strdup(webkit_web_view_get_title(
 
 static void close_view(GtkWidget *view) {
     page *state = page_of(view);
-    if (state) state->active = false;
+    if (state) {
+        state->active = false;
+        if (state->adapter) {
+            webkit_user_content_manager_unregister_script_message_handler(state->content, BRIDGE_HANDLER, BRIDGE_WORLD);
+        }
+    }
     webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(view));
 }
+
+static void set_zoom(GtkWidget *view, double zoom) { webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW(view), zoom); }
 
 static const agterm_webkit_api api = {
     .abi = AGTERM_WEBKIT_ABI,
@@ -413,6 +488,8 @@ static const agterm_webkit_api api = {
     .uri = uri,
     .title = title,
     .close = close_view,
+    .set_zoom = set_zoom,
+    .answer = answer,
 };
 
 __attribute__((visibility("default"))) const agterm_webkit_api *agterm_webkit_api_v1(void) { return &api; }

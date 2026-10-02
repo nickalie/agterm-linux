@@ -101,7 +101,8 @@ extension AppController: ControlActions {
                 case .auto: return "auto"
                 }
             },
-            app: LinuxAppMetadata.identity, flaggedLayout: GhosttyApp.shared.flaggedViewLayout
+            app: LinuxAppMetadata.identity, flaggedLayout: GhosttyApp.shared.flaggedViewLayout,
+            htmlZoom: LinuxHtmlOverlays.shared.zoom
         )
         let tree = projectingLinuxAutoFollow(baseTree)
         return ControlResponse(ok: true, result: ControlResult(tree: tree))
@@ -583,6 +584,12 @@ extension AppController: ControlActions {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            if let missing = missingPane(id, pane: pane) { return missing }
+            // a pane under an HTML page steps the page zoom, as the keys do, and needs no realized terminal
+            if store.session(withID: id)?.htmlHidesTerminal(pane) == true {
+                stepHtmlOverlayZoom(action)
+                return ok(id)
+            }
             switch paneSurface(id, pane: pane) {
             case .failure(let response): return response
             case .success(let surface):
@@ -828,19 +835,24 @@ extension AppController: ControlActions {
     /// The surface a pane-addressed command acts on. An omitted pane keeps each command's own default: the
     /// focused pane, which is what a user pressing the same binding would reach.
     func paneSurface(_ id: UUID, pane: StatusPane?) -> ResolveResponse<GhosttySurface> {
+        if let missing = missingPane(id, pane: pane) { return .failure(missing) }
         let surface: GhosttySurface?
         switch pane {
         case nil: surface = focusedSurface(for: id)
         case .left: surface = surfaces[id]
-        case .right:
-            guard let split = splitSurfaces[id] else { return .failure(err("session has no split pane")) }
-            surface = split
-        case .scratch:
-            guard let scratch = scratchSurfaces[id] else { return .failure(err("session has no scratch terminal")) }
-            surface = scratch
+        case .right: surface = splitSurfaces[id]
+        case .scratch: surface = scratchSurfaces[id]
         }
         guard let surface else { return .failure(err("session not realized")) }
         return .success(surface)
+    }
+
+    private func missingPane(_ id: UUID, pane: StatusPane?) -> ControlResponse? {
+        switch pane {
+        case .right where splitSurfaces[id] == nil: err("session has no split pane")
+        case .scratch where scratchSurfaces[id] == nil: err("session has no scratch terminal")
+        default: nil
+        }
     }
 
     func searchSession(_ target: String?, window: String?,

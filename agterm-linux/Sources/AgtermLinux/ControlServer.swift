@@ -190,6 +190,23 @@ final class ControlServer: @unchecked Sendable {
         return box.value
     }
 
+    /// A page's request, run as the socket runs it; `reply` is called once, on the GTK thread. The ssh-bound
+    /// `zmx.tree` and `zmx.attach` run on a thread of their own, as over the socket.
+    @MainActor static func dispatchFromPage(_ req: ControlRequest, reply: @escaping @MainActor (ControlResponse) -> Void) {
+        if streams(req.cmd) {
+            return reply(ControlResponse(ok: false, error: "\(req.cmd.rawValue) cannot be sent from a page"))
+        }
+        guard req.cmd == .zmxTree || req.cmd == .zmxAttach else {
+            gPresentation.attach()
+            return reply(route(for: req).response(for: req))
+        }
+        let box = PageReplyBox(reply)
+        Thread.detachNewThread {
+            let response = remoteResponse(for: req)
+            runOnMain { MainActor.assumeIsolated { box.reply(response) } }
+        }
+    }
+
     private enum ControllerRoute {
         case controller(AppController?)
         case failure(String)
@@ -232,7 +249,7 @@ final class ControlServer: @unchecked Sendable {
              .sessionSplit, .sessionSplitClose, .sessionScratch, .sessionFocus,
              .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch,
              .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult,
-             .sessionOverlayCopy, .sessionOverlayText, .sessionOverlayReload, .sessionOverlayNavigate,
+             .sessionOverlaySubmit, .sessionOverlayCopy, .sessionOverlayText, .sessionOverlayReload, .sessionOverlayNavigate,
              .sessionHudOpen, .sessionHudUpdate, .sessionHudClose,
              .sessionBackground, .sessionResize, .sessionText, .sessionContext, .sessionSwap, .sessionLead, .notify,
              .fontInc, .fontDec, .fontReset:
@@ -323,6 +340,12 @@ final class ControlServer: @unchecked Sendable {
             return true
         }
     }
+}
+
+/// Carries a page's reply across the thread an ssh-bound request runs on; only the GTK thread calls it.
+final class PageReplyBox: @unchecked Sendable {
+    let reply: @MainActor (ControlResponse) -> Void
+    init(_ reply: @escaping @MainActor (ControlResponse) -> Void) { self.reply = reply }
 }
 
 final class ResponseBox: @unchecked Sendable {

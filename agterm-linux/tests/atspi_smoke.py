@@ -1622,6 +1622,104 @@ def verify_v033_html_overlay(env, state):
         server.kill()
 
 
+def verify_v034_html_bridge(env, state):
+    """Pages drive agterm from their own world only, answer as selectors, and zoom with the font commands."""
+    pages_dir = os.path.join(state, "pages")
+    os.makedirs(pages_dir)
+    bridge = os.path.join(pages_dir, "bridge.html")
+    with open(bridge, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>bridge</title></head><body>"
+                     "<button id='rename' type='button' data-agterm='session.rename'"
+                     " data-agterm-args='{\"name\":\"tagged\"}' data-agterm-into='#out'>Rename</button>"
+                     "<pre id='out'></pre><iframe src='frame.html'></iframe><script>"
+                     "const pause = (ms) => new Promise((done) => setTimeout(done, ms));"
+                     "window.addEventListener('load', async () => {"
+                     " const visible = !!(window.webkit && window.webkit.messageHandlers"
+                     " && window.webkit.messageHandlers.agterm);"
+                     " document.getElementById('rename').click();"
+                     " await pause(2500);"
+                     " let refused = '';"
+                     " try { await agterm.request('zmx.present'); } catch (error) { refused = error.message; }"
+                     " const tree = await agterm.request('tree');"
+                     " document.title = [visible ? 'handler-visible' : 'handler-hidden',"
+                     " document.getElementById('out').textContent ? 'answered' : 'silent', refused,"
+                     " tree.tree ? 'tree' : 'no-tree'].join('|');"
+                     "});</script></body></html>")
+    with open(os.path.join(pages_dir, "frame.html"), "w", encoding="utf-8") as target:
+        target.write("<html><body><script>setTimeout(() => parent.postMessage({agterm: 'request', id: 1,"
+                     " body: {cmd: 'session.rename', args: {name: 'spoofed'}}}, '*'), 1000);</script></body></html>")
+    submit = os.path.join(pages_dir, "submit.html")
+    with open(submit, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>submit</title></head><body><script>"
+                     "setTimeout(() => agterm.request('session.overlay.submit', {args: {value: 'chosen'}}), 300);"
+                     "</script></body></html>")
+    plain = os.path.join(pages_dir, "plain.html")
+    with open(plain, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>plain</title></head><body>plain</body></html>")
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+
+        def session():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        session_id = session()["id"]
+
+        def request(cmd, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": session_id, "args": args})
+
+        def page_title(title):
+            def check():
+                page = next(iter(session().get("htmlOverlays") or []), None)
+                return page if page and page.get("title", "").startswith(title) else None
+            return wait_for(check, f"the page never reached title {title}", timeout=30)
+
+        opened = request("session.overlay.open", html=bridge, cwd=pages_dir, javascript=True)
+        assert opened["ok"] and opened["result"].get("pageID"), opened
+        page = page_title("handler-")
+        assert page["title"] == "handler-hidden|answered|zmx.present cannot be sent from a page|tree", page
+        assert page["id"] == opened["result"]["pageID"], page
+        assert session()["name"] == "tagged", session()["name"]
+
+        assert control_json(env, "font", "inc", "--target", session_id, "--json")["ok"]
+        assert session()["htmlOverlays"][0]["zoom"] == 1.15, session()["htmlOverlays"]
+        with open(os.path.join(state, "settings.json"), encoding="utf-8") as source:
+            assert json.load(source).get("htmlOverlayZoom") == 1.15
+        assert control_json(env, "font", "reset", "--target", session_id, "--json")["ok"]
+        assert session()["htmlOverlays"][0]["zoom"] == 1, session()["htmlOverlays"]
+        assert request("session.overlay.close")["ok"]
+        dismissed = request("session.overlay.result", page=opened["result"]["pageID"])
+        assert dismissed["result"]["pageOutcome"]["outcome"] == "dismissed", dismissed
+
+        def block(page, javascript):
+            arguments = [CTL, "session", "overlay", "open", "--html", page, "--cwd", pages_dir, "--block",
+                         "--target", session_id, "--socket", env["AGTERM_CONTROL_SOCKET"]]
+            return subprocess.Popen(arguments + (["--js"] if javascript else []), env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+
+        chooser = block(submit, True)
+        output, errors = chooser.communicate(timeout=30)
+        assert chooser.returncode == 0, (chooser.returncode, output, errors)
+        assert json.loads(output)["outcome"] == "submitted" and json.loads(output)["value"] == "chosen", output
+        wait_for(lambda: not session().get("htmlOverlays"), "a submitted page stayed open")
+
+        closed = block(plain, False)
+        page_title("plain")
+        assert request("session.overlay.close")["ok"]
+        output, errors = closed.communicate(timeout=30)
+        assert closed.returncode == 2 and json.loads(output)["outcome"] == "dismissed", (closed.returncode, output, errors)
+
+        answered = block(plain, False)
+        page_title("plain")
+        assert request("session.overlay.submit", value="")["ok"]
+        output, errors = answered.communicate(timeout=30)
+        assert answered.returncode == 0 and json.loads(output)["value"] == "", (answered.returncode, output, errors)
+        print("OK: HTML pages drive agterm, answer as selectors and zoom on WebKitGTK")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2873,7 +2971,7 @@ def main():
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
-            "dashboard-modal", "context-menu",
+            "v034-html-bridge", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -2934,6 +3032,8 @@ def main():
             verify_v032_pane_lead(env)
         elif scenario == "v033-html-overlay":
             verify_v033_html_overlay(env, state)
+        elif scenario == "v034-html-bridge":
+            verify_v034_html_bridge(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

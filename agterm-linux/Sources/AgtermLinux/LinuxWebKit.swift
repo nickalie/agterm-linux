@@ -34,6 +34,12 @@ enum LinuxWebKit {
         return paths
     }
 
+    /// answer resolves a page request whose page is gone; the reply still has to be freed.
+    static func answer(_ reply: UnsafeMutableRawPointer?, _ result: String?, _ error: String?) {
+        guard case .success(let api)? = loaded else { return }
+        api.pointee.answer(reply, result, error)
+    }
+
     static func load(candidates: [String]) -> Result<UnsafePointer<agterm_webkit_api>, LoadFailure> {
         guard let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
             return .failure(LoadFailure(message: "html overlays are not available in this build"))
