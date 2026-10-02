@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UPSTREAM_BASE_TAG: "v0.33.1"
-  UPSTREAM_BASE_COMMIT: "8153a64a8f435ded979a81600b48e7fecace3fdb"
+  UPSTREAM_BASE_TAG: "v0.34.0"
+  UPSTREAM_BASE_COMMIT: "c865bc6c07fe5d3a84c838eec25deec97f5e1c81"
   SWIFTLINT_VERSION: "0.65.0"
   SWIFTLINT_SHA256: "79306a34e5c7cc55a220cd108cbb861dcad5f10138dcdf261e2624ae8b0a486b"
   LINUX_SOURCEKIT_LIB_PATH: "/usr/lib/libsourcekitdInProc.so"
