@@ -31,7 +31,8 @@ final class LinuxZmxRuntime {
                                                      directory: linuxStateDirectory())
         let client = LinuxZmxClient(
             executablePath: executable,
-            socketDirectory: ZmxSupport.socketDirectory(forStateDirectory: linuxStateDirectory().path))
+            socketDirectory: ZmxSupport.socketDirectory(forStateDirectory: linuxStateDirectory().path),
+            sweeper: LinuxProcessSweeper())
         self.client = client
         foreground = LinuxZmxForegroundResolver(leaderProvider: { [client] timeout in
             MainActor.assumeIsolated { client.sessionLeaderPIDs(timeout: timeout) }

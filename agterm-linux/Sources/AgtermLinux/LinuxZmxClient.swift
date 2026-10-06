@@ -48,13 +48,41 @@ final class LinuxZmxClient {
     private let socketDirectory: String
     private let timeout: TimeInterval
     private let runner: Runner
+    private let sweeper: LinuxProcessSweeper?
 
     init(executablePath: String, socketDirectory: String, timeout: TimeInterval = 3,
-         runner: @escaping Runner = LinuxZmxClient.run) {
+         sweeper: LinuxProcessSweeper? = nil, runner: @escaping Runner = LinuxZmxClient.run) {
         self.executablePath = executablePath
         self.socketDirectory = socketDirectory
         self.timeout = timeout
+        self.sweeper = sweeper
         self.runner = runner
+    }
+
+    /// foregroundJobs reads the foreground job of each named daemon's shell, before a kill. A confirmed
+    /// kill then sends those jobs the SIGHUP a closed terminal would have: zmx signals only the shell's own
+    /// process group, and a pane's creation command runs in another. `shells` saves the listing when the
+    /// caller already holds the leader pids. Empty without a sweeper or when the listing fails.
+    func foregroundJobs(of names: [String], shells: [String: pid_t]? = nil,
+                        timeout: TimeInterval? = nil) -> [String: [ProcessRecord]] {
+        guard let sweeper, let known = shells ?? sessionLeaderPIDs(timeout: timeout) else { return [:] }
+        return sweeper.capture(shells: known.filter { names.contains($0.key) })
+    }
+
+    /// foregroundJob reads one shell's foreground job for a caller that waits on it. Nil when the process
+    /// table cannot be read; empty with no sweeper, where nothing is ever signalled or waited on.
+    func foregroundJob(ofShell pid: pid_t) -> [ProcessRecord]? {
+        guard let sweeper else { return [] }
+        return sweeper.foregroundJob(of: pid)
+    }
+
+    func isRunning(_ job: [ProcessRecord]) -> Bool {
+        sweeper?.isRunning(job) ?? false
+    }
+
+    /// forceEnd kills what is left of `job`, for a restart whose old program ignored the hangup.
+    func forceEnd(_ job: [ProcessRecord]) {
+        sweeper?.send(SIGKILL, to: job)
     }
 
     /// Whether the bundled binary is there at all. A source build without it has no daemons to reason
@@ -82,7 +110,8 @@ final class LinuxZmxClient {
                                                     knownNames: knownNames) else {
             return ReapOutcome(runningNames: running, killedAll: true)
         }
-        return ReapOutcome(runningNames: running, killedAll: kill(names: names))
+        let shells = ZmxLeaderMap.leaders(in: sessions)
+        return ReapOutcome(runningNames: running, killedAll: kill(names: names, shells: shells))
     }
 
     @discardableResult
@@ -118,9 +147,11 @@ final class LinuxZmxClient {
     /// unlink, the one outcome indistinguishable from success. The caller must re-list immediately before.
     func killObservedOrphan(names: [String]) -> [String: KillOutcome] {
         var outcomes: [String: KillOutcome] = [:]
+        let jobs = foregroundJobs(of: names)
         for name in Set(names) {
             do {
                 outcomes[name] = Self.outcome(of: try invoke(["kill", name]), name: name)
+                if outcomes[name] == .killed, let job = jobs[name] { sweeper?.send(SIGHUP, to: job) }
             } catch {
                 log("kill failed for \(name): \(error)")
                 outcomes[name] = .failed(String(describing: error))
@@ -132,8 +163,11 @@ final class LinuxZmxClient {
     /// Force-kill ONE daemon and report what zmx actually did. The caller closes or promotes a LIVE pane
     /// on this answer, so an exit status is not enough.
     func killConfirmed(name: String) -> KillOutcome {
+        let job = foregroundJobs(of: [name])[name]
         do {
-            return Self.outcome(of: try invoke(["kill", name, "--force"]), name: name)
+            let outcome = Self.outcome(of: try invoke(["kill", name, "--force"]), name: name)
+            if outcome == .killed, let job { sweeper?.send(SIGHUP, to: job) }
+            return outcome
         } catch {
             log("kill failed for \(name): \(error)")
             return .failed(String(describing: error))
@@ -149,12 +183,17 @@ final class LinuxZmxClient {
         return .failed(lines.first ?? "no output")
     }
 
-    private func kill(names: [String]) -> Bool {
+    private func kill(names: [String], shells: [String: pid_t]? = nil) -> Bool {
         var seen: Set<String> = []
         let unique = names.filter { seen.insert($0).inserted }
         guard !unique.isEmpty else { return true }
+        let jobs = foregroundJobs(of: unique, shells: shells)
         do {
-            _ = try invoke(["kill"] + unique + ["--force"])
+            let output = try invoke(["kill"] + unique + ["--force"])
+            // only a name zmx confirmed: a stale-socket cleanup leaves the shell, and its job, running
+            for (name, job) in jobs where Self.outcome(of: output, name: name) == .killed {
+                sweeper?.send(SIGHUP, to: job)
+            }
             return true
         } catch {
             log("kill failed for \(unique.joined(separator: ",")): \(error)")
