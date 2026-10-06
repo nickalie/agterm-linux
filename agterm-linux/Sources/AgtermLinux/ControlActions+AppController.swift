@@ -101,7 +101,8 @@ extension AppController: ControlActions {
                 case .auto: return "auto"
                 }
             },
-            app: LinuxAppMetadata.identity, flaggedLayout: GhosttyApp.shared.flaggedViewLayout,
+            app: LinuxAppMetadata.identity, indexUnsaved: library.indexUnsaved,
+            flaggedLayout: GhosttyApp.shared.flaggedViewLayout,
             htmlZoom: LinuxHtmlOverlays.shared.zoom
         )
         let tree = projectingLinuxAutoFollow(baseTree)
@@ -764,32 +765,52 @@ extension AppController: ControlActions {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            let session = store.session(withID: id)
+            var pane: StatusPane
+            switch session?.paneAddress(token: options.paneID, pane: options.pane) ?? .pane(options.pane) {
+            case .unknownToken(let token): return Self.unknownPaneID(token)
+            case .pane(let resolved): pane = resolved ?? .left
+            }
+            let token = options.paneID.flatMap { session?.paneRole(forToken: $0) == nil ? nil : $0 }
             if options.select {
                 selectSession(id, userInitiated: false)
                 reconcile()
             }
             for _ in 0..<12 {
                 while g_main_context_iteration(nil, 0) != 0 {}
-                let surface: GhosttySurface? = switch options.pane {
-                case nil, .left: surfaces[id]
+                // re-resolved each poll: a swap or promotion while it waits moves the token to the other slot
+                if let token {
+                    guard let current = store.session(withID: id)?.paneRole(forToken: token) else {
+                        return Self.unknownPaneID(token)
+                    }
+                    pane = current
+                }
+                let surface: GhosttySurface? = switch pane {
+                case .left: surfaces[id]
                 case .right: splitSurfaces[id]
                 case .scratch: scratchSurfaces[id]
                 }
                 if let surface {
-                    let pane = options.pane ?? .left
-                    if let covered = coveredType(options.text, into: surface, session: id, pane: pane) { return covered }
+                    if var covered = coveredType(options.text, into: surface, session: id, pane: pane) {
+                        if covered.ok { covered.result?.pane = pane.rawValue }
+                        return covered
+                    }
                     surface.inject(text: options.text)
                     // the input a blocked agent was waiting for has arrived, so the block must not outlive
                     // it. A newline in the payload counts as Return, never as the Escape/Ctrl-C interrupt.
                     if !options.text.isEmpty {
                         applyKeystrokeToStatus(id, pane: pane, keystroke: InterruptKeystroke.classify(text: options.text))
                     }
-                    return ok(id)
+                    return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, pane: pane.rawValue))
                 }
                 usleep(30_000)
             }
             return err("session not realized")
         }
+    }
+
+    static func unknownPaneID(_ token: String) -> ControlResponse {
+        ControlResponse(ok: false, error: "unknown pane id: \(token)")
     }
 
     func copySessionSelection(_ target: String?, window: String?) -> ControlResponse {

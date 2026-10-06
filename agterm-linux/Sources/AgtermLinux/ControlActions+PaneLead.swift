@@ -100,11 +100,19 @@ extension AppController {
         case .daemon(let name):
             // a half-typed composition goes first and on the same acknowledged path: left in place it would
             // commit after the scripted line, and committed through the surface the daemon may drop it
-            let bytes = KeystrokeSegments.ptyBytes(surface.pendingComposition + text)
+            let paced = KeystrokeSegments.paced(surface.pendingComposition + text)
+            let bytes = KeystrokeSegments.ptyBytes(paced.head)
             guard bytes.isEmpty || gZmx.client.type(name: name, bytes: bytes) else {
                 return err("the pane's zmx daemon did not accept the input")
             }
             surface.discardComposition()
+            if paced.pacedReturn {
+                Thread.sleep(forTimeInterval: KeystrokeSegments.submitGap)
+                // a failed call does not prove the Return was dropped: the daemon queues before it answers
+                guard gZmx.client.type(name: name, bytes: [0x0D]) else {
+                    return err("text typed, but its final Return could not be confirmed; do not retype the text")
+                }
+            }
             if !text.isEmpty {
                 applyKeystrokeToStatus(id, pane: pane, keystroke: InterruptKeystroke.classify(text: text))
             }

@@ -127,8 +127,7 @@ extension WindowLibrary {
     // so without this the held records would be dropped with the process — leaking their watermark PNGs and
     // recency entries — and the snapshot below would be written while a finalizer was still pending.
     library.finalizeAllPendingCloses()
-    library.saveAllOpen()
-    library.saveIndex()
+    library.saveAllChecked()
 }
 
 /// Re-read `keymap.conf` in EVERY open window and report any parse errors once, in `controller`.
