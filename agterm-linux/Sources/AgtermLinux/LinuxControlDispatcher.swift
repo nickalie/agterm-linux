@@ -23,6 +23,8 @@ struct LinuxControlDispatcher {
             return dispatchSessionCommand(request)
         case .sessionContext:
             return dispatchSessionContext(request)
+        case .sessionRestart:
+            return dispatchSessionRestart(request)
         case .sessionSwap:
             return dispatchSwapPanes(request)
         case .sessionLead:
@@ -104,6 +106,35 @@ struct LinuxControlDispatcher {
             return ControlResponse(ok: false, error: "invalid context mode: \(args?.mode ?? "") (set|clear)")
         }
         return actions.setSessionContext(request.target, window: args?.window, context: context)
+    }
+
+    /// `session.restart`: the line is a shell line and is never rewritten. A pane must be named, by token or
+    /// by role, because a default would restart a shell the caller never addressed.
+    private func dispatchSessionRestart(_ request: ControlRequest) -> ControlResponse {
+        let args = request.args
+        guard let command = args?.command, !command.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return ControlResponse(ok: false, error: "session.restart requires a command")
+        }
+        guard !containsControlCharacters(command) else {
+            return ControlResponse(ok: false, error: "command must not contain control characters")
+        }
+        guard command.utf8.count <= ControlSessionRestartOptions.maxCommandBytes else {
+            return ControlResponse(ok: false, error: "command too long (max \(ControlSessionRestartOptions.maxCommandBytes) bytes)")
+        }
+        let pane: StatusPane?
+        switch Self.parseSurfacePane(args?.pane) {
+        case .pane(let parsed): pane = parsed
+        case .rejected(let rejection): return rejection
+        }
+        guard pane != .scratch else {
+            return ControlResponse(ok: false, error: "session.restart does not address the scratch pane")
+        }
+        let paneID = args?.paneID.flatMap { $0.isEmpty ? nil : $0 }
+        guard pane != nil || paneID != nil else {
+            return ControlResponse(ok: false, error: "session.restart requires --pane-id or --pane")
+        }
+        return actions.restartSessionPaneSync(request.target, window: args?.window,
+                                              options: .init(command: command, pane: pane, paneID: paneID))
     }
 
     /// `session.swap`. Upstream awaits a readiness poll for a split still occupying its second slot; the

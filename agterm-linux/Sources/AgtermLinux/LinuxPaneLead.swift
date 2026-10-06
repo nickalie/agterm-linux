@@ -128,11 +128,19 @@ extension AppController {
               let identity = session.paneIdentity(for: pane),
               let launch = reattachLaunch(old, session: session, identity: identity, pane: pane, lead: lead)
         else { return false }
+        return replacePane(old, launch: launch, lead: lead, cover: cover) != nil
+    }
+
+    /// Puts a surface running `launch` in `old`'s slot, keeping the session, the pane identity and the
+    /// slot; nil when `old` no longer holds one. `session.restart` builds its launch itself.
+    func replacePane(_ old: GhosttySurface, launch: PaneReattach, lead: ZmxLeadAttachment, cover: Bool) -> GhosttySurface? {
+        guard let session = store.session(withID: old.sessionID), let pane = old.role.statusPane, pane != .scratch,
+              let identity = session.paneIdentity(for: pane) else { return nil }
         let id = session.id
         let slot: OverlayPane = pane == .right ? .right : .left
         let zoomTarget = TerminalZoomTarget.session(id, slot == .left ? .primary : .split)
         guard let container = terminalZoom.target == zoomTarget
-            ? zoomHost.flatMap({ op(adw_toolbar_view_get_content($0)) }) : paneHosts[id]?[slot] else { return false }
+            ? zoomHost.flatMap({ op(adw_toolbar_view_get_content($0)) }) : paneHosts[id]?[slot] else { return nil }
         // a dashboard cell's transient font is not the pane's: seeding from it would persist the small size
         let fontSize = old.dashboardFontOverride == nil ? old.currentFontSize() ?? session.fontSize : session.fontSize
         let fresh = GhosttySurface(sessionID: id, cwd: launch.workingDirectory, command: launch.command,
@@ -163,7 +171,7 @@ extension AppController {
         fresh.realizeWidgetIfNeeded()
         if hadFocus { fresh.grabFocus() }
         leadRoleChanged()
-        return true
+        return fresh
     }
 
     private func reattachLaunch(_ old: GhosttySurface, session: Session, identity: UUID, pane: StatusPane,
