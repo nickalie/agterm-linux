@@ -298,6 +298,9 @@ extension AppController {
             state: state,
             context: needsKeyContext ? context() : nil
         ) else {
+            // a bare modifier is the next chord being typed, as upstream keeps waiting on one: resetting here
+            // made every `ctrl+a>ctrl+x` sequence unreachable
+            if ModifierKeyMods.modifierBit(forKeyval: keyval) != nil { return false }
             // A non-Chord key (page/navigation) can't continue a leader sequence; abandon a half-typed
             // one so a stale prefix can't complete across it.
             if customCommandEngine.isArmed || customCommandEngine.isRepeating { resetMatcher() }
