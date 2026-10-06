@@ -1748,6 +1748,127 @@ def verify_v034_session_placement(env, state):
         stop(process)
 
 
+def verify_v035_controls(env, state):
+    """Pane-id addressing, keymap run and --repeat, titled and chromeless pages, dashboard covers, saved store."""
+    config = os.path.join(state, "config")
+    os.makedirs(config)
+    ran = os.path.join(state, "ran.log")
+    with open(os.path.join(config, "keymap.conf"), "w", encoding="utf-8") as target:
+        target.write(f'command "Mark" ctrl+a>m printf "%s\\n" "$AGT_SESSION_ID" >> {ran}\n'
+                     "map ctrl+a>ctrl+h --repeat previous_session\n")
+    pages_dir = os.path.join(state, "pages")
+    os.makedirs(pages_dir)
+    titled = os.path.join(pages_dir, "titled.html")
+    with open(titled, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>Quarterly</title></head><body>numbers</body></html>")
+    plain = os.path.join(pages_dir, "plain.html")
+    with open(plain, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>Plain</title></head><body>plain</body></html>")
+    server = subprocess.Popen([sys.executable, "-u", "-m", "http.server", "0", "--bind", "127.0.0.1",
+                               "--directory", pages_dir],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    banner = server.stdout.readline()
+    match = re.search(r"port (\d+)", banner)
+    if not match:
+        server.kill()
+        raise AssertionError(f"the test http server did not start: {banner!r}")
+    port = int(match.group(1))
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+
+        def sessions():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"]
+
+        for _ in range(2):
+            assert raw_control_json(env, {"cmd": "session.new"})["ok"]
+        ids = [item["id"] for item in sessions()]
+        first = ids[0]
+
+        def node(session_id):
+            return next(item for item in sessions() if item["id"] == session_id)
+
+        def request(cmd, target=None, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": target, "args": args})
+
+        # the last New Session holds the keyboard; two steps back need the prefix only once
+        wait_for(lambda: node(ids[2])["active"], "the last new session is not active")
+        focus_window(process.pid)
+        time.sleep(0.5)
+        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+a", "ctrl+h", "ctrl+h"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        wait_for(lambda: node(first)["active"],
+                 f"--repeat did not keep the prefix live: {[node(i)['active'] for i in ids]}")
+
+        token = wait_for(lambda: next((surface.get("paneID") for surface in node(first).get("surfaces") or []
+                                       if surface["kind"] == "left"), None), "the left pane never reported paneID")
+        typed = control_json(env, "session", "type", "echo v035-typed\n", "--target", first, "--pane-id", token, "--json")
+        assert typed["ok"] and typed["result"]["pane"] == "left", typed
+        read = wait_for(lambda: (lambda reply: reply if "v035-typed" in reply["result"]["text"] else None)(
+            control_json(env, "session", "text", "--target", first, "--pane-id", token, "--json")),
+            "the typed line never reached the pane")
+        assert read["result"]["pane"] == "left", read
+        unknown = request("session.text", first, paneID="nope")
+        assert not unknown["ok"] and unknown["error"] == "unknown pane id: nope", unknown
+        cursor = request("surface.cursor", first, paneID=token)
+        assert cursor["ok"] and cursor["result"]["id"] == f"surface:{first}:left", cursor
+
+        keymap = control_json(env, "keymap", "list", "--json")["result"]["keymap"]
+        assert next(item for item in keymap["actions"] if item["action"] == "previous_session").get("repeats"), keymap
+        assert control_json(env, "keymap", "run", "Mark", "--target", ids[1], "--json")["ok"]
+        wait_for(lambda: os.path.exists(ran) and ids[1] in open(ran, encoding="utf-8").read(),
+                 "keymap run never started the command against the addressed session")
+        missing = request("keymap.run", name="Nope")
+        assert not missing["ok"] and missing["error"] == "no custom command named Nope", missing
+
+        bad = request("zmx.screen", name="a b")
+        assert not bad["ok"] and bad["error"] == "zmx.screen requires a daemon name", bad
+        assert "indexUnsaved" not in window_tree(env, window_id), "a saved index reported indexUnsaved"
+
+        def page_of(session_id):
+            return next(iter(node(session_id).get("htmlOverlays") or []), None)
+
+        def settled(session_id, title):
+            return wait_for(lambda: (lambda page: page if page and page.get("title") == title else None)(page_of(session_id)),
+                            f"the page never settled on {title}", timeout=30)
+
+        assert request("session.overlay.open", first, html=titled)["ok"]
+        settled(first, "Quarterly")
+        wait_for(lambda: named(find_app(process.pid), "Quarterly"), "the strip does not show the page title")
+        assert request("session.overlay.close", first)["ok"]
+        refused = request("session.overlay.open", first, url=f"http://127.0.0.1:{port}/plain.html", chromeless=True)
+        assert not refused["ok"] and "chromeless" in refused["error"], refused
+        assert request("session.overlay.open", first, html=plain, chromeless=True)["ok"]
+        page = settled(first, "Plain")
+        assert page["chromeless"], page
+        assert not named(find_app(process.pid), "plain.html"), "a chromeless page still names its file"
+        assert request("session.overlay.close", first)["ok"]
+
+        assert request("session.overlay.open", ids[1], command="sleep 60")["ok"]
+        assert raw_control_json(env, {"cmd": "dashboard", "args": {"targets": [first, ids[1]]}})["ok"]
+        wait_for(lambda: named(find_app(process.pid), "Program overlay"), "the covered cell shows no overlay cover")
+        assert raw_control_json(env, {"cmd": "dashboard", "args": {"close": True}})["ok"]
+        assert request("session.overlay.close", ids[1])["ok"]
+
+        profile = os.path.join(state, "browser-profile")
+        assert control_json(env, "browser", "clear", "--json")["ok"]
+        assert not os.path.exists(profile), "browser clear created a profile"
+        filed = request("session.overlay.open", first, html=plain, persistent=True)
+        assert not filed["ok"] and "--url" in filed["error"], filed
+        assert request("session.overlay.open", first, url=f"http://127.0.0.1:{port}/plain.html", persistent=True)["ok"]
+        assert os.path.exists(profile), "a persistent page created no profile"
+        assert page_of(first)["persistent"]
+        busy = request("browser.clear")
+        assert not busy["ok"] and busy["error"] == "browser.clear: 1 persistent page still open", busy
+        assert request("session.overlay.close", first)["ok"]
+        wait_for(lambda: request("browser.clear")["ok"], "browser clear stayed refused after the page closed")
+        print("OK: pane-id addressing, keymap run/--repeat, titled/chromeless pages, dashboard covers, saved store")
+    finally:
+        stop(process)
+        server.kill()
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -2999,7 +3120,7 @@ def main():
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
-            "v034-html-bridge", "v034-session-placement", "dashboard-modal", "context-menu",
+            "v034-html-bridge", "v034-session-placement", "v035-controls", "dashboard-modal", "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -3064,6 +3185,8 @@ def main():
             verify_v034_html_bridge(env, state)
         elif scenario == "v034-session-placement":
             verify_v034_session_placement(env, state)
+        elif scenario == "v035-controls":
+            verify_v035_controls(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
