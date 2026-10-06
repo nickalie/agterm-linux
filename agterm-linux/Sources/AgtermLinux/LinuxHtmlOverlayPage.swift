@@ -345,6 +345,7 @@ final class LinuxHtmlOverlayPage {
         overlay.current = info
         store?.setHtmlPage(id, info)
         refreshChrome()
+        for controller in gWindows.values { controller.updateDashboardCovers() }   // a cover names the title
     }
 
     fileprivate func record(_ outcome: LinuxHtmlLoad.Outcome) {

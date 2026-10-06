@@ -11,10 +11,60 @@ final class DashboardRuntime {
     var frames: [DashboardMember: OpaquePointer] = [:]
     var targets: [DashboardMember: TerminalZoomTarget] = [:]
     var statusIcons: [DashboardMember: OpaquePointer] = [:]
+    var covers: [DashboardMember: DashboardCoverWidgets] = [:]
     var clickContexts: [DashboardClickContext] = []
     var clickIntent = DashboardClickIntent()
     var pendingClickSource: guint = 0
     var pendingClickContext: DashboardDelayedClickContext?
+}
+
+/// A cell's stand-in for a pane the session shows under a page or program: the cell paints the pane's own
+/// terminal, which that overlay hides everywhere else.
+@MainActor
+struct DashboardCoverWidgets {
+    let root: OpaquePointer
+    let icon: OpaquePointer
+    let kind: OpaquePointer
+    let source: OpaquePointer
+    let title: OpaquePointer
+
+    init() {
+        root = OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 6))
+        icon = OpaquePointer(gtk_image_new())
+        kind = OpaquePointer(gtk_label_new(nil))
+        source = OpaquePointer(gtk_label_new(nil))
+        title = OpaquePointer(gtk_label_new(nil))
+        gtk_widget_add_css_class(W(root), "agterm-dashboard-cover")
+        gtk_widget_set_hexpand(W(root), 1)
+        gtk_widget_set_vexpand(W(root), 1)
+        gtk_widget_set_valign(W(root), GTK_ALIGN_FILL)
+        gtk_widget_set_can_target(W(root), 0)
+        gtk_image_set_pixel_size(icon, 24)
+        gtk_widget_set_valign(W(icon), GTK_ALIGN_END)
+        gtk_widget_set_vexpand(W(icon), 1)
+        gtk_widget_add_css_class(W(kind), "heading")
+        "dashboard-overlay-cover".withCString { gtk_widget_set_name(W(kind), $0) }
+        gtk_label_set_ellipsize(source, PANGO_ELLIPSIZE_MIDDLE)
+        "dashboard-overlay-cover-source".withCString { gtk_widget_set_name(W(source), $0) }
+        gtk_label_set_ellipsize(title, PANGO_ELLIPSIZE_END)
+        gtk_widget_add_css_class(W(title), "dim-label")
+        gtk_widget_set_valign(W(title), GTK_ALIGN_START)
+        gtk_widget_set_vexpand(W(title), 1)
+        "dashboard-overlay-cover-title".withCString { gtk_widget_set_name(W(title), $0) }
+        for widget in [icon, kind, source, title] { gtk_box_append(cast(root), W(widget)) }
+    }
+
+    func show(_ cover: DashboardCover?) {
+        gtk_widget_set_visible(W(root), cover == nil ? 0 : 1)
+        guard let cover else { return }
+        let text = LinuxDashboardCoverText(cover)
+        text.icon.withCString { gtk_image_set_from_icon_name(icon, $0) }
+        text.kind.withCString { gtk_label_set_text(kind, $0) }
+        for (label, value) in [(source, text.source), (title, text.title)] {
+            (value ?? "").withCString { gtk_label_set_text(label, $0) }
+            gtk_widget_set_visible(W(label), value == nil ? 0 : 1)
+        }
+    }
 }
 
 @MainActor
@@ -97,6 +147,7 @@ extension AppController {
         dashboardRuntime.frames = [:]
         dashboardRuntime.targets = [:]
         dashboardRuntime.statusIcons = [:]
+        dashboardRuntime.covers = [:]
         dashboardRuntime.clickContexts = []
         dashboard.close()
         resumeAutoFollow()
@@ -220,6 +271,10 @@ extension AppController {
             // the paintable draws the terminal alone, so the deck's cover never reaches the cell
             LinuxPaneLeadCover.mount(on: cell, windowID: windowID, sessionID: member.session,
                                      placement: .dashboard(member.surface == .split ? .right : .left))
+            // over the lead cover, which it hides while the pane sits under an overlay
+            let cover = DashboardCoverWidgets()
+            gtk_overlay_add_overlay(cell, W(cover.root))
+            dashboardRuntime.covers[member] = cover
             let sessionName = store.session(withID: member.session)?.displayName ?? "Session"
             let paneName = member.surface == .split ? "Right" : "Left"
             gtk_widget_set_tooltip_text(W(frame), "\(sessionName) · \(paneName)")
@@ -263,6 +318,7 @@ extension AppController {
         dashboardRuntime.keyController = keys
         gtk_widget_set_can_target(W(splitView), 0)
         updateDashboardStatusIndicators()
+        updateDashboardCovers()
         updateDashboardHighlight()
         _ = gtk_widget_grab_focus(W(host))
     }
@@ -299,6 +355,12 @@ extension AppController {
         guard dashboardRuntime.clickIntent.accepts(generation: context.generation, member: context.member),
               dashboard.isOpen, dashboard.highlighted == context.member else { return }
         selectDashboardMember(context.member)
+    }
+
+    func updateDashboardCovers() {
+        for (member, cover) in dashboardRuntime.covers {
+            cover.show(store.session(withID: member.session)?.dashboardCover(for: member.surface == .split ? .right : .left))
+        }
     }
 
     func updateDashboardStatusIndicators() {

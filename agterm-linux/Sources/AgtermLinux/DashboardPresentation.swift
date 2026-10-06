@@ -39,3 +39,21 @@ enum LinuxModalTitle {
         return "Dashboard — \(window.name)"
     }
 }
+
+/// The lines a dashboard cell's overlay cover shows. The source is app-derived and the page's own title
+/// stays a separate dimmed line, so a title cannot pass for it.
+struct LinuxDashboardCoverText: Equatable {
+    let icon: String
+    let kind: String
+    let source: String?
+    let title: String?
+
+    init(_ cover: DashboardCover) {
+        switch cover {
+        case .page(let identity, let title):
+            (icon, kind, source, self.title) = ("text-html-symbolic", "HTML overlay", identity, title)
+        case .program(let command):
+            (icon, kind, source, title) = ("utilities-terminal-symbolic", "Program overlay", command, nil)
+        }
+    }
+}

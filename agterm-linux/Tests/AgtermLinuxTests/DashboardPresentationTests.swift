@@ -46,3 +46,21 @@ struct DashboardPresentationTests {
         #expect(LinuxModalTitle.dashboard(window: WindowInfo(name: "release")) == "Dashboard — release")
     }
 }
+
+@Suite("Linux dashboard overlay cover")
+struct LinuxDashboardCoverTextTests {
+    @Test("a page cover names its source and keeps the page title apart")
+    func page() {
+        let text = LinuxDashboardCoverText(.page(identity: "report.html", title: "Build"))
+        #expect(text.kind == "HTML overlay")
+        #expect(text.source == "report.html")
+        #expect(text.title == "Build")
+    }
+
+    @Test("a program cover names its command, a replica's none")
+    func program() {
+        #expect(LinuxDashboardCoverText(.program(command: "htop")).source == "htop")
+        #expect(LinuxDashboardCoverText(.program(command: nil)).source == nil)
+        #expect(LinuxDashboardCoverText(.program(command: "htop")).kind == "Program overlay")
+    }
+}

@@ -128,6 +128,7 @@ extension AppController {
         let settings = linuxSettingsStore().load()
         updateAttentionButton(settings: settings)
         updateDashboardStatusIndicators()
+        updateDashboardCovers()
         while let child = gtk_widget_get_first_child(W(sidebarBox)) {
             gtk_box_remove(cast(sidebarBox), child)
         }
