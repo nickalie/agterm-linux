@@ -9,8 +9,9 @@
 #
 # The STAMP decides a rebuild, not the binary: a zmx built from another revision is indistinguishable
 # from a current one, so a ZMX_REV change costs exactly one rebuild and nobody keeps a stale one.
-# The shared scripts/zmx-patches are applied over the plain pin, and their digest is part of the stamp,
-# so editing one rebuilds zmx exactly as a ZMX_REV change does.
+# The shared scripts/zmx-patches are applied over the plain pin, and their `ghostty/` set over a private
+# checkout of the ghostty zmx pins; the digest of both is part of the stamp, so editing one rebuilds zmx
+# exactly as a ZMX_REV change does.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,7 +20,8 @@ STAMP="$VENDOR/.zmx-build-stamp"
 # shellcheck source=../linux/zmx.env
 source "$ROOT/linux/zmx.env"
 PATCH_DIR="$ROOT/scripts/zmx-patches"
-PATCH_DIGEST="$(cat "$PATCH_DIR"/*.patch | sha256sum | cut -c1-16)"
+GHOSTTY_PATCH_DIR="$PATCH_DIR/ghostty"
+PATCH_DIGEST="$(cat "$PATCH_DIR"/*.patch "$GHOSTTY_PATCH_DIR"/*.patch | sha256sum | cut -c1-16)"
 ZMX_STAMP="$ZMX_REV $PATCH_DIGEST"
 
 if [[ -x "$VENDOR/zmx" && -f "$VENDOR/LICENSE" && -f "$STAMP" && "$(cat "$STAMP")" == "$ZMX_STAMP" ]]; then
@@ -56,9 +58,12 @@ MSG
   exit 1
 fi
 
-BUILD_DIR="$(mktemp -d)"
+# 0002 points zmx's ghostty dependency at the sibling `../zmx-ghostty`, so both checkouts share one root.
+BUILD_ROOT="$(mktemp -d)"
+BUILD_DIR="$BUILD_ROOT/zmx"
+ZMX_GHOSTTY="$BUILD_ROOT/zmx-ghostty"
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$BUILD_DIR" "$STAGE"' EXIT
+trap 'rm -rf "$BUILD_ROOT" "$STAGE"' EXIT
 
 echo "fetching zmx $ZMX_REV..."
 git init -q "$BUILD_DIR"
@@ -66,6 +71,19 @@ git -C "$BUILD_DIR" remote add origin "$ZMX_REPO"
 git -C "$BUILD_DIR" fetch -q --depth 1 origin "$ZMX_REV"
 git -C "$BUILD_DIR" -c advice.detachedHead=false checkout -q FETCH_HEAD
 [[ "$(git -C "$BUILD_DIR" rev-parse HEAD)" == "$ZMX_REV" ]]
+
+# read before the zmx patches repoint the dependency, so the shared zig cache is never edited
+zmx_ghostty_rev="$(sed -n 's|.*ghostty-org/ghostty#\([0-9a-f]\{40\}\)".*|\1|p' "$BUILD_DIR/build.zig.zon")"
+[[ -n "$zmx_ghostty_rev" ]] || { echo "error: no ghostty revision in zmx build.zig.zon" >&2; exit 1; }
+echo "fetching zmx's ghostty $zmx_ghostty_rev..."
+git init -q "$ZMX_GHOSTTY"
+git -C "$ZMX_GHOSTTY" remote add origin https://github.com/ghostty-org/ghostty
+git -C "$ZMX_GHOSTTY" fetch -q --depth 1 origin "$zmx_ghostty_rev"
+git -C "$ZMX_GHOSTTY" -c advice.detachedHead=false checkout -q FETCH_HEAD
+for ghostty_patch in "$GHOSTTY_PATCH_DIR"/*.patch; do
+  echo "applying ghostty/$(basename "$ghostty_patch")..."
+  git -C "$ZMX_GHOSTTY" apply --whitespace=nowarn "$ghostty_patch"
+done
 for zmx_patch in "$PATCH_DIR"/*.patch; do
   echo "applying $(basename "$zmx_patch")..."
   git -C "$BUILD_DIR" apply --whitespace=nowarn "$zmx_patch"
