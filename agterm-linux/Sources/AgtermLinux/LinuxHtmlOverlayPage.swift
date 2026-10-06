@@ -28,6 +28,8 @@ final class LinuxHtmlOverlayPage {
     private var load = LinuxHtmlLoad()
     private let body: OpaquePointer
     private let identity: OpaquePointer
+    private let titleSeparator: OpaquePointer
+    private let titleLabel: OpaquePointer
     private let failure: OpaquePointer
     private let failureMessage: OpaquePointer
     private var historyButtons: (back: OpaquePointer, forward: OpaquePointer)?
@@ -51,6 +53,10 @@ final class LinuxHtmlOverlayPage {
         _ = g_object_ref_sink(GOBJ(panel))
         body = OpaquePointer(gtk_overlay_new())
         identity = op(gtk_label_new(nil))!
+        titleSeparator = op("·".withCString { gtk_label_new($0) })!
+        titleLabel = op(gtk_label_new(nil))!
+        // owned outright: a chromeless page never parents its strip's labels
+        for label in [identity, titleSeparator, titleLabel] { _ = g_object_ref_sink(GOBJ(label)) }
         failure = op(gtk_box_new(GTK_ORIENTATION_VERTICAL, 8))!
         failureMessage = op(gtk_label_new(nil))!
         let handle = LinuxHtmlPageHandle()
@@ -95,7 +101,7 @@ final class LinuxHtmlOverlayPage {
         gtk_widget_add_css_class(W(panel), "agterm-html-panel")
         gtk_widget_set_hexpand(W(panel), 1)
         gtk_widget_set_vexpand(W(panel), 1)
-        gtk_box_append(cast(panel), W(buildStrip()))
+        if !overlay.chromeless { gtk_box_append(cast(panel), W(buildStrip())) }
         gtk_widget_set_hexpand(W(view), 1)
         gtk_widget_set_vexpand(W(view), 1)
         "htmlOverlay.page".withCString { gtk_widget_set_name(W(view), $0) }
@@ -126,11 +132,7 @@ final class LinuxHtmlOverlayPage {
                 gtk_box_append(cast(strip), W(widget))
             }
         }
-        gtk_label_set_ellipsize(identity, PANGO_ELLIPSIZE_MIDDLE)
-        gtk_widget_set_hexpand(W(identity), 1)
-        gtk_widget_add_css_class(W(identity), "agterm-html-identity")
-        "htmlOverlay.identity".withCString { gtk_widget_set_name(W(identity), $0) }
-        gtk_box_append(cast(strip), W(identity))
+        gtk_box_append(cast(strip), W(buildLabel()))
         if overlay.navigation {
             gtk_box_append(cast(strip), W(button("web-browser-symbolic", "Open in Browser", "htmlOverlay.browser", .browser)))
             switch overlay.source {
@@ -142,6 +144,22 @@ final class LinuxHtmlOverlayPage {
         }
         gtk_box_append(cast(strip), W(button("window-close-symbolic", "Close", "htmlOverlay.close", .close)))
         return strip
+    }
+
+    // the title is the page's own text, so it stays a separate dimmed label that gives up width before the
+    // source does and cannot pass for part of the app-drawn identity
+    private func buildLabel() -> OpaquePointer? {
+        guard let label = op(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)) else { return nil }
+        gtk_widget_set_hexpand(W(label), 1)
+        gtk_widget_set_halign(W(label), GTK_ALIGN_CENTER)
+        gtk_label_set_ellipsize(identity, PANGO_ELLIPSIZE_MIDDLE)
+        gtk_widget_add_css_class(W(identity), "agterm-html-identity")
+        "htmlOverlay.identity".withCString { gtk_widget_set_name(W(identity), $0) }
+        gtk_label_set_ellipsize(titleLabel, PANGO_ELLIPSIZE_END)
+        "htmlOverlay.title".withCString { gtk_widget_set_name(W(titleLabel), $0) }
+        for widget in [titleSeparator, titleLabel] { gtk_widget_add_css_class(W(widget), "dim-label") }
+        for widget in [identity, titleSeparator, titleLabel] { gtk_box_append(cast(label), W(widget)) }
+        return label
     }
 
     private func button(_ icon: String, _ label: String, _ name: String, _ kind: LinuxHtmlStripAction.Kind) -> OpaquePointer? {
@@ -221,6 +239,7 @@ final class LinuxHtmlOverlayPage {
         actions.removeAll()
         g_object_unref(GOBJ(panel))
         g_object_unref(GOBJ(view))
+        for label in [identity, titleSeparator, titleLabel] { g_object_unref(GOBJ(label)) }
     }
 
     // MARK: - Model
@@ -361,6 +380,12 @@ final class LinuxHtmlOverlayPage {
     private func refreshChrome() {
         overlay.identity.withCString { gtk_label_set_text(identity, $0) }
         (overlay.current?.page ?? sourceText).withCString { gtk_widget_set_tooltip_text(W(identity), $0) }
+        let title = overlay.current?.title
+        (title ?? "").withCString {
+            gtk_label_set_text(titleLabel, $0)
+            gtk_widget_set_tooltip_text(W(titleLabel), $0)
+        }
+        for widget in [titleSeparator, titleLabel] { gtk_widget_set_visible(W(widget), title == nil ? 0 : 1) }
         if let historyButtons {
             gtk_widget_set_sensitive(W(historyButtons.back), overlay.current?.canGoBack == true ? 1 : 0)
             gtk_widget_set_sensitive(W(historyButtons.forward), overlay.current?.canGoForward == true ? 1 : 0)

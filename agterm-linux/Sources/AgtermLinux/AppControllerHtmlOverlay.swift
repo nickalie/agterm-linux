@@ -97,7 +97,8 @@ extension AppController {
         if store.session(withID: id)?.remoteOverlays.slot(options.pane) != nil {
             return err(options.pane == nil ? "overlay already open" : PaneOverlayError.alreadyOpen)
         }
-        let overlay = HtmlOverlay(source: source, navigation: options.navigation, javascript: options.javascript)
+        let overlay = HtmlOverlay(source: source, navigation: options.navigation, javascript: options.javascript,
+                                  chromeless: options.chromeless)
         if let failure = store.openHtmlOverlay(id, pane: options.pane, overlay: overlay, sizePercent: options.sizePercent,
                                                backgroundColor: options.backgroundColor) {
             return err(failure.message(pane: options.pane))
