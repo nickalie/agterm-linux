@@ -95,6 +95,7 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
     installAppCSS()
     installStatusColorCSS()
     LinuxHtmlOverlays.shared.install()
+    LinuxHtmlOverlays.shared.profile = BrowserProfile(directory: linuxStateDirectory())
     installAppIcons()
     gControlServer.start()
     // Quit cleanly on SIGTERM/SIGINT (session logout, `kill`, Ctrl+C) so flushOnQuit captures the

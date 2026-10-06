@@ -8,7 +8,7 @@
 #include <gtk/gtk.h>
 #include <stdbool.h>
 
-#define AGTERM_WEBKIT_ABI 2
+#define AGTERM_WEBKIT_ABI 3
 #define AGTERM_WEBKIT_ENTRY "agterm_webkit_api_v1"
 
 // Where a navigation lands. WebKitGTK does not say whether a navigation targets the main frame or a
@@ -58,9 +58,10 @@ typedef struct {
 typedef struct {
     unsigned abi;
     // create returns a floating GtkWidget. transparent leaves the canvas undrawn; theme_script runs at
-    // document start in an isolated world, page JavaScript or not.
+    // document start in an isolated world, page JavaScript or not. A NULL storage_dir gives the page an
+    // in-memory session of its own; every page naming the same directory shares the session saved there.
     GtkWidget *(*create)(const agterm_web_callbacks *callbacks, bool javascript, bool transparent,
-                         const char *theme_script, const agterm_web_bridge *bridge);
+                         const char *theme_script, const agterm_web_bridge *bridge, const char *storage_dir);
     void (*set_theme_script)(GtkWidget *view, const char *theme_script);
     void (*load_uri)(GtkWidget *view, const char *uri);
     // load_html shows text with no base URI, so the page can reach no file
@@ -80,6 +81,9 @@ typedef struct {
     void (*set_zoom)(GtkWidget *view, double zoom);
     // answer resolves a request with a JSON result, or rejects it with `error`, and frees `reply`
     void (*answer)(void *reply, const char *result_json, const char *error);
+    // clear_storage removes all website data saved in storage_dir and calls done once WebKit is finished,
+    // with NULL or the reason it failed
+    void (*clear_storage)(const char *storage_dir, void (*done)(void *context, const char *error), void *context);
 } agterm_webkit_api;
 
 typedef const agterm_webkit_api *(*agterm_webkit_entry)(void);

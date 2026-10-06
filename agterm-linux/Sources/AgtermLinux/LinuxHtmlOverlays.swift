@@ -42,6 +42,16 @@ final class LinuxHtmlOverlays {
     private(set) var terminal = HtmlOverlayTheme(background: "", foreground: "", dark: true)
     /// zoom is the page zoom every page shows at, from settings.
     private(set) var zoom = 1.0
+    /// profile names the saved browser store of this state directory; setting it drops the directory resolved
+    /// from the one before.
+    var profile: BrowserProfile? { didSet { savedStore = nil } }
+    private var savedStore: String?
+    /// The data directory saved stores live under, one per profile id.
+    var storageRoot = URL(fileURLWithPath: String(cString: g_get_user_data_dir()))
+        .appendingPathComponent("agterm/browser", isDirectory: true)
+    // the main loop runs while WebKit removes data, so a page opened then would write into the store being
+    // emptied
+    private(set) var clearing = false
     private static var backingColors: Set<String> = []
     private static var backingProvider: OpaquePointer?
 
@@ -62,12 +72,64 @@ final class LinuxHtmlOverlays {
         if let page = pages[overlay.id] { return page }
         guard case .success(let api) = LinuxWebKit.api() else { return nil }
         let page = LinuxHtmlOverlayPage(overlay: overlay, store: store, backgroundColor: backgroundColor,
-                                        theme: theme(backgroundColor: backgroundColor), zoom: zoom, api: api)
+                                        theme: theme(backgroundColor: backgroundColor), zoom: zoom,
+                                        storage: storage(for: overlay), api: api)
         pages[overlay.id] = page
         return page
     }
 
     func existing(_ id: UUID) -> LinuxHtmlOverlayPage? { pages[id] }
+
+    // MARK: - Saved browser store
+
+    /// persistentStoreFailure resolves the saved store on first use and says why it cannot be used, nil when
+    /// it can. The open adapter asks before it accepts a persistent page, so the refusal reaches the caller.
+    func persistentStoreFailure() -> String? {
+        if clearing { return BrowserClearError.clearing }
+        guard savedStore == nil else { return nil }
+        guard let profile else { return OverlayHtmlError.persistentUnavailable }
+        do {
+            savedStore = storageRoot.appendingPathComponent(try profile.identifier().uuidString).path
+            return nil
+        } catch let failure as BrowserProfile.Failure {
+            return failure.description
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// clearPersistentStore removes everything the saved store holds and says why it could not, nil when it
+    /// did. A profile never created has nothing to remove and is not created for it. A registered persistent
+    /// page blocks it, a soft-closed one included: its login lives in memory and would be written back.
+    /// The main loop runs until WebKit reports the removal done.
+    func clearPersistentStore() -> String? {
+        if clearing { return BrowserClearError.clearing }
+        let open = pages.values.filter(\.usesSavedStore).count
+        if open > 0 { return BrowserClearError.pagesOpen(open) }
+        guard let profile else { return OverlayHtmlError.persistentUnavailable }
+        do {
+            guard try profile.existingIdentifier() != nil else { return nil }
+        } catch let failure as BrowserProfile.Failure {
+            return failure.description
+        } catch {
+            return error.localizedDescription
+        }
+        if let failure = persistentStoreFailure() { return failure }
+        guard let savedStore, case .success(let api) = LinuxWebKit.api() else { return OverlayHtmlError.persistentUnavailable }
+        clearing = true
+        defer { clearing = false }
+        let removal = LinuxStoreRemoval()
+        savedStore.withCString { api.pointee.clear_storage($0, onStoreCleared, Unmanaged.passUnretained(removal).toOpaque()) }
+        while !removal.done { g_main_context_iteration(nil, 1) }
+        return removal.error
+    }
+
+    // a persistent page whose store cannot be used gets no store at all
+    private func storage(for overlay: HtmlOverlay) -> LinuxHtmlOverlayPage.Storage {
+        guard overlay.persistent, case .url = overlay.source else { return .ephemeral }
+        if let failure = persistentStoreFailure() { return .unavailable(failure) }
+        return savedStore.map(LinuxHtmlOverlayPage.Storage.saved) ?? .unavailable(OverlayHtmlError.persistentUnavailable)
+    }
 
     func setZoom(_ zoom: Double) {
         self.zoom = zoom
@@ -234,4 +296,17 @@ final class LinuxHtmlOverlays {
     private func owner(of id: UUID) -> AppController? {
         gWindows.values.first { $0.store.htmlOverlaySlot(id) != nil }
     }
+}
+
+/// One `browser.clear` waiting on WebKit, finished by `onStoreCleared` on the main loop it spins.
+final class LinuxStoreRemoval {
+    var done = false
+    var error: String?
+}
+
+private let onStoreCleared: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> Void = { context, error in
+    guard let context else { return }
+    let removal = Unmanaged<LinuxStoreRemoval>.fromOpaque(context).takeUnretainedValue()
+    removal.error = error.map { String(cString: $0) }
+    removal.done = true
 }

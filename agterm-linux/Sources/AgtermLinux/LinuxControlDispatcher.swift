@@ -70,6 +70,12 @@ struct LinuxControlDispatcher {
             return dispatchAskCommand(request)
         case .dashboard:
             return dispatchDashboard(request)
+        case .browserClear:
+            // app-global: one saved store serves every window
+            if request.target != nil || request.args?.window != nil {
+                return ControlResponse(ok: false, error: "\(request.cmd.rawValue) takes no target or --window")
+            }
+            return actions.clearBrowserSync()
         default:
             return nil
         }

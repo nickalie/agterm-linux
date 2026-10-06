@@ -39,10 +39,28 @@ final class LinuxHtmlOverlayPage {
     // a declined prompt silences the page until a native key or press reaches it: script can click links
     // in a loop, but it cannot make those events
     private var promptsSilenced = false
+    private let storageFailure: String?
+    /// usesSavedStore is true for a page built on the saved browser store.
+    let usesSavedStore: Bool
+
+    /// Storage is the browser store a page is built on: its own in-memory one, the saved one in a directory,
+    /// or the reason it has none and loads nothing.
+    enum Storage {
+        case ephemeral
+        case saved(String)
+        case unavailable(String)
+    }
 
     init(overlay: HtmlOverlay, store: AppStore, backgroundColor: String?, theme: HtmlOverlayTheme, zoom: Double,
-         api: UnsafePointer<agterm_webkit_api>) {
+         storage: Storage, api: UnsafePointer<agterm_webkit_api>) {
         id = overlay.id
+        let storageDirectory: String?
+        switch storage {
+        case .ephemeral: (storageDirectory, storageFailure) = (nil, nil)
+        case .saved(let directory): (storageDirectory, storageFailure) = (directory, nil)
+        case .unavailable(let failure): (storageDirectory, storageFailure) = (nil, failure)
+        }
+        usesSavedStore = storageDirectory != nil
         self.overlay = overlay
         self.store = store
         self.backgroundColor = backgroundColor
@@ -65,8 +83,10 @@ final class LinuxHtmlOverlayPage {
                                              load: onLoad, changed: onChanged, input: onInput, focus: onFocus,
                                              request: onRequest)
         guard let created = Self.withBridge(overlay, { bridge in
-            theme.script(themed: Self.themed(overlay)).withCString {
-                api.pointee.create(&callbacks, overlay.javascript, Self.themed(overlay), $0, bridge)
+            theme.script(themed: Self.themed(overlay)).withCString { script in
+                Self.withOptionalCString(storageDirectory) {
+                    api.pointee.create(&callbacks, overlay.javascript, Self.themed(overlay), script, bridge, $0)
+                }
             }
         }) else { preconditionFailure("WebKitGTK returned no web view") }
         view = OpaquePointer(created)
@@ -75,6 +95,11 @@ final class LinuxHtmlOverlayPage {
         handle.page = self
         build()
         loadOriginal()
+    }
+
+    private static func withOptionalCString<R>(_ text: String?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+        guard let text else { return body(nil) }
+        return text.withCString(body)
     }
 
     private static func themed(_ overlay: HtmlOverlay) -> Bool {
@@ -269,6 +294,9 @@ final class LinuxHtmlOverlayPage {
     }
 
     private func loadOriginal() {
+        // a persistent page with no usable store loads nothing: an in-memory one would hold a login the user
+        // asked to keep
+        if let storageFailure { return setState(.failed, storageFailure) }
         load.begin()
         switch overlay.source {
         case .url(let url):

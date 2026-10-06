@@ -97,15 +97,29 @@ extension AppController {
         if store.session(withID: id)?.remoteOverlays.slot(options.pane) != nil {
             return err(options.pane == nil ? "overlay already open" : PaneOverlayError.alreadyOpen)
         }
+        if options.persistent, let failure = LinuxHtmlOverlays.shared.persistentStoreFailure() {
+            return err("session.overlay.open: \(failure)")
+        }
         let overlay = HtmlOverlay(source: source, navigation: options.navigation, javascript: options.javascript,
-                                  chromeless: options.chromeless)
+                                  chromeless: options.chromeless, persistent: options.persistent)
         if let failure = store.openHtmlOverlay(id, pane: options.pane, overlay: overlay, sizePercent: options.sizePercent,
                                                backgroundColor: options.backgroundColor) {
             return err(failure.message(pane: options.pane))
         }
+        // a page exists only once a view asks for it; built here, an accepted persistent page already counts as
+        // open to browser.clear, which would otherwise leave it failed for good
+        if options.persistent {
+            _ = LinuxHtmlOverlays.shared.page(for: overlay, store: store, backgroundColor: options.backgroundColor)
+        }
         if options.follow { selectSession(id, userInitiated: false) }
         reconcile()
         return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, pageID: overlay.id.uuidString))
+    }
+
+    /// `browser.clear` empties the saved browser store; the reply waits for the removal to finish.
+    func clearBrowserSync() -> ControlResponse {
+        if let failure = LinuxHtmlOverlays.shared.clearPersistentStore() { return err("browser.clear: \(failure)") }
+        return ok()
     }
 
     func submitSessionOverlay(_ target: String?, window: String?, pane: OverlayPane?, value: String) -> ControlResponse {

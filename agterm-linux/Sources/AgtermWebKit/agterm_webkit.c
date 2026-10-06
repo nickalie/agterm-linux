@@ -358,8 +358,57 @@ static gboolean on_bridge_message(WebKitUserContentManager *content, JSCValue *v
     return TRUE;
 }
 
+// The saved session, built on first use and shared by every page naming its directory; a different
+// directory replaces it, which only a changed state directory can ask for.
+static WebKitNetworkSession *saved_session;
+static char *saved_dir;
+
+static WebKitNetworkSession *session_for(const char *storage_dir) {
+    if (!storage_dir) {
+        WebKitNetworkSession *session = webkit_network_session_new_ephemeral();
+        g_signal_connect(session, "download-started", G_CALLBACK(on_download), NULL);
+        return session;
+    }
+    if (!saved_session || g_strcmp0(saved_dir, storage_dir) != 0) {
+        g_clear_object(&saved_session);
+        g_free(saved_dir);
+        saved_dir = g_strdup(storage_dir);
+        char *data = g_build_filename(storage_dir, "data", NULL);
+        char *cache = g_build_filename(storage_dir, "cache", NULL);
+        saved_session = webkit_network_session_new(data, cache);
+        g_free(data);
+        g_free(cache);
+        g_signal_connect(saved_session, "download-started", G_CALLBACK(on_download), NULL);
+    }
+    return g_object_ref(saved_session);
+}
+
+typedef struct {
+    void (*done)(void *context, const char *error);
+    void *context;
+} clear_request;
+
+static void on_cleared(GObject *source, GAsyncResult *result, gpointer data) {
+    clear_request *request = data;
+    GError *error = NULL;
+    webkit_website_data_manager_clear_finish(WEBKIT_WEBSITE_DATA_MANAGER(source), result, &error);
+    request->done(request->context, error ? error->message : NULL);
+    g_clear_error(&error);
+    g_free(request);
+}
+
+static void clear_storage(const char *storage_dir, void (*done)(void *context, const char *error), void *context) {
+    WebKitNetworkSession *session = session_for(storage_dir);
+    clear_request *request = g_new0(clear_request, 1);
+    request->done = done;
+    request->context = context;
+    webkit_website_data_manager_clear(webkit_network_session_get_website_data_manager(session), WEBKIT_WEBSITE_DATA_ALL,
+                                      0, NULL, on_cleared, request);
+    g_object_unref(session);
+}
+
 static GtkWidget *create(const agterm_web_callbacks *callbacks, bool javascript, bool transparent,
-                         const char *theme_script, const agterm_web_bridge *bridge) {
+                         const char *theme_script, const agterm_web_bridge *bridge, const char *storage_dir) {
     register_scheme();
     page *state = g_new0(page, 1);
     state->callbacks = *callbacks;
@@ -385,9 +434,9 @@ static GtkWidget *create(const agterm_web_callbacks *callbacks, bool javascript,
     webkit_settings_set_enable_fullscreen(settings, FALSE);
     webkit_settings_set_media_playback_requires_user_gesture(settings, TRUE);
 
-    // an in-memory session per page: cookies and storage last as long as this overlay and reach no other
-    WebKitNetworkSession *session = webkit_network_session_new_ephemeral();
-    g_signal_connect(session, "download-started", G_CALLBACK(on_download), NULL);
+    // an in-memory session per page, whose cookies and storage last as long as this overlay and reach no
+    // other, unless the page asked for the saved one
+    WebKitNetworkSession *session = session_for(storage_dir);
     GtkWidget *view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "network-session", session, "settings", settings,
                                               "user-content-manager", state->content, NULL));
     g_object_unref(session);
@@ -490,6 +539,7 @@ static const agterm_webkit_api api = {
     .close = close_view,
     .set_zoom = set_zoom,
     .answer = answer,
+    .clear_storage = clear_storage,
 };
 
 __attribute__((visibility("default"))) const agterm_webkit_api *agterm_webkit_api_v1(void) { return &api; }
