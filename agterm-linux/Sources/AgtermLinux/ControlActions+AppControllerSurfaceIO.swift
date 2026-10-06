@@ -10,9 +10,27 @@ extension AppController {
     /// included, so both `surface.*` commands address the same set; unlike zoom it neither selects nor
     /// realizes the target, an unrealized one being reported rather than waited for.
     func readSurfaceCursor(_ target: String?, window: String?) -> ControlResponse {
+        readSurfaceCursor(target, window: window, paneID: nil)
+    }
+
+    /// With a non-empty `paneID` the target is a session and the token picks the pane.
+    func readSurfaceCursor(_ target: String?, window: String?, paneID: String?) -> ControlResponse {
         let raw = target?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "active"
         let resolved: TerminalZoomTarget?
-        if raw == "active" {
+        if let paneID, !paneID.isEmpty {
+            guard raw != "quick", TerminalSurfaceID(rawValue: raw) == nil else {
+                return err("surface.cursor: --pane-id takes a session target")
+            }
+            switch resolveSessionResponse(raw) {
+            case .failure(let response): return response
+            case .success(let id):
+                guard let pane = store.session(withID: id)?.paneRole(forToken: paneID),
+                      let kind = TerminalZoomSurface(controlName: pane.rawValue) else {
+                    return Self.unknownPaneID(paneID)
+                }
+                resolved = .session(id, kind)
+            }
+        } else if raw == "active" {
             // a live zoom IS the active surface, the same precedence `surface.zoom active` applies.
             resolved = terminalZoom.target ?? resolveZoomTarget()
         } else if raw == "quick" {
@@ -95,20 +113,28 @@ extension AppController {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            let pane: StatusPane?
+            switch store.session(withID: id)?.paneAddress(token: options.paneID, pane: options.pane) ?? .pane(options.pane) {
+            case .unknownToken(let token): return Self.unknownPaneID(token)
+            case .pane(let resolved): pane = resolved
+            }
             let surface: GhosttySurface?
-            switch options.pane {
+            switch pane {
             case nil: surface = onScreenSurface(for: id)
             case .left: surface = surfaces[id]
             case .right: surface = splitSurfaces[id]
             case .scratch: surface = scratchSurfaces[id]
             }
-            if let surface, surface.isRealized, let covered = coveredText(surface, all: options.all, lines: options.lines) {
+            let read: StatusPane = surface == nil ? .left : surface === scratchSurfaces[id] ? .scratch
+                : (surface === splitSurfaces[id] ? .right : .left)
+            if let surface, surface.isRealized, var covered = coveredText(surface, all: options.all, lines: options.lines) {
+                if covered.ok { covered.result?.pane = read.rawValue }
                 return covered
             }
             guard let text = surface?.readScreenText(all: options.all, lines: options.lines) else {
                 return err("session not realized")
             }
-            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, text: text))
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, text: text, pane: read.rawValue))
         }
     }
 }

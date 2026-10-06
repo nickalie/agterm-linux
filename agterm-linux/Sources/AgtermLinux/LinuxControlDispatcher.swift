@@ -42,7 +42,7 @@ struct LinuxControlDispatcher {
         case .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand:
             return dispatchWorkspaceCommand(request)
-        case .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .configReload, .notify,
+        case .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .keymapRun, .configReload, .notify,
                 .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarFlaggedLayout, .sidebarExpand,
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
@@ -57,7 +57,7 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "sidebar.width requires a width in points")
             }
             return actions.setSidebarWidth(points, window: request.args?.window)
-        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset:
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxScreen:
             return dispatchZmxCommand(request)
         case .windowRename, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
                 .windowGo:
@@ -135,6 +135,17 @@ struct LinuxControlDispatcher {
                 return ControlResponse(ok: false, error: "zmx.kill requires --force")
             }
             return actions.killZmxDaemon(target: target, window: request.args?.window, pane: pane)
+        case .zmxScreen:
+            // a daemon name, as `zmx list` prints it: the session resolver sees only open windows
+            let name = request.args?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty, RemoteSession.isPlain(name) else {
+                return ControlResponse(ok: false, error: "zmx.screen requires a daemon name")
+            }
+            switch parseBufferExtent(request.args) {
+            case .rejected(let response): return response
+            case .extent(let all, let lines):
+                return actions.readZmxScreen(name: name, fullBuffer: all || lines != nil, lines: lines)
+            }
         case .zmxReset:
             // the --force gate stands whatever the host answers, so the refusal a Linux caller gets names
             // the feature rather than the missing flag
@@ -491,7 +502,8 @@ struct LinuxControlDispatcher {
         case .sessionBackground:
             return dispatchSessionBackground(request)
         case .surfaceCursor:
-            return actions.readSurfaceCursor(request.target, window: request.args?.window)
+            return actions.readSurfaceCursor(request.target, window: request.args?.window,
+                                             paneID: request.args?.paneID)
         case .sessionOverlayCopy:
             switch parseOverlayPane(request.args?.pane) {
             case .rejected(let response): return response
@@ -529,6 +541,12 @@ struct LinuxControlDispatcher {
             return actions.reloadKeymap()
         case .keymapList:
             return actions.listKeymap()
+        case .keymapRun:
+            // matched exactly: trimming here would make a name that differs only by spaces unreachable
+            guard let name = request.args?.name, !name.isEmpty else {
+                return ControlResponse(ok: false, error: "keymap.run requires a command name")
+            }
+            return actions.runCustomCommand(name: name, target: request.target, window: request.args?.window)
         case .configReload:
             return actions.reloadGhosttyConfig()
         case .notify:
@@ -595,8 +613,9 @@ struct LinuxControlDispatcher {
             case .rejected(let response): return response
             case .pane(let pane):
                 return actions.readSessionText(request.target, window: request.args?.window,
-                                               options: ControlSessionTextOptions(pane: pane, all: all,
-                                                                                  lines: lines))
+                                               options: ControlSessionTextOptions(pane: pane,
+                                                                                  paneID: request.args?.paneID,
+                                                                                  all: all, lines: lines))
             }
         }
     }

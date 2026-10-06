@@ -41,17 +41,37 @@ extension AppController {
         return nil
     }
 
-    func runCustomCommand(_ cmd: CustomCommand, origin: GhosttySurface? = nil,
-                          allowSessionless: Bool = false) {
+    /// `keymap.run`: starts the custom command `name` against the addressed session, as the palette does
+    /// for the active one. Ok means the process started.
+    func runCustomCommand(name: String, target: String?, window: String?) -> ControlResponse {
+        // the keymap parser keeps one command per name, so a name addresses at most one
+        guard let command = keymap.commands.first(where: { $0.name == name }) else {
+            return err("no custom command named \(name)")
+        }
+        switch resolveSessionResponse(target) {
+        case .failure(let response): return response
+        case .success(let id):
+            guard let session = store.session(withID: id) else { return err("no such session") }
+            if let failure = runCustomCommand(command, session: session) {
+                return err("\(name) did not start: \(failure)")
+            }
+            return ok(id)
+        }
+    }
+
+    /// Returns why the process did not start, nil once it has or when there was nothing to run against.
+    @discardableResult
+    func runCustomCommand(_ cmd: CustomCommand, origin: GhosttySurface? = nil, session: Session? = nil,
+                          allowSessionless: Bool = false) -> String? {
         // the OWNING session first: sidebar selection moves ahead of the asynchronous focus handoff, and in
         // that gap a chord fired from a scratch or split pane would build its context from the active
         // session instead, so every $AGT_SESSION_* value described a pane the user was not looking at
         let resolved = origin.flatMap(commandOrigin(of:))
-        let s = resolved?.session ?? store.activeSession
-        guard s != nil || allowSessionless else { return }
+        let s = resolved?.session ?? session ?? store.activeSession
+        guard s != nil || allowSessionless else { return nil }
         if s == nil, CommandContext.referencesSessionScopedContext(cmd.command) {
             showToast("\(cmd.name) needs an active session")
-            return
+            return nil
         }
         let workspace = s.flatMap { store.workspace(forSession: $0.id) }
         let pane: CommandContext.Pane
@@ -80,7 +100,7 @@ extension AppController {
         // the reported cwd can be the far side's, which need not exist here; the context keeps it raw
         let cwd = s?.localWorkingDirectory(reported: context.sessionPWD, homeDirectory: Self.homeCwd)
         let sessionID = s?.id
-        LinuxCustomCommandProcess.launch(command: cmd, context: context, cwd: cwd,
+        return LinuxCustomCommandProcess.launch(command: cmd, context: context, cwd: cwd,
                                          launcher: launcher) { [weak self] failure, detail in
             runOnMain { [weak self, weak controllerOrigin] in
                 MainActor.assumeIsolated {

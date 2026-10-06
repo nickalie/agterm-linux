@@ -116,6 +116,8 @@ enum LinuxCustomCommandProcess {
     }
 
     /// Only an `errorHud` command captures stderr; `onFailure` receives its last usable line as the detail.
+    /// Returns why the process did not start, nil once it has.
+    @discardableResult
     static func launch(
         command: CustomCommand,
         context: CommandContext,
@@ -124,7 +126,7 @@ enum LinuxCustomCommandProcess {
         captureDirectory: String = NSTemporaryDirectory(),
         launcher: any LinuxProcessLaunching,
         onFailure: @escaping @Sendable (LinuxCustomCommandFailure, String?) -> Void
-    ) {
+    ) -> String? {
         let capture = command.errorHud ? LinuxStderrCapture(directory: captureDirectory) : nil
         let request = request(command: command, context: context, baseEnvironment: baseEnvironment, cwd: cwd,
                               stderrPath: capture?.path)
@@ -134,9 +136,11 @@ enum LinuxCustomCommandProcess {
                 let detail = capture.flatMap { CommandFailure.detail(fromTail: $0.consume()) }
                 if status != 0 { onFailure(.exit(status), detail) }
             }
+            return nil
         } catch {
             _ = capture?.consume()
             onFailure(.launch(error.localizedDescription), nil)
+            return error.localizedDescription
         }
     }
 }

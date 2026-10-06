@@ -121,6 +121,17 @@ extension AppController {
                                                                pane: claim.pane.rawValue))
     }
 
+    /// readZmxScreen answers `zmx.screen` at the daemon's last leader's grid; it attaches nothing.
+    func readZmxScreen(name: String, fullBuffer: Bool, lines: Int?) -> ControlResponse {
+        guard gZmx.client.isAvailable else {
+            return ControlResponse(ok: false, error: ControlZmxError.unavailable)
+        }
+        guard let screen = gZmx.client.screen(name: name, all: fullBuffer) else {
+            return ControlResponse(ok: false, error: "could not read the zmx screen of \(name)")
+        }
+        return ControlResponse(ok: true, result: ControlResult(text: lines.map(screen.lastLines) ?? screen.text))
+    }
+
     private func inventory() -> ResolveResponse<ZmxInventoryResult> {
         guard gZmx.client.isAvailable else {
             return .failure(ControlResponse(ok: false, error: ControlZmxError.unavailable))
