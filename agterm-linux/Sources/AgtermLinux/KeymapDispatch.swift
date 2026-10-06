@@ -121,11 +121,15 @@ func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [Key
             message: "command '\(commands[index].name)' uses \(reason) and is palette-only"
         ))
         commands[index].shortcut = ""
+        commands[index].repeats = false
     }
     let sequences = linuxBuiltinSequences(parsed.builtinSequences, activeChords: activeBuiltinChords,
                                           diagnostics: &diagnostics)
+    // `--repeat` survives only beside a leader sequence the Linux re-validation kept
+    let repeating = parsed.builtinRepeating.filter { sequences[$0]?.contains { $0.count > 1 } == true }
     return (Keymap(builtinOverrides: overrides, commands: commands,
-                   builtinSequences: sequences, builtinUnbound: parsed.builtinUnbound), diagnostics)
+                   builtinSequences: sequences, builtinUnbound: parsed.builtinUnbound,
+                   builtinRepeating: repeating), diagnostics)
 }
 
 /// The monitor-bound built-in alternatives, re-validated against the LINUX chord set for the same reason
@@ -233,7 +237,9 @@ extension AppController {
         // cleared shortcuts that collide with built-ins / reserved chords / each other). It also carries the
         // built-in binds `resolvedBuiltinChords` cannot hold — a leader sequence, or a second chord from a
         // `map` line's `|` alternatives — which come back as `.firedBuiltin`.
-        customCommandEngine = CustomCommandEngine(commands: km.commands, builtinSequences: km.builtinSequences)
+        customCommandEngine = CustomCommandEngine(commands: km.commands, builtinSequences: km.builtinSequences,
+                                                  builtinRepeating: km.builtinRepeating)
+        heldRepeatKeycode = nil
         return diagnostics.count
     }
 
@@ -264,19 +270,28 @@ extension AppController {
                    origin: GhosttySurface? = nil,
                    context: @autoclosure () -> ShortcutKeyContext? = nil) -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
-        if gKeyPressOwnership.isOwnedRepeat(keycode, now: now) { return true }
-        // Reset the leader deadline to the FINAL armed state on every exit: a fresh leader (re)starts the
-        // 1.5s timer, a fired/aborted leader cancels it (macOS-parity leader timeout — see syncLeaderDeadline).
+        let needsKeyContext = needsShortcutKeyContext(
+            state: state, leaderArmed: customCommandEngine.isArmed || customCommandEngine.isRepeating
+        )
+        // the held tail of a live `--repeat` sequence fires again on autorepeat; every other owned repeat
+        // stays swallowed
+        if gKeyPressOwnership.isOwnedRepeat(keycode, now: now) {
+            guard customCommandEngine.isRepeating,
+                  let tail = shortcutChord(fromKeyval: keyval, keycode: keycode, state: state,
+                                           context: needsKeyContext ? context() : nil),
+                  customCommandEngine.isRepeatTail(tail) else { return true }
+        }
+        // Reset the leader deadline to the FINAL state on every exit: a fresh leader (re)starts the 1.5s
+        // timer, an open repeat window whose tail was released starts the 0.5s one, anything else cancels.
         defer { syncLeaderDeadline() }
-        // Escape: abort a half-typed leader (consumed); otherwise pass through to the terminal.
+        // Escape: abort a half-typed leader (consumed); an open repeat window closes, but Esc still reaches
+        // the terminal.
         if keyval == 0xFF1B {
-            if customCommandEngine.isArmed { customCommandEngine.reset(); return true }
-            return false
+            let wasArmed = customCommandEngine.isArmed
+            if wasArmed || customCommandEngine.isRepeating { resetMatcher() }
+            return wasArmed
         }
 
-        let needsKeyContext = needsShortcutKeyContext(
-            state: state, leaderArmed: customCommandEngine.isArmed
-        )
         guard let chord = shortcutChord(
             fromKeyval: keyval,
             keycode: keycode,
@@ -285,12 +300,12 @@ extension AppController {
         ) else {
             // A non-Chord key (page/navigation) can't continue a leader sequence; abandon a half-typed
             // one so a stale prefix can't complete across it.
-            if customCommandEngine.isArmed { customCommandEngine.reset() }
+            if customCommandEngine.isArmed || customCommandEngine.isRepeating { resetMatcher() }
             return rawNavigationShortcut(keyval: keyval, state: state)
         }
 
         if isLinuxReservedChord(chord) {
-            if customCommandEngine.isArmed { customCommandEngine.reset() }
+            if customCommandEngine.isArmed || customCommandEngine.isRepeating { resetMatcher() }
             guard let shortcut = linuxFixedShortcut(for: chord) else { return false }
             dispatchFixedShortcut(shortcut, origin: origin)
             return true
@@ -301,10 +316,12 @@ extension AppController {
         switch customCommandEngine.advance(chord) {
         case .fired(let command):
             gKeyPressOwnership.claim(keycode, now: now)
+            heldRepeatKeycode = customCommandEngine.isRepeating ? keycode : nil
             runCustomCommand(command, origin: origin, allowSessionless: store.activeSession == nil)
             return true
         case .firedBuiltin(let action):
             gKeyPressOwnership.claim(keycode, now: now)
+            heldRepeatKeycode = customCommandEngine.isRepeating ? keycode : nil
             dispatchBuiltin(action, sessionID: sessionID)
             return true
         case .armed:
@@ -344,33 +361,77 @@ extension AppController {
     }
 
     /// Abandon a half-typed leader sequence (called on terminal focus loss — mirrors the macOS
-    /// first-responder gate).
-    func resetLeader() { customCommandEngine.reset() }
+    /// first-responder gate). An open repeat window survives it: `--repeat next_session` moves focus.
+    func resetLeader() {
+        if customCommandEngine.isArmed { resetMatcher() }
+    }
 
-    /// Sync the leader deadline to the matcher's armed state (called via `defer` on every key): cancel any
+    /// Clear a half-typed leader, an open repeat window and its held tail.
+    func resetMatcher() {
+        customCommandEngine.reset()
+        heldRepeatKeycode = nil
+    }
+
+    /// Releasing the held `--repeat` tail starts the repeat timeout.
+    func releaseRepeatTail(_ keycode: UInt32) {
+        guard keycode == heldRepeatKeycode else { return }
+        heldRepeatKeycode = nil
+        syncLeaderDeadline()
+    }
+
+    /// A deactivated window never sees the held tail's release, so it counts as released here; the window a
+    /// `--repeat next_window` raised adopts what is still open when it becomes frontmost.
+    func repeatWindowLostFocus() {
+        guard heldRepeatKeycode != nil else { return }
+        heldRepeatKeycode = nil
+        syncLeaderDeadline()
+    }
+
+    /// Take over an open repeat window from the window that fired it. Every window loads the same keymap,
+    /// so the source's matcher is this one's plus the open prefix.
+    func adoptRepeatWindow() {
+        guard !customCommandEngine.isArmed, !customCommandEngine.isRepeating,
+              let source = gWindows.values.first(where: {
+                  $0 !== self && $0.customCommandEngine.isRepeating && !$0.customCommandEngine.isArmed
+              }) else { return }
+        customCommandEngine = source.customCommandEngine
+        source.resetMatcher()
+        source.syncLeaderDeadline()
+        syncLeaderDeadline()
+    }
+
+    /// Sync the leader deadline to the matcher's state (called via `defer` on every key): cancel any
     /// pending timer, then (re)arm a 1.5s g_timeout if a leader sequence is partially entered, so a
-    /// half-typed leader self-aborts after the deadline — the Linux analogue of the macOS 1.5s timeout.
-    private func syncLeaderDeadline() {
+    /// half-typed leader self-aborts after the deadline — the Linux analogue of the macOS 1.5s timeout — or
+    /// a 0.5s one, tmux's `repeat-time`, for an open repeat window whose tail is no longer held.
+    func syncLeaderDeadline() {
         cancelLeaderDeadline()
+        if !customCommandEngine.isRepeating { heldRepeatKeycode = nil }
+        let interval: guint
         if customCommandEngine.isArmed {
-            let context = LeaderTimeoutContext(controller: self)
-            leaderTimeout = g_timeout_add_full(
-                G_PRIORITY_DEFAULT, 1500, onLeaderTimeout,
-                Unmanaged.passRetained(context).toOpaque(), releaseLeaderTimeoutContext)
+            interval = 1500
+        } else if customCommandEngine.isRepeating, heldRepeatKeycode == nil {
+            interval = 500
+        } else {
+            return
         }
+        let context = LeaderTimeoutContext(controller: self)
+        leaderTimeout = g_timeout_add_full(
+            G_PRIORITY_DEFAULT, interval, onLeaderTimeout,
+            Unmanaged.passRetained(context).toOpaque(), releaseLeaderTimeoutContext)
     }
     private func cancelLeaderDeadline() {
         if leaderTimeout != 0 { g_source_remove(leaderTimeout); leaderTimeout = 0 }
     }
     func cancelLeaderDeadlineForWindowClose() {
         cancelLeaderDeadline()
-        resetLeader()
+        resetMatcher()
     }
     /// The leader timer fired (no completing chord in time): abandon the half-typed sequence. The source
     /// auto-removes (the callback returns G_SOURCE_REMOVE), so just clear the id + reset the matcher.
     func leaderDeadlineFired() {
         leaderTimeout = 0
-        resetLeader()
+        resetMatcher()
     }
 
     /// Map a rebindable `BuiltinAction` to its AppController method. EXHAUSTIVE: adding a BuiltinAction
@@ -451,4 +512,10 @@ extension AppController {
         }
         return false
     }
+}
+
+/// Ends a consumed press: the ownership the shortcut took, and the hold on a `--repeat` window.
+@MainActor func releaseOwnedKey(_ keycode: UInt32) {
+    gKeyPressOwnership.release(keycode)
+    for controller in gWindows.values { controller.releaseRepeatTail(keycode) }
 }

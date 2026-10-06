@@ -311,6 +311,11 @@ paths:
   the monitor consumes and a primary built-in's press only on an F-key, as macOS menus refire otherwise.
   The surface's and the window's `key-released` end ownership; a release lost outside agterm lapses after
   `repeatWindow`, so the next deliberate press fires. Pinned by the AT-SPI `v032-keymap-hud` hold check.
+  An owned repeat of a live `--repeat` tail (`isRepeatTail`) goes on to the matcher instead.
+  `releaseOwnedKey` ends ownership and starts the 0.5 s repeat timeout of the window holding that tail;
+  a deactivated window counts the tail as released, since its release never arrives.
+  Each window owns a matcher, so the window a `--repeat next_window` raises adopts the open repeat window
+  when it becomes active (`adoptRepeatWindow`), and terminal blur resets only a half-typed leader.
 - Three details the Linux seam depends on. Startup is deliberately NOT fanned out: window construction
   builds one new controller's cache, so it calls `loadKeymapAtStartup()` directly and a dirty `keymap.conf`
   banners once per window opened, which is per-window on purpose. Reporting belongs to the CALLER via

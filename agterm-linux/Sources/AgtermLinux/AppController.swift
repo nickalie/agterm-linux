@@ -177,6 +177,7 @@ final class AppController {
     var resolvedBuiltinChords: [Chord: BuiltinAction] = [:]
     var customCommandEngine = CustomCommandEngine(commands: [])   // matcher + id-lookup (shared, host-free)
     var leaderTimeout: guint = 0   // g_timeout source for the custom-command leader deadline (0 = none)
+    var heldRepeatKeycode: UInt32?   // the fired `--repeat` tail still held down; its window waits for release
 
     static var homeCwd: String { ConfigPaths.defaultNewSessionCwd() }
 

@@ -547,7 +547,7 @@ private let onPageKeyPressed: PageKeyCallback = { controller, keyval, keycode, s
 private let onPageKeyReleased: PageKeyReleaseCallback = { _, keyval, keycode, _, context in
     let key = UInt(bitPattern: context)
     MainActor.assumeIsolated {
-        _ = gKeyPressOwnership.release(keycode)
+        releaseOwnedKey(keycode)
         if keyval == 0xFFE3 || keyval == 0xFFE4 { LinuxHtmlOverlays.shared.endSessionSwitch(page(key)) }
     }
 }

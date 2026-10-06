@@ -24,6 +24,9 @@ let onWindowActive: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, g
         if gtk_window_is_active(WIN(window)) != 0 {
             ctl.becameFrontmost()
             ctl.applyInactiveWindowSidebarHidingIfEnabled()
+            ctl.adoptRepeatWindow()
+        } else {
+            ctl.repeatWindowLostFocus()
         }
     }
 }
@@ -73,7 +76,7 @@ let onEmptyWindowKeyPressed: @MainActor @convention(c)
 /// Ends a consumed press whose release reaches the window rather than the terminal surface.
 let onWindowKeyReleased: @MainActor @convention(c)
     (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> Void = { _, _, keycode, _, _ in
-        MainActor.assumeIsolated { _ = gKeyPressOwnership.release(keycode) }
+        MainActor.assumeIsolated { releaseOwnedKey(keycode) }
 }
 
 @MainActor

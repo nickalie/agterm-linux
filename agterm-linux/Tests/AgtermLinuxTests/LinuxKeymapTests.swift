@@ -131,6 +131,20 @@ struct LinuxKeymapTests {
 
     /// Parse `contents` as a `keymap.conf` in a throwaway config directory — every test here goes through
     /// this, so a fixture reads as its keymap text rather than as temp-directory bookkeeping.
+    @Test("--repeat survives only beside a leader sequence Linux keeps")
+    func repeatFollowsTheKeptSequence() throws {
+        let loaded = try loadKeymap("""
+        map ctrl+a>ctrl+l --repeat next_session
+        map ctrl+shift+d>x --repeat previous_session
+        command "kept" ctrl+a>p --repeat ./kept
+        command "dropped" ctrl+shift+d>p --repeat ./dropped
+        """)
+
+        #expect(loaded.keymap.builtinRepeating == [.nextSession])
+        #expect(loaded.keymap.commands.first { $0.name == "kept" }?.repeats == true)
+        #expect(loaded.keymap.commands.first { $0.name == "dropped" }?.repeats == false)
+    }
+
     private func loadKeymap(_ contents: String) throws -> (keymap: Keymap, diagnostics: [KeymapDiagnostic]) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
