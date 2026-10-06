@@ -160,37 +160,74 @@ extension IntegrationService {
         )
     }
 
-    func opencodePluginStatus() -> IntegrationItemStatus {
-        let home = environment.homeDirectory.path
-        let base = environment.homeDirectory.appendingPathComponent(".config/opencode", isDirectory: true)
-        let path = URL(fileURLWithPath: AgentHooksInstall.opencodePluginPath(home: home))
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: base.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            return IntegrationItemStatus(
-                kind: .opencodePlugin, state: .unavailable, path: path.path,
-                detail: "No ~/.config/opencode directory was detected."
-            )
+    /// OpenCodeTarget is the plugin the install manages: the version OpenCode reported, OpenCode 1 when it
+    /// reported none, which upstream would ask about instead, and the configuration directory that version reads.
+    struct OpenCodeTarget: Equatable {
+        let version: AgentHooksInstall.OpenCode.Version
+        let configurationDirectory: URL
+        let plugin: URL
+    }
+
+    enum OpenCodeSelection: Equatable {
+        case target(OpenCodeTarget)
+        case missing(String)
+        case notDirectory(String)
+    }
+
+    func opencodeTarget() -> OpenCodeSelection {
+        let version = environment.opencode?.version ?? .v1
+        let directory: URL
+        switch version {
+        case .v1:
+            directory = environment.homeDirectory.appendingPathComponent(".config/opencode", isDirectory: true)
+        case .v2:
+            guard let resolved = environment.opencode?.v2ConfigurationDirectory else {
+                return .missing("OpenCode 2's configuration directory could not be resolved.")
+            }
+            directory = URL(fileURLWithPath: resolved, isDirectory: true)
         }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
+            return .missing("No \(directory.path) directory was detected.")
+        }
+        guard isDirectory.boolValue else { return .notDirectory(directory.path) }
+        return .target(OpenCodeTarget(
+            version: version, configurationDirectory: directory,
+            plugin: URL(fileURLWithPath: AgentHooksInstall.OpenCode.pluginPath(
+                configurationDirectory: directory.path, version: version))))
+    }
+
+    func opencodePluginStatus() -> IntegrationItemStatus {
+        let target: OpenCodeTarget
+        switch opencodeTarget() {
+        case .missing(let message), .notDirectory(let message):
+            let fallback = AgentHooksInstall.opencodePluginPath(home: environment.homeDirectory.path)
+            return IntegrationItemStatus(kind: .opencodePlugin, state: .unavailable, path: fallback, detail: message)
+        case .target(let resolved):
+            target = resolved
+        }
+        let version = target.version
+        let path = target.plugin
+        let name = "OpenCode \(version.rawValue)"
         guard let package = environment.resource(named: "agent-status") else {
             return IntegrationItemStatus(
                 kind: .opencodePlugin, state: .unavailable, path: path.path,
-                detail: "The bundled OpenCode plugin is unavailable."
+                detail: "The bundled \(name) plugin is unavailable."
             )
         }
-        let source = package.appendingPathComponent(AgentHooksInstall.opencodePluginRelativePath)
+        let source = package.appendingPathComponent(AgentHooksInstall.OpenCode.relativePath(version: version))
         guard let bundled = try? String(contentsOf: source, encoding: .utf8),
-              bundled.contains(AgentHooksInstall.opencodePluginMarker) else {
+              bundled.contains(AgentHooksInstall.OpenCode.marker(version: version)) else {
             return IntegrationItemStatus(
                 kind: .opencodePlugin, state: .unavailable, path: path.path,
-                detail: "The bundled OpenCode plugin is invalid."
+                detail: "The bundled \(name) plugin is invalid."
             )
         }
         let exists = IntegrationFilesystem.fingerprint(path).value != "missing"
         guard exists else {
             return IntegrationItemStatus(
                 kind: .opencodePlugin, state: .notInstalled, path: path.path,
-                detail: "OpenCode's agterm lifecycle plugin is not installed."
+                detail: "\(name)'s agterm status plugin is not installed."
             )
         }
         let existing: String
@@ -202,9 +239,7 @@ extension IntegrationService {
                 detail: "The OpenCode plugin could not be read."
             )
         }
-        guard AgentHooksInstall.mayOverwriteOpenCodePlugin(
-            fileExists: true, existingContents: existing
-        ) else {
+        guard AgentHooksInstall.OpenCode.mayOverwrite(fileExists: true, existingContents: existing, version: version) else {
             return IntegrationItemStatus(
                 kind: .opencodePlugin, state: .conflict, path: path.path,
                 detail: "A user-owned OpenCode plugin already uses this path."
@@ -214,8 +249,8 @@ extension IntegrationService {
         return IntegrationItemStatus(
             kind: .opencodePlugin, state: state, path: path.path,
             detail: state == .installed
-                ? "OpenCode's agterm lifecycle plugin is installed and current."
-                : "OpenCode's managed agterm lifecycle plugin can be updated."
+                ? "\(name)'s agterm status plugin is installed and current."
+                : "\(name)'s managed agterm status plugin can be updated."
         )
     }
 

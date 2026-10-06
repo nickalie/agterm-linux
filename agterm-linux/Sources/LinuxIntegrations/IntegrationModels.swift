@@ -179,6 +179,8 @@ enum IntegrationOperation: Sendable {
                   expectedTarget: FileFingerprint)
     case symlink(path: String, target: String, expectedPath: FileFingerprint,
                  expectedTarget: FileFingerprint)
+    /// Unlinks the entry at `path` only, never a symlink's target.
+    case removeFile(path: String, expectedPath: FileFingerprint)
 }
 
 struct FileFingerprint: Equatable, Sendable {

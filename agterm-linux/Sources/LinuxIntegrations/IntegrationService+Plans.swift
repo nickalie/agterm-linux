@@ -471,27 +471,26 @@ private extension IntegrationService {
         warnings: inout [String], conflicts: inout [String],
         operations: inout [IntegrationOperation]
     ) throws {
-        let home = environment.homeDirectory.path
-        let base = environment.homeDirectory.appendingPathComponent(
-            ".config/opencode", isDirectory: true)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: base.path, isDirectory: &isDirectory) else {
-            warnings.append(
-                "No ~/.config/opencode directory was detected; the OpenCode plugin will be skipped.")
+        let target: OpenCodeTarget
+        switch opencodeTarget() {
+        case .missing(let message):
+            warnings.append(message + " The OpenCode plugin will be skipped.")
             return
-        }
-        guard isDirectory.boolValue else {
-            conflicts.append("\(base.path) exists but is not a directory.")
+        case .notDirectory(let path):
+            conflicts.append("\(path) exists but is not a directory.")
             return
+        case .target(let resolved):
+            target = resolved
         }
-        let source = package.appendingPathComponent(AgentHooksInstall.opencodePluginRelativePath)
+        let version = target.version
+        let source = package.appendingPathComponent(AgentHooksInstall.OpenCode.relativePath(version: version))
         guard let bundled = try? String(contentsOf: source, encoding: .utf8),
-              bundled.contains(AgentHooksInstall.opencodePluginMarker) else {
+              bundled.contains(AgentHooksInstall.OpenCode.marker(version: version)) else {
             throw IntegrationServiceError.invalidResource(
-                "The bundled OpenCode plugin is missing or invalid: \(source.path)"
+                "The bundled OpenCode \(version.rawValue) plugin is missing or invalid: \(source.path)"
             )
         }
-        let path = URL(fileURLWithPath: AgentHooksInstall.opencodePluginPath(home: home))
+        let path = target.plugin
         let pathFingerprint = IntegrationFilesystem.fingerprint(path)
         let exists = pathFingerprint.value != "missing"
         let existing: String?
@@ -501,28 +500,49 @@ private extension IntegrationService {
             conflicts.append("\(path.path) could not be read and will not be changed.")
             return
         }
-        guard AgentHooksInstall.mayOverwriteOpenCodePlugin(
-            fileExists: exists, existingContents: existing
-        ) else {
+        guard AgentHooksInstall.OpenCode.mayOverwrite(fileExists: exists, existingContents: existing, version: version) else {
             conflicts.append("\(path.path) is user-owned and will not be changed.")
             return
         }
-        guard existing != bundled else { return }
-        let target = IntegrationFilesystem.resolvedWriteTarget(path)
-        operations.append(.copyFile(
-            source: source.path,
-            path: path.path,
-            target: target.path,
-            expectedSource: IntegrationFilesystem.fingerprint(source),
-            expectedPath: pathFingerprint,
-            expectedTarget: IntegrationFilesystem.fingerprint(target)
-        ))
-        steps.append(IntegrationPlanStep(
-            action: exists ? "Update" : "Install",
-            path: path.path,
-            detail: "Copy the managed OpenCode lifecycle plugin without a backup."
-        ))
-        warnings.append("Restart OpenCode after installing or updating its lifecycle plugin.")
+        if existing != bundled {
+            let writeTarget = IntegrationFilesystem.resolvedWriteTarget(path)
+            operations.append(.copyFile(
+                source: source.path,
+                path: path.path,
+                target: writeTarget.path,
+                expectedSource: IntegrationFilesystem.fingerprint(source),
+                expectedPath: pathFingerprint,
+                expectedTarget: IntegrationFilesystem.fingerprint(writeTarget)
+            ))
+            steps.append(IntegrationPlanStep(
+                action: exists ? "Update" : "Install",
+                path: path.path,
+                detail: "Copy the managed OpenCode \(version.rawValue) status plugin without a backup."
+            ))
+            warnings.append("Restart OpenCode after installing or updating its status plugin.")
+        }
+        if version == .v2 { appendOpenCodeV1Cleanup(target, steps: &steps, warnings: &warnings, operations: &operations) }
+    }
+
+    /// OpenCode 2 would load both plugins, so the v2 install removes a v1 plugin agterm installed beside it,
+    /// and only the plugin entry itself.
+    private func appendOpenCodeV1Cleanup(_ target: OpenCodeTarget, steps: inout [IntegrationPlanStep],
+                                         warnings: inout [String], operations: inout [IntegrationOperation]) {
+        let legacy = URL(fileURLWithPath: AgentHooksInstall.OpenCode.pluginPath(
+            configurationDirectory: target.configurationDirectory.path, version: .v1))
+        let fingerprint = IntegrationFilesystem.fingerprint(legacy)
+        guard fingerprint.value != "missing" else { return }
+        guard let existing = try? IntegrationFilesystem.read(legacy) else {
+            warnings.append("\(legacy.path) could not be read; remove it if it is agterm's OpenCode 1 plugin.")
+            return
+        }
+        guard AgentHooksInstall.OpenCode.mayOverwrite(fileExists: true, existingContents: existing, version: .v1) else {
+            warnings.append("\(legacy.path) is user-owned and was left in place.")
+            return
+        }
+        operations.append(.removeFile(path: legacy.path, expectedPath: fingerprint))
+        steps.append(IntegrationPlanStep(action: "Remove", path: legacy.path,
+                                         detail: "Remove the managed OpenCode 1 plugin OpenCode 2 replaces."))
     }
 
     func backupFingerprint(for target: URL) -> FileFingerprint {

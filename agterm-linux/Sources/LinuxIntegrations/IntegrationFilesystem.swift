@@ -26,6 +26,8 @@ enum IntegrationFilesystem {
         case .symlink(let path, let target, let expectedPath, let expectedTarget):
             try check(URL(fileURLWithPath: path), expected: expectedPath)
             try check(URL(fileURLWithPath: target), expected: expectedTarget)
+        case .removeFile(let path, let expectedPath):
+            try check(URL(fileURLWithPath: path), expected: expectedPath)
         }
     }
 
@@ -293,6 +295,14 @@ enum IntegrationFilesystem {
             if hadPrevious { try? fm.removeItem(at: previous) }
             return IntegrationOperationResult(action: "Copy", path: path, success: true,
                                               message: "installed bundled Pi extension")
+
+        case .removeFile(let path, let expectedPath):
+            let url = URL(fileURLWithPath: path)
+            try check(url, expected: expectedPath)
+            guard unlink(path) == 0 else {
+                throw IntegrationServiceError.invalidResource("\(path) could not be removed: \(String(cString: strerror(errno)))")
+            }
+            return IntegrationOperationResult(action: "Remove", path: path, success: true, message: "removed")
 
         case .symlink(let path, let target, let expectedPath, let expectedTarget):
             let url = URL(fileURLWithPath: path)

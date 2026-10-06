@@ -901,13 +901,14 @@ final class Fixture {
 
     deinit { try? FileManager.default.removeItem(at: root) }
 
-    func service(path: [URL], knownTools: [URL] = []) -> IntegrationService {
+    func service(path: [URL], knownTools: [URL] = [], opencode: OpenCodeProbe? = nil) -> IntegrationService {
         IntegrationService(environment: IntegrationEnvironment(
             homeDirectory: home,
             executableURL: bin.appendingPathComponent("agterm-linux"),
             pathDirectories: path,
             resourceRoot: resources,
-            knownCommandLineTools: knownTools
+            knownCommandLineTools: knownTools,
+            opencode: opencode
         ))
     }
 
@@ -938,6 +939,10 @@ final class Fixture {
         try write(
             "\(AgentHooksInstall.opencodePluginMarker)\nexport const AgtermStatusPlugin = async () => ({})\n",
             to: root.appendingPathComponent("opencode/agterm-status.js")
+        )
+        try write(
+            "\(AgentHooksInstall.OpenCode.marker(version: .v2))\nexport default {}\n",
+            to: root.appendingPathComponent(AgentHooksInstall.OpenCode.relativePath(version: .v2))
         )
     }
 }

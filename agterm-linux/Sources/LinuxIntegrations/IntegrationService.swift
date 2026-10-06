@@ -46,6 +46,7 @@ private extension IntegrationOperation {
         case .writeText(let path, _, _, _, _, _, _): return ("Write", path)
         case .copyFile(_, let path, _, _, _, _): return ("Copy", path)
         case .symlink(let path, _, _, _): return ("Link", path)
+        case .removeFile(let path, _): return ("Remove", path)
         }
     }
 
