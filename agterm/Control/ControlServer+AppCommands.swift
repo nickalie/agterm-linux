@@ -112,6 +112,32 @@ extension ControlServer {
         return ControlResponse(ok: true, result: ControlResult(keymap: payload))
     }
 
+    func runCustomCommand(name: String, target: String?, window: String?) -> ControlResponse {
+        // the keymap parser keeps one command per name, so a name addresses at most one
+        guard let command = settingsModel.keymap.commands.first(where: { $0.name == name }) else {
+            return ControlResponse(ok: false, error: "no custom command named \(name)")
+        }
+        guard let runner = actions.customCommandRunner else {
+            return ControlResponse(ok: false, error: "custom commands are not available")
+        }
+        return resolver.resolveSession(target, window: window) { store, id in
+            guard let session = store.session(withID: id) else {
+                return ControlResponse(ok: false, error: "no such session")
+            }
+            if let failure = runner.run(command, session: session, in: store) {
+                return ControlResponse(ok: false, error: "\(name) did not start: \(failure)")
+            }
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    func clearBrowser() async -> ControlResponse {
+        if let failure = await HtmlOverlayRegistry.shared.clearPersistentStore() {
+            return ControlResponse(ok: false, error: "browser.clear: \(failure)")
+        }
+        return ControlResponse(ok: true)
+    }
+
     func reloadHooks() -> ControlResponse {
         settingsModel.reloadHooks()
         return ControlResponse(ok: true, result: ControlResult(count: settingsModel.hooksDiagnostics.count))
@@ -145,7 +171,7 @@ extension ControlServer {
     /// reachable case, carrying whatever the user assigned in System Settings; top-level-only reporting would
     /// let a caller conclude nothing holds a chord when something does. `menu` stays the TOP-LEVEL title
     /// throughout, so a nested item is attributed to the menu-bar entry the reader can find it under. Internal
-    /// rather than private so `CloseSessionChordTests`' companion can drive it over a hand-built nested menu:
+    /// rather than private so `StockMenuChordTests`' companion can drive it over a hand-built nested menu:
     /// agterm's own submenus carry no key equivalents and Services entries depend on the user's system
     /// settings, so no real nested chord exists to assert against.
     @MainActor

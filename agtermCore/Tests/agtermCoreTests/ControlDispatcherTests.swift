@@ -846,6 +846,28 @@ struct ControlDispatcherTests {
         #expect(actions.calls == [.keymapReload, .configReload])
     }
 
+    @Test func keymapRunPassesTheNameUntrimmedWithItsTarget() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .keymapRun, target: "abc", args: ControlArgs(name: " lazy git ", window: "w1")))
+
+        #expect(response == ControlResponse(ok: true, result: ControlResult(id: "sess")))
+        #expect(actions.calls == [.keymapRun(name: " lazy git ", target: "abc", window: "w1")])
+    }
+
+    @Test(arguments: [nil, ControlArgs(), ControlArgs(name: "")] as [ControlArgs?])
+    func keymapRunRefusesAMissingName(args: ControlArgs?) async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(cmd: .keymapRun, args: args))
+
+        #expect(response == ControlResponse(ok: false, error: "keymap.run requires a command name"))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func keymapListRoutesToActionsAndKeepsThePayload() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -1498,6 +1520,21 @@ struct ControlDispatcherTests {
         _ = await dispatcher.dispatch(ControlRequest(cmd: .surfaceCursor))
 
         #expect(actions.calls == [.surfaceCursor(target: nil, window: nil)])
+    }
+
+    @Test func surfaceCursorAndSessionTypeForwardThePaneID() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .surfaceCursor, target: "s1", args: ControlArgs(paneID: "tok")))
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .sessionType, target: "s1",
+                                                     args: ControlArgs(text: "x", pane: "right", paneID: "tok")))
+
+        #expect(actions.calls == [
+            .surfaceCursor(target: "s1", window: nil, paneID: "tok"),
+            .sessionType(target: "s1", window: nil,
+                         ControlSessionTypeOptions(text: "x", select: false, pane: .right, paneID: "tok")),
+        ])
     }
 
     @Test func dashboardOpenRoutesTargetsWindowAndFixedFontMode() async {

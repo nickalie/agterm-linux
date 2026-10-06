@@ -183,9 +183,10 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
     /// unfocused (hollow) cursor, but AppKit first responder is per-window and does NOT resign when a window
     /// merely loses key, so key changes re-push `liveFocus`. Removed on teardown; `nonisolated(unsafe)`
     /// because the nonisolated `deinit` safety net reads them.
-    nonisolated(unsafe) private var focusObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) var focusObservers: [NSObjectProtocol] = []
     private var pendingSurfaceCreation = false
     var rendererVisibilityTask: Task<Void, Never>?
+    var windowVisibilityObservation: NSKeyValueObservation?
     var rendererVisible = true
     /// Sweeps the hidden layer's retained frame on a slow cadence; exits itself on reveal or teardown.
     var hiddenJanitorTask: Task<Void, Never>?
@@ -367,7 +368,7 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
         wantsLayer = true
         setupTrackingArea()
         observeKeyWindowChanges()
-        observeWindowVisibilityChanges()
+        observeAccessibilityExposure()
         observeDisplayWake()
     }
 
@@ -417,26 +418,6 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
                         self.clearUnseenOnRefocus()
                     }
                 }
-            }
-            focusObservers.append(token)
-        }
-    }
-
-    /// Watch the transitions that move `window?.isVisible`, the `axExposed` term nothing else reports.
-    /// `deckVisible` is pure MODEL state, so miniaturizing the window — or hiding the app — leaves this pane
-    /// `deckVisible == true` while AppKit reports `isVisible == false`. Without these, `axExposed` went
-    /// true → false → true across a minimize/restore with no `.layoutChanged` posted at all.
-    /// `object: nil` like the key observers: the post recomputes from THIS view's own window, so another
-    /// window's notification costs one latch compare. Tokens join `focusObservers`, so teardown is unchanged.
-    private func observeWindowVisibilityChanges() {
-        let center = NotificationCenter.default
-        let names: [Notification.Name] = [
-            NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
-            NSApplication.didHideNotification, NSApplication.didUnhideNotification,
-        ]
-        for name in names {
-            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.postAccessibilityExposureChange() }
             }
             focusObservers.append(token)
         }
@@ -854,6 +835,7 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
         isDestroyed = true
         focusObservers.forEach { NotificationCenter.default.removeObserver($0) }
         focusObservers = []
+        windowVisibilityObservation = nil
         if let surface { ghostty_surface_free(surface) }
         surface = nil
         // release the custom layer libghostty installed and this view still retains. The current pin clears
@@ -940,6 +922,7 @@ final class GhosttySurfaceView: NSView, PaneRoleMutableSurface {
         // only site that can clear the latch — below the guard it never ran, and the re-show then compared
         // equal and stayed silent too.
         postAccessibilityExposureChange()
+        observeWindowVisibility()
         updateRendererVisibility()
         guard let window else { return }
         if surface == nil {

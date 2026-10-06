@@ -41,6 +41,16 @@ extension AppStore {
                          payload: ControlEventPayload(name: session.displayName, status: shown ? "shown" : "hidden"))
     }
 
+    /// `session.selected` fires on every change of this window's selection, whoever made it, a close
+    /// reselecting included. A cleared selection carries no session; window focus is not a selection.
+    func emitSessionSelected(previous: UUID?) {
+        guard !restoringSelection else { return }
+        let selected = activeSession
+        emitControlEvent(.sessionSelected, workspace: selected.flatMap { workspace(forSession: $0.id)?.id },
+                         session: selected?.id,
+                         payload: ControlEventPayload(name: selected?.displayName, previous: previous?.uuidString))
+    }
+
     func emitSessionClosed(_ session: Session, workspace: UUID) {
         emitControlEvent(.sessionClosed, workspace: workspace, session: session.id,
                          payload: ControlEventPayload(name: session.displayName))

@@ -503,12 +503,13 @@ final class SettingsModel {
         }
     }
 
-    /// The resolved config directory: the explicit setting, else `AGTERM_STATE_DIR/config` (test
-    /// isolation), else `~/.config/agterm`. Both `keymap.conf` and `ghostty.conf` live here.
+    /// configDirectoryURL follows `ConfigPaths.configDirectory`'s precedence. Both `keymap.conf` and
+    /// `ghostty.conf` live here.
     private func configDirectoryURL() -> URL {
         ConfigPaths.configDirectory(
             setting: settings.configDirectory,
-            stateDir: ProcessInfo.processInfo.environment["AGTERM_STATE_DIR"],
+            stateDir: DebugStateDirectory.configStateDirectory(environment: ProcessInfo.processInfo.environment,
+                                                               liveDirectory: PersistenceStore.defaultDirectory),
             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 

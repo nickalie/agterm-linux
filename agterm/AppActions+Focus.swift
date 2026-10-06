@@ -162,16 +162,10 @@ extension AppActions {
         revealActiveBlockedPane(captured: indicator)
     }
 
-    /// Front and focus the window a recent-closed reopen restored into. The id is published here rather
-    /// than left to the key-window report, which `focusActiveSession` would otherwise outrun; publishing it
-    /// also has to save and post, because `WindowAccessor.reportFrontmost` gates both on the id having
-    /// changed and this assignment already made it equal.
+    /// revealRestoredWindow fronts the window a recent-closed reopen restored into. It publishes the id
+    /// itself, since `focusActiveSession` would outrun the key-window report.
     func revealRestoredWindow(_ id: WindowInfo.ID) {
-        if library.frontmostWindowID != id {
-            library.frontmostWindowID = id
-            library.saveIndex()
-            NotificationCenter.default.post(name: .agtermWindowFrontmostChanged, object: nil)
-        }
+        takeFrontmost(id)
         _ = WindowRegistry.shared.raise(id)
         focusActiveSession()
     }

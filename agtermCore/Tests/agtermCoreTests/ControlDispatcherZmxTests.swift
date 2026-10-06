@@ -56,6 +56,35 @@ struct ControlDispatcherZmxTests {
         #expect(actions.calls == [.zmxList])
     }
 
+    @Test(arguments: [(false, nil, false), (true, nil, true), (false, 5, true)] as [(Bool, Int?, Bool)])
+    func zmxScreenReadsTheFullBufferForAllOrLines(all: Bool, lines: Int?, fullBuffer: Bool) async throws {
+        let actions = MockControlActions()
+        let request = ControlRequest(cmd: .zmxScreen, args: ControlArgs(name: " agterm-a ", all: all, lines: lines))
+
+        let response = try #require(await dispatch(request, actions))
+
+        #expect(response.result?.text == "screen")
+        #expect(actions.calls == [.zmxScreen(name: "agterm-a", fullBuffer: fullBuffer, lines: lines)])
+    }
+
+    @Test(arguments: [
+        (ControlArgs(), "zmx.screen requires a daemon name"),
+        (ControlArgs(name: "  "), "zmx.screen requires a daemon name"),
+        (ControlArgs(name: "a\u{1b}[31m"), "zmx.screen requires a daemon name"),
+        (ControlArgs(name: "two words"), "zmx.screen requires a daemon name"),
+        (ControlArgs(name: "agterm-a", all: true, lines: 3), "use either --all or --lines, not both"),
+        (ControlArgs(name: "agterm-a", lines: 0), "--lines must be greater than 0"),
+    ])
+    func zmxScreenRefusesWithoutReachingTheHost(args: ControlArgs, error: String) async throws {
+        let actions = MockControlActions()
+
+        let response = try #require(await dispatch(ControlRequest(cmd: .zmxScreen, args: args), actions))
+
+        #expect(!response.ok)
+        #expect(response.error == error)
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func zmxPruneRoutesWithNoArgumentsToParse() async throws {
         let actions = MockControlActions()
         let response = try #require(await dispatch(ControlRequest(cmd: .zmxPrune), actions))

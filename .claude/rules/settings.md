@@ -126,7 +126,8 @@ paths:
   blur is not pixel-identical to CGS blur. Reapply on key/main/fullscreen and appearance changes.
   `SystemAccessibilityObserver` bridges workspace accessibility changes to every window; SwiftUI's
   environment independently makes palettes/switcher opaque and changes the hint.
-- `configDirectory` resolution is explicit setting, else `<AGTERM_STATE_DIR>/config`, else
+- `configDirectory` resolution is explicit setting, else `<AGTERM_STATE_DIR>/config` unless that
+  directory is the `agterm-debug` sibling (`DebugStateDirectory.configStateDirectory`), else
   `~/.config/agterm`. It contains keymap, scoped Ghostty config, and restore denylist. Seed starter files
   only when absent. Keymap starter documents every action/default and token but rebinds nothing; reload
   posts `.agtermKeymapChanged`, never a surface config update.
@@ -149,13 +150,13 @@ paths:
   requested or active mode. Exit capture and `restore.capture` read the configured next-launch mode.
 - **Command replay is launch-scoped; capture runs at two exits and on demand.**
   `AppDelegate.captureForegroundCommands` runs at three points: `applicationWillTerminate` before
-  `saveAllOpen()`, the LAST window's `willClose` before its surface teardown, which precedes
+  `saveAllChecked()`, the LAST window's `willClose` before its surface teardown, which precedes
   `applicationWillTerminate` and is therefore the only point where a close-the-last-window exit's
   commands are still readable, and `restore.capture` on demand, which exists for the exit that reaches
   neither: a force quit, a crash, a hard reset, a power loss. A system shutdown/restart/logout is NOT in
   that set — since #447 it reaches `applicationWillTerminate` like any quit — so do not re-motivate the
   command with an OS update. The on-demand arm changes nothing else: it fills the same
-  slots, persists through the same `saveAllOpen`, and replay stays launch-only and one-shot.
+  slots, persists through `saveAllOpenChecked`, and replay stays launch-only and one-shot.
   The two automatic exit arms run when the configured mode is `rerun` or `live`. The on-demand arm remains
   rerun-only: it refuses when `none` or `live` is configured and names that mode. Deliberately unlike a
   `session.restore` pin, which saves future rerun policy with an explanatory note, because a pin outlives

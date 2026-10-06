@@ -179,6 +179,20 @@ extension AppStore {
         setAgentIndicator(AgentIndicator(), forSession: session.id)
     }
 
+    /// clearPaneOwnedState drops what the program in `pane` owned when its shell is replaced in place: its
+    /// status, and a HUD, ask or pane overlay anchored to it. The pane, its identity and its persisted pins stay.
+    public func clearPaneOwnedState(_ sessionID: UUID, pane: StatusPane) {
+        guard let session = session(withID: sessionID), pane != .scratch else { return }
+        let identity = pane == .left ? session.paneIdentity : session.splitPaneIdentity
+        if let identity, session.hudPaneIdentity == identity { closeHud(sessionID) }
+        if let identity, session.askPaneIdentity == identity { session.cancelPendingAsk() }
+        let slot: OverlayPane = pane == .left ? .left : .right
+        closePaneOverlay(sessionID, pane: slot)
+        // one handed to another Mac lives in the remote slot only, and the pane's kill does not end its job
+        closeRemoteOverlay(sessionID, pane: slot)
+        clearIndicatorOwnedByPane(pane, of: session)
+    }
+
     // drops a departing pane's override and its text file; call it before the identity naming the file goes.
     private func dropPaneBackground(_ pane: StatusPane, of session: Session) {
         if session.paneBackgrounds[pane]?.kind == .text, let key = session.backgroundFileKey(for: pane) {

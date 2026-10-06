@@ -338,13 +338,9 @@ final class GhosttyApp {
         return dir.appendingPathComponent("ghostty-settings.conf")
     }
 
-    /// The config inputs resolved from `settings.json` in ONE read: the agterm-scoped `ghostty.conf` URL
-    /// (`<configDir>/ghostty.conf`, beside `keymap.conf`) and whether to inherit the GLOBAL
-    /// `~/.config/ghostty/config` (`inheritGlobalGhosttyConfig`, default off). Resolved once per config build
-    /// and threaded onward, so a reload reads `settings.json` at most once. Self-contained because
-    /// `loadConfig` runs before any `SettingsModel` exists (its init is the first touch of `GhosttyApp.shared`):
-    /// reads the persisted `configDirectory` + flag via `settingsStore()`, keymap precedence (explicit setting
-    /// → `AGTERM_STATE_DIR/config` → `~/.config/agterm`).
+    /// ConfigInputs is the agterm-scoped `ghostty.conf` URL and whether to inherit the global ghostty
+    /// config, resolved from one `settings.json` read per config build. It reads `settingsStore()` itself
+    /// because `loadConfig` runs before any `SettingsModel` exists; `ConfigPaths` owns the precedence.
     struct ConfigInputs {
         let scopedURL: URL
         let inheritGlobalConfig: Bool
@@ -357,7 +353,8 @@ final class GhosttyApp {
     private static func resolveConfigInputs(settings: AppSettings) -> ConfigInputs {
         let configDir = ConfigPaths.configDirectory(
             setting: settings.configDirectory,
-            stateDir: ProcessInfo.processInfo.environment["AGTERM_STATE_DIR"],
+            stateDir: DebugStateDirectory.configStateDirectory(environment: ProcessInfo.processInfo.environment,
+                                                               liveDirectory: PersistenceStore.defaultDirectory),
             home: FileManager.default.homeDirectoryForCurrentUser)
         return ConfigInputs(scopedURL: ConfigPaths.ghosttyConfigPath(configDirectory: configDir),
                             inheritGlobalConfig: settings.inheritGlobalGhosttyConfig ?? false)

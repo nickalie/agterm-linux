@@ -7,8 +7,30 @@ import agtermCore
 struct Keymap: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Keymap commands.",
-        subcommands: [Reload.self, List.self]
+        subcommands: [Reload.self, List.self, Run.self]
     )
+
+    struct Run: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Run one of your custom commands by name against a session.",
+            discussion: """
+            NAME is a custom command's name exactly as `keymap list` prints it. The command runs as it \
+            does from the palette, with the target session's focused pane, primary or split and never \
+            its scratch or an overlay, supplying the working directory, the selection and the context \
+            tokens. A name no command carries is refused.
+
+            The reply says the command started. It runs detached, so its exit status and output are not \
+            reported here; a command set to show a failure panel still shows it.
+            """
+        )
+        @Argument(help: "Custom command name, from `keymap list`.") var name: String
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .keymapRun, target: target.target, args: options.withWindow(ControlArgs(name: name)))
+        }
+    }
 
     struct Reload: RequestCommand {
         static let configuration = CommandConfiguration(abstract: "Re-read and apply keymap.conf (prints the diagnostic count).")
@@ -62,6 +84,27 @@ struct Hooks: ParsableCommand {
         @OptionGroup var options: BasicOptions
 
         func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .hooksList) }
+    }
+}
+
+// MARK: - browser
+
+struct Browser: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Saved browser storage of --persistent URL overlays.",
+        subcommands: [Clear.self]
+    )
+
+    struct Clear: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Remove every cookie and all site data the saved browser store holds.",
+            discussion: "Refused while a --persistent page is open, one in a just-closed session that can still be restored included: "
+                + "an open page writes its login back. Removing the local data does not sign you out on the server."
+        )
+        // one store serves every window, so no `--window`.
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .browserClear) }
     }
 }
 
@@ -300,11 +343,14 @@ struct Surface: ParsableCommand {
             line is not empty; AT the prompt it establishes nothing, since the caret may have been moved \
             back over text that is still there.
             """)
+        @Option(name: .customLong("pane-id"), help: "Stable pane token ($AGTERM_PANE_ID). With it --target names the session ('active' or a session id), not a surface.")
+        var paneID: String?
         @OptionGroup var target: SurfaceTargetOptions
         @OptionGroup var options: ClientOptions
 
         func makeRequest() throws -> ControlRequest {
-            ControlRequest(cmd: .surfaceCursor, target: target.target, args: options.withWindow(ControlArgs()))
+            ControlRequest(cmd: .surfaceCursor, target: target.target,
+                           args: options.withWindow(ControlArgs(paneID: paneID)))
         }
     }
 

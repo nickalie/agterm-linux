@@ -227,6 +227,39 @@ struct RemoteSessionTests {
         #expect(try fake.calls().first?.first == "attach", "the diagnostic runs AFTER the attach")
     }
 
+    private static let keepAlive = ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2"]
+
+    @Test(arguments: zip(["serveraliveinterval 0", "serveraliveinterval 15", ""], [true, false, false]))
+    func keepAliveIsAddedOnlyWhenTheUsersConfigSetsNone(config: String, added: Bool) throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        try fake.installSSH(exitCode: 23, config: config)
+        let command = try RemoteSession.attachPaneCommand(host: "buildbox", endpoint: endpoint, daemon: daemon,
+                                                          session: "build", pane: .left)
+        let run = try fake.runShell(command)
+
+        let plain = Array(try RemoteSession.attachCommand(host: "buildbox", endpoint: endpoint, daemon: daemon).dropFirst())
+        let calls = try fake.sshCalls()
+        #expect(calls.count == 2)
+        #expect(calls.first == ["-G"] + plain, "the check sees the arguments the attach runs with, a Match block included")
+        let withKeepAlive = Array(plain.dropLast(2)) + Self.keepAlive + plain.suffix(2)
+        #expect(calls.last == (added ? withKeepAlive : plain), "a check that printed nothing adds nothing")
+        #expect(run.status == 23)
+    }
+
+    @Test func aReconnectingPaneAlsoGetsTheKeepAlive() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        try fake.installSSH(exitCode: 23, config: "serveraliveinterval 0")
+        let lead = ZmxLeadAttachment(nonce: "n1", claim: false)
+        let command = try RemoteSession.attachPaneCommand(host: "buildbox", endpoint: endpoint, daemon: daemon,
+                                                          session: "build", pane: .left, lead: lead)
+        _ = try fake.runShell(command)
+
+        let plain = Array(try RemoteSession.attachCommand(host: "buildbox", endpoint: endpoint, daemon: daemon, lead: lead).dropFirst())
+        #expect(try fake.sshCalls().last == Array(plain.dropLast(2)) + Self.keepAlive + plain.suffix(2))
+    }
+
     @Test func thePaneCommandSurvivesTheExecGhosttyRunsItUnder() throws {
         let fake = try FakeRemote()
         defer { fake.cleanUp() }
@@ -362,12 +395,14 @@ private struct FakeRemote {
     private let log: URL
     private let zmxDirLog: URL
     private let zmxEnvLog: URL
+    private let sshLog: URL
 
     init(directoryName: String = "fake-remote-\(UUID().uuidString)") throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(directoryName, isDirectory: true)
         log = root.appendingPathComponent("calls.log")
         zmxDirLog = root.appendingPathComponent("zmxdir.log")
         zmxEnvLog = root.appendingPathComponent("zmxenv.log")
+        sshLog = root.appendingPathComponent("ssh.log")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // the command under test appends the REAL install directories to PATH, so a test that forgets
         // `installAgtermctl` would otherwise resolve the machine's own CLI and drive the live terminal.
@@ -396,13 +431,22 @@ private struct FakeRemote {
     }
 
     /// Stands in for ssh by running its LAST argument through a shell, which is what the real one does
-    /// with the remote command.
-    func installSSH(exitCode: Int32? = nil) throws {
+    /// with the remote command. `-G` prints `config`, or nothing, and exits 0 like a real ssh dumping its
+    /// effective config; it never reaches the remote command.
+    func installSSH(exitCode: Int32? = nil, config: String? = nil) throws {
         let body = exitCode.map { "exit \($0)" } ?? #"/bin/sh -c "$last""#
+        let dump = "if [ \"$1\" = -G ]; then printf '%s\\n' '\(config ?? "")'; exit 0; fi"
         try write(name: "ssh", script: """
+        \(recordArguments(in: sshLog))
         for a in "$@"; do last=$a; done
+        \(dump)
         \(body)
         """)
+    }
+
+    /// Every ssh call's arguments, one call per element, so a test can tell four words from one.
+    func sshCalls() throws -> [[String]] {
+        try Self.calls(in: sshLog)
     }
 
     func installZmx() throws -> String {
@@ -418,10 +462,12 @@ private struct FakeRemote {
 
     /// One line per argument, so an argument containing spaces stays one argument. `"$*"` would flatten
     /// the guard script into words and let a broken argv pass.
-    private var recordArguments: String {
+    private var recordArguments: String { recordArguments(in: log) }
+
+    private func recordArguments(in file: URL) -> String {
         """
-        for a in "$@"; do printf '%s\\n' "$a" >> '\(log.path)'; done
-        printf '%s\\n' '\(Self.callSeparator)' >> '\(log.path)'
+        for a in "$@"; do printf '%s\\n' "$a" >> '\(file.path)'; done
+        printf '%s\\n' '\(Self.callSeparator)' >> '\(file.path)'
         """
     }
 
@@ -475,7 +521,11 @@ private struct FakeRemote {
     }
 
     func calls() throws -> [[String]] {
-        guard let text = try? String(contentsOf: log, encoding: .utf8) else { return [] }
+        try Self.calls(in: log)
+    }
+
+    private static func calls(in file: URL) throws -> [[String]] {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
         var calls: [[String]] = []
         var current: [String] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: false).dropLast() {

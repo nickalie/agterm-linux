@@ -9,6 +9,9 @@ public enum OverlayCapture {
 
     public static let shellLine = #"( eval "$AGTERM_OVL_CMD" ); echo $? > "$AGTERM_OVL_CODE""#
 
+    /// `env` takes the dash libghostty's `exec -l` puts on argv[0], so `/bin/sh` starts non-login.
+    public static let surfaceCommand = "/usr/bin/env /bin/sh -c '\(shellLine)'"
+
     public static func parseExitCode(_ text: String) -> Int? {
         Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }

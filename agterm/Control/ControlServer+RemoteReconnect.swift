@@ -25,7 +25,8 @@ extension ControlServer {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let result = await remoteRunner.run(argv, deadline: Self.reconnectProbeDeadline)
-                guard let entry = book.finished(pane: pane, ok: result.status == 0, now: hudClock()),
+                guard let entry = book.finished(pane: pane, ok: result.status == 0, stderr: result.stderr,
+                                                now: hudClock()),
                       let view = waitingSurface(pane, in: entry.session) else { return }
                 // a row hidden for undo keeps waiting; finalizing its close lets the next due probe drop it
                 guard let store = library.store(forSession: entry.session), PaneLead.reconnect?(view, entry.cover) == true else {
@@ -35,6 +36,16 @@ extension ControlServer {
                 store.remotePaneResumed(pane, forSession: entry.session)
             }
         }
+    }
+
+    /// Every waiting pane and dropped stream retries now, not on its backoff.
+    func retryRemoteLinksNow() {
+        RemoteReconnectBook.shared.retryAllNow(now: hudClock())
+        for client in remoteClients.values {
+            client.retryNow()
+            client.tick()
+        }
+        tickReconnects()
     }
 
     /// The surface still holding `pane`, nil once the pane or its row is gone. A row closed within its undo

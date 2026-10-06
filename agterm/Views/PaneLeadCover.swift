@@ -1,11 +1,10 @@
 import agtermCore
 import SwiftUI
 
-/// Covers a pane whose zmx client does not lead: what its terminal drew is laid out for another client's
-/// grid. Always mounted, so the pane's ZStack keeps one shape (see `sessionDetail`); it draws and takes
-/// hits only while the pane is covered. A click focuses the pane, whose next key press takes the lead.
-/// Every host of a pane's terminal mounts one, the deck, terminal zoom and the dashboard alike, directly
-/// over that terminal: a pane overlay above it is another program's and stays visible.
+/// PaneLeadCover covers a pane whose zmx client does not lead, since its terminal is laid out for another
+/// client's grid. It stays mounted so the pane's ZStack keeps one shape (see `sessionDetail`). The cover
+/// takes hits and a click focuses the pane; the reconnect note draws uncovered too and never takes hits.
+/// Every host of a pane's terminal mounts one directly over it, under any pane overlay.
 struct PaneLeadCover: View {
     let session: Session
     let pane: OverlayPane
@@ -39,6 +38,9 @@ struct PaneLeadCover: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("pane-lead-cover-\(pane.rawValue)")
             }
+            if !hidden, let reason = RemoteReconnectBook.shared.readback(pane: identity)?.reason {
+                RemoteReconnectNote(reason: reason, pane: pane)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture { focusPane() }
@@ -54,5 +56,29 @@ struct PaneLeadCover: View {
     private func focusPane() {
         let surface = pane == .left ? session.surface : session.splitSurface
         (surface as? GhosttySurfaceView)?.focusAfterReparent()
+    }
+}
+
+/// RemoteReconnectNote shows what ssh said on the last failed probe, never the outcome of the attach that
+/// follows a probe that answered.
+struct RemoteReconnectNote: View {
+    let reason: String
+    let pane: OverlayPane
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Text(verbatim: "ssh: \(reason)")
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(.black)
+                .background(Color.yellow)
+                .accessibilityIdentifier("remote-reconnect-note-\(pane.rawValue)")
+        }
+        .allowsHitTesting(false)
     }
 }

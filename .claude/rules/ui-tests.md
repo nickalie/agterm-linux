@@ -8,6 +8,14 @@ paths:
 
 These run inside the app, so a mistake can kill the host instead of failing an assertion.
 
+- The run draws nothing on screen. `HostedWindowHider`, the test bundle's principal class, makes every
+  window created after bundle load start at `alphaValue` 0; the launch window predates it and is covered
+  by `HostedTestPlaceholder`. Windows stay ordered in and key-eligible, so `isVisible` assertions hold.
+  A test that needs an opaque window sets `alphaValue` itself. View captures (`cacheDisplay`,
+  `ImageRenderer`, `WKWebView.takeSnapshot`) are unaffected; a screen-composite capture would be blank.
+  A popped-up `NSMenu` is a window-server surface outside `NSApp.windows`, so the hook cannot reach it.
+  A hosted test records the popup request instead, as `SidebarControlClickTests` does, and leaves the
+  menu actually opening to `agtermUITests`.
 - **Set `isReleasedWhenClosed = false` on every test-owned `NSWindow`.** The initializer defaults true;
   `close()` can over-release a window still held by `registeredWindows`/`WindowRegistry`, then crash at
   the main-queue autorelease-pool pop. xcodebuild reports `Restarting after unexpected exit, crash, or
@@ -23,11 +31,14 @@ These run inside the app, so a mistake can kill the host instead of failing an a
   menu, a detached one included, replacing the key equivalent and mask the test just set. Titles like
   "Paste and Match Style", "Zoom" and "Close" are real system commands, so a developer who rebound one
   fails on his machine alone while CI stays green. `defaults read -g NSUserKeyEquivalents` names the
-  bindings. Suppress the substitution rather than renaming fixtures: `CloseSessionChordTests` needs the
+  bindings. Suppress the substitution rather than renaming fixtures: `StockMenuChordTests` needs the
   real "Close" to test chord ownership, and the substitution matches invented titles just as readily.
 - Never stub `GhosttyApp`; its handler is the only crash record.
-- `AGTERM_HOSTED_TESTS=1`, set by the `agtermTests` scheme, renders `Color.clear` and skips the scene task
-  that assigns `appDelegate.library`; it stays nil. SwiftUI's `@NSApplicationDelegateAdaptor` also makes
+- `AGTERM_HOSTED_TESTS=1`, set by the `agtermTests` scheme, renders `HostedTestPlaceholder`, skips the
+  launch `NSApp.activate()`, and skips the scene task that assigns `appDelegate.library`; it stays nil.
+  The placeholder makes its window transparent and click-through and keeps it ordered in:
+  ordering out the launch window exited the host before XCTest connected.
+  SwiftUI's `@NSApplicationDelegateAdaptor` also makes
   `NSApp.delegate as? AppDelegate` nil, so obtain the delegate another way. The local placeholder window
   exists (`NSApp.windows.count == 1`, title "Agterm"), but another-process CI launch may hit FB11763863
   and create none.

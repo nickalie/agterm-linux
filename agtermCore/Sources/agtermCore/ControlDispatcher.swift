@@ -43,6 +43,10 @@ public protocol ControlActions {
     /// unresolvable `paneID` given without an explicit `pane`).
     func setSessionRestore(_ target: String?, window: String?,
                            update: ControlSessionRestoreUpdate) -> ControlResponse
+    /// restartSessionPane replaces one live pane's shell with a new one running `options.command`, keeping
+    /// the pane and its stable id. The default below keeps existing hosts source-compatible.
+    func restartSessionPane(_ target: String?, window: String?,
+                            options: ControlSessionRestartOptions) async -> ControlResponse
     /// Source-compatible axis-agnostic entry point retained for existing conformers and callers.
     func splitSession(_ target: String?, window: String?, mode: String?) -> ControlResponse
     /// Axis-aware entry point. Its default delegates to the original method so an existing conformer does
@@ -64,14 +68,21 @@ public protocol ControlActions {
     /// The addressed surface's cursor column. Takes `surface.zoom`'s target vocabulary, `quick` included,
     /// because it addresses the same set of surfaces; unlike zoom it is a pure read and changes nothing.
     func readSurfaceCursor(_ target: String?, window: String?) -> ControlResponse
+    /// readSurfaceCursor with a non-empty `paneID` takes a session target; the token picks the pane.
+    func readSurfaceCursor(_ target: String?, window: String?, paneID: String?) -> ControlResponse
     func setDashboard(targets: [String], window: String?, close: Bool,
                       fontMode: DashboardFontMode, mru: Bool) -> ControlResponse
     func font(_ target: String?, window: String?, pane: StatusPane?, action: String) -> ControlResponse
     func reloadKeymap() -> ControlResponse
     func listKeymap() -> ControlResponse
+    /// runCustomCommand starts the one custom command named `name` against the addressed session. Ok
+    /// means the process started, not that it finished or succeeded.
+    func runCustomCommand(name: String, target: String?, window: String?) -> ControlResponse
     /// `hooks.reload` / `hooks.list`, app-global like the keymap pair.
     func reloadHooks() -> ControlResponse
     func listHooks() -> ControlResponse
+    /// `browser.clear` empties the saved browser store; the reply waits for the removal to finish.
+    func clearBrowser() async -> ControlResponse
     func appIdentity() -> ControlResponse
     func reloadGhosttyConfig() -> ControlResponse
     func sendNotification(_ target: String?, window: String?, title: String?, body: String) -> ControlResponse
@@ -165,6 +176,9 @@ public protocol ControlActions {
     func listZmxDaemons() -> ControlResponse
     /// Kill the daemons no pane claims and nothing is attached to.
     func pruneZmxDaemons() -> ControlResponse
+    /// readZmxScreen returns a daemon's own screen by daemon name, which reaches a pane no open window
+    /// shows. `fullBuffer` adds the retained scrollback; `lines` keeps the last N of it.
+    func readZmxScreen(name: String, fullBuffer: Bool, lines: Int?) -> ControlResponse
     /// Destroy ONE pane's daemon. The host resolves the owner against the inventory rather than the open
     /// stores, since this reaches closed and unindexed claims the target resolver cannot see.
     func killZmxDaemon(target: String, window: String?, pane: ZmxPaneRole) -> ControlResponse
@@ -205,6 +219,8 @@ public struct ControlDispatcher {
                 .sessionReveal, .sessionMove, .sessionFlag, .sessionContext, .sessionSeen, .sessionStatus,
                 .sessionRestore:
             return await dispatchSessionCommand(request)
+        case .sessionRestart:
+            return await dispatchSessionRestart(request)
         case .sessionSplit, .sessionSplitClose, .sessionSwap, .sessionLead, .sessionScratch, .sessionFocus,
                 .sessionResize, .surfaceZoom, .surfaceCursor, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
@@ -217,14 +233,16 @@ public struct ControlDispatcher {
         case .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand:
             return dispatchWorkspaceCommand(request)
-        case .quick, .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList,
+        case .quick, .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .keymapRun,
                 .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarFlaggedLayout,
                 .sidebarExpand, .sidebarCollapse, .sidebarWidth, .restoreClear, .restoreCapture, .version:
             return dispatchAppCommand(request)
-        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxPresent:
+        case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxPresent, .zmxScreen:
             return await dispatchZmxCommand(request)
         case .hooksReload, .hooksList:
             return dispatchHooksCommand(request)
+        case .browserClear:
+            return await dispatchBrowserCommand(request)
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename,
@@ -459,6 +477,36 @@ public struct ControlDispatcher {
         return actions.setSessionRestore(request.target, window: args?.window, update: update)
     }
 
+    /// `session.restart`: the line is a shell line and is never rewritten. A pane must be named, by token
+    /// or by role, because a default would restart a shell the caller never addressed.
+    private func dispatchSessionRestart(_ request: ControlRequest) async -> ControlResponse {
+        let args = request.args
+        guard let command = args?.command, !command.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return ControlResponse(ok: false, error: "session.restart requires a command")
+        }
+        guard !CommandRestore.hasControlCharacter(command) else {
+            return ControlResponse(ok: false, error: "command must not contain control characters")
+        }
+        guard command.utf8.count <= ControlSessionRestartOptions.maxCommandBytes else {
+            return ControlResponse(ok: false, error: "command too long (max "
+                + "\(ControlSessionRestartOptions.maxCommandBytes) bytes)")
+        }
+        let pane: StatusPane?
+        switch parsePane(args?.pane) {
+        case .pane(let parsed): pane = parsed
+        case .rejected(let rejection): return rejection
+        }
+        guard pane != .scratch else {
+            return ControlResponse(ok: false, error: "session.restart does not address the scratch pane")
+        }
+        let paneID = args?.paneID.flatMap { $0.isEmpty ? nil : $0 }
+        guard pane != nil || paneID != nil else {
+            return ControlResponse(ok: false, error: "session.restart requires --pane-id or --pane")
+        }
+        return await actions.restartSessionPane(request.target, window: args?.window, options: .init(
+            command: command, pane: pane, paneID: paneID))
+    }
+
     /// `session.context`: `set` takes `text`, `clear` takes none. An invalid value is REJECTED, never
     /// normalized, so `clear` stays the only route to nil and a refused call leaves the previous context
     /// standing. The mode is required rather than inferred from `text`, which is what makes "both" and
@@ -601,7 +649,8 @@ public struct ControlDispatcher {
             }
             return actions.setSurfaceZoom(request.target, window: request.args?.window, mode: mode)
         case .surfaceCursor:
-            return actions.readSurfaceCursor(request.target, window: request.args?.window)
+            return actions.readSurfaceCursor(request.target, window: request.args?.window,
+                                             paneID: request.args?.paneID)
         case .sessionType:
             guard let text = request.args?.text else {
                 return ControlResponse(ok: false, error: "session.type requires text")
@@ -616,7 +665,8 @@ public struct ControlDispatcher {
                                              options: ControlSessionTypeOptions(
                                                 text: text,
                                                 select: request.args?.select ?? false,
-                                                pane: pane
+                                                pane: pane,
+                                                paneID: request.args?.paneID
                                              ))
         case .sessionCopy:
             return actions.copySessionSelection(request.target, window: request.args?.window)
@@ -658,6 +708,12 @@ public struct ControlDispatcher {
             return actions.reloadKeymap()
         case .keymapList:
             return actions.listKeymap()
+        case .keymapRun:
+            // matched exactly: trimming here would make a name that differs only by spaces unreachable
+            guard let name = request.args?.name, !name.isEmpty else {
+                return ControlResponse(ok: false, error: "keymap.run requires a command name")
+            }
+            return actions.runCustomCommand(name: name, target: request.target, window: request.args?.window)
         case .version:
             return actions.appIdentity()
         case .configReload:

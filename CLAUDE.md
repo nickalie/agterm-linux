@@ -94,8 +94,13 @@ C-boundary concurrency before changing the bridge.
   the same window. The correlation is measured; the causal link to the timeout is not. Diagnose with
   `log show --predicate 'subsystem == "com.apple.TCC"' --last 6m --style compact` plus
   `ps -p <pid> -o lstart` against the binary's mtime. If the retry also fails, diagnose the attribution
-  issue before considering a restart; restarting agterm is Eugene's decision, never the agent's. Hosted
-  `agtermTests` are unaffected; only the XCUITest runner needs the automation grant.
+  issue before considering a restart; restarting agterm is Eugene's decision, never the agent's.
+  Hosted `agtermTests` can be blocked over the same period (2026-10-02): the host waits in
+  `_prepareTestConfigurationAndIDESession` with zero test cases started, and `xcodebuild` logs
+  `Connection peer refused channel request for "dtxproxy:XCTestManager_IDEInterface:..."` two minutes after
+  connecting. Both runners recovered once Eugene allowed the pending authorization, with the same stale
+  session host and the same `testmanagerd` still running, so neither needs a restart. SIP refuses
+  `launchctl kickstart -k` on `testmanagerd`. [Unverified] which authorization that was.
 - For maintainer work, ask before splitting a touched long file and do not raise limits reflexively.
   Contributors need not refactor preexisting length; mention it without blocking or suggesting a limit bump.
 
@@ -109,8 +114,8 @@ C-boundary concurrency before changing the bridge.
   untracked and disappear with worktree removal.
 - Symlink an artifact set only while the main checkout's matching stamp equals what the worktree's
   `setup.sh` would write for that set: the revision for ghostty, and `ZMX_REV`, `ZMX_TARGET` and the
-  digest of `scripts/zmx-patches/*.patch` for zmx, so a target or a patch change invalidates a set whose
-  revision still matches. When either differs, remove that
+  digest of `scripts/zmx-patches/*.patch` and `scripts/zmx-patches/ghostty/*.patch` for zmx, so a target
+  or a patch change invalidates a set whose revision still matches. When either differs, remove that
   set's artifact and stamp links before setup runs and let it build locally. `setup.sh` writes stamps
   through symlinks while replacing linked artifacts with local files and directories, so a linked build
   leaves the main checkout claiming a build its artifacts never came from.
@@ -118,6 +123,13 @@ C-boundary concurrency before changing the bridge.
   changing the main checkout's branch. Squash/rebase makes removal report unmerged commits; after
   verification, discard the worktree safely. Native removal may leave a renamed branch, which must be
   deleted separately after checking the remote.
+- Before removing a worktree, and after any hosted or UI test run, run
+  `lsappinfo list | grep -A4 agterm.debug`.
+  An entry marked `exited-with-subordinates` that lists `relatedCoalitionPIDs` is held by those pids:
+  identify them with `ps -p`, stop the ones that are leaked test processes, and report anything else to
+  Eugene.
+  An entry without `relatedCoalitionPIDs` right after a run can be transient; check again after a minute
+  before acting, and report it to Eugene if it persists.
 - Debug Swift code lives in `agterm.debug.dylib`; inspect it or object files, not the stub executable.
 - For throwaway launch-time probes, append to a temp file. `NSLog` from `open -n` is unreliable; production
   logging uses `os.Logger`.
@@ -125,8 +137,14 @@ C-boundary concurrency before changing the bridge.
   launch for current code.
 - `make deploy` copies Release to `~/Applications`, whose app, PATH CLI, and installed hooks shadow Debug.
   Test fresh CLI/hooks with the Debug binary or redeploy and reinstall them. Debug uses
-  `com.umputun.agterm.debug`, distinct from Release, but state/socket paths still require isolation.
-- Launching a second instance without `AGTERM_STATE_DIR` still shares state, but no longer takes the
+  `com.umputun.agterm.debug`, distinct from Release.
+- A Debug build launched with `AGTERM_STATE_DIR` unset or empty adopts
+  `~/Library/Application Support/agterm-debug` (`DebugStateDirectory`), exporting it so its shells and
+  their `agtermctl` resolve the same socket. A non-empty value always wins, the live directory included.
+  Config is not adopted: that launch reads the default config directory, `~/.config/agterm` unless the
+  setting names another. Manual runs still pass a short `/tmp`
+  directory: the adopted one is shared by every unisolated Debug launch and persists between them.
+- A second Release instance without `AGTERM_STATE_DIR` still shares state, but does not take the
   running app's control socket. `ControlServer.init` takes an exclusive `flock` on `<socket>.lock` and
   `start` refuses to bind while another live instance holds it, logging `already served by another
   instance`. Ownership is settled at init so the launch window's first shell, whose environment is
@@ -153,9 +171,9 @@ C-boundary concurrency before changing the bridge.
   its CLI with `--socket` after the subcommand. Stop only its known PID with SIGTERM; clean quit triggers
   the visible quit-confirmation alert. Use clean quit only when testing its final cwd/running-command flush.
 - A stopped Debug instance can leave its Dock tile; a click on it relaunches the bundle with no
-  `AGTERM_STATE_DIR`, onto the live state and daemons, and its quit rewrites the live windows files.
-  After SIGTERM, confirm the tile is gone with `lsappinfo list | grep agterm.debug` and tell Eugene when
-  one lingers.
+  `AGTERM_STATE_DIR`, which a current build answers from `agterm-debug` and a build predating
+  `DebugStateDirectory` answers from the live state and daemons. After SIGTERM, confirm the tile is gone
+  with `lsappinfo list | grep agterm.debug` and tell Eugene when one lingers.
 - A manual-test pane opens in `$HOME`, and a pane restored from a daemon keeps whatever directory it had.
   Never type a bare `claude` into one. Always send `cd <dir> && claude` with a directory Claude Code
   already trusts, `~/dev.umputun/agterm` by default. A session rooted at `$HOME` treats every dotfile and
@@ -281,12 +299,16 @@ C-boundary concurrency before changing the bridge.
   redirects with 308.
 - Assets are self-hosted: CSS, latin woff2 fonts, WebP screenshots, 1200x630 social card, and favicons.
   Inline page styles come from a design-tool export whose source archive is on the maintainer's Desktop.
+- Browsers cache `style.css` for 4 hours, so a page change that depends on a `style.css` change bumps the
+  `?v=` on its `<link>` in every page, or cached visitors get new HTML with old CSS.
 - Hero images must match the fixed `1187 / 696` ratio, about 1.70:1; capture dense dashboards at that
   ratio before WebP conversion; existing shots are 2374x1392. Dashboard images may floor near 200k versus
   85-172k for single-window shots. Crossfade duration is slides times 5 seconds, delays advance by
   5 seconds, and the opaque keyframe plateau is about `1/slides`.
 - Auto-fit feature grids can strand orphan cards. Use a fixed column count, explicit spans, and narrow
   media fallbacks as in `.surfaces-grid`.
+- Demo and screenshot staging shows two or three agent statuses at most, and never notification badges
+  next to statuses; they are alternative mechanisms.
 
 ## Path-scoped rules
 

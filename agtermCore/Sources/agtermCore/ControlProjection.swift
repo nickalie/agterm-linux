@@ -18,19 +18,39 @@ public struct ControlSurfaceNode: Codable, Sendable, Equatable {
     /// does not lead is covered and its reads come from the daemon. Nil until the pane's zmx reports a
     /// role, which a zmx or an origin without explicit leadership never does.
     public let lead: ZmxLeadRole?
+    /// reconnect is present while this pane's ssh lost its connection and the app waits to attach it
+    /// again, omitted otherwise.
+    public let reconnect: ControlReconnect?
+    /// paneID is the token `--pane-id` resolves, omitted for a slot whose surface carries none.
+    public let paneID: String?
 
     public init(id: String, kind: String, active: Bool, visible: Bool) {
         self.init(id: id, kind: kind, active: active, visible: visible, backedByZmx: nil)
     }
 
     public init(id: String, kind: String, active: Bool, visible: Bool, backedByZmx: Bool?,
-                lead: ZmxLeadRole? = nil) {
+                lead: ZmxLeadRole? = nil, reconnect: ControlReconnect? = nil, paneID: String? = nil) {
         self.id = id
         self.kind = kind
         self.active = active
         self.visible = visible
         self.backedByZmx = backedByZmx
         self.lead = lead
+        self.reconnect = reconnect
+        self.paneID = paneID
+    }
+}
+
+/// ControlReconnect is a remote pane's wait to be attached again. `failures` is the backoff streak: probes
+/// of its host that failed in a row, plus one for a link that dropped again soon after attaching.
+/// A key on the pane, a wake or a network change starts it over. `reason` is what ssh said on the last failed probe, omitted when it said nothing.
+public struct ControlReconnect: Codable, Sendable, Equatable {
+    public let failures: Int
+    public let reason: String?
+
+    public init(failures: Int, reason: String?) {
+        self.failures = failures
+        self.reason = reason
     }
 }
 
@@ -399,6 +419,12 @@ public struct ControlHtmlOverlayNode: Codable, Sendable, Equatable {
     public let navigation: Bool?
     /// javascript says whether the page may run its own scripts.
     public let javascript: Bool
+    /// chromeless says whether the page shows without its identity strip. Always present; an absent key
+    /// decodes as false, since an older running server omits it.
+    public let chromeless: Bool
+    /// persistent says whether the page uses the saved browser store. Always present; an absent key decodes
+    /// as false, since an older running server omits it.
+    public let persistent: Bool
     /// zoom is the page zoom factor, 1 at actual size. One app-wide value, so every page reports the same.
     public let zoom: Double?
     /// id is the page's identity, the one `session.overlay.result --page` reads; an older server omits it.
@@ -406,8 +432,8 @@ public struct ControlHtmlOverlayNode: Codable, Sendable, Equatable {
 
     public init(pane: String?, file: String? = nil, cwd: String? = nil, url: String? = nil, state: String,
                 error: String?, page: String? = nil, title: String? = nil, canGoBack: Bool? = nil,
-                canGoForward: Bool? = nil, navigation: Bool? = nil, javascript: Bool = false, zoom: Double? = nil,
-                id: String? = nil) {
+                canGoForward: Bool? = nil, navigation: Bool? = nil, javascript: Bool = false, chromeless: Bool = false,
+                zoom: Double? = nil, id: String? = nil, persistent: Bool = false) {
         self.id = id
         self.pane = pane
         self.file = file
@@ -421,7 +447,34 @@ public struct ControlHtmlOverlayNode: Codable, Sendable, Equatable {
         self.canGoForward = canGoForward
         self.navigation = navigation
         self.javascript = javascript
+        self.chromeless = chromeless
+        self.persistent = persistent
         self.zoom = zoom
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pane, file, cwd, url, state, error, page, title, canGoBack, canGoForward, navigation, javascript
+        case chromeless, persistent, zoom, id
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pane = try c.decodeIfPresent(String.self, forKey: .pane)
+        file = try c.decodeIfPresent(String.self, forKey: .file)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        state = try c.decode(String.self, forKey: .state)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        page = try c.decodeIfPresent(String.self, forKey: .page)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        canGoBack = try c.decodeIfPresent(Bool.self, forKey: .canGoBack)
+        canGoForward = try c.decodeIfPresent(Bool.self, forKey: .canGoForward)
+        navigation = try c.decodeIfPresent(Bool.self, forKey: .navigation)
+        javascript = try c.decode(Bool.self, forKey: .javascript)
+        chromeless = try c.decodeIfPresent(Bool.self, forKey: .chromeless) ?? false
+        persistent = try c.decodeIfPresent(Bool.self, forKey: .persistent) ?? false
+        zoom = try c.decodeIfPresent(Double.self, forKey: .zoom)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
     }
 }
 
@@ -579,6 +632,9 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// The Live sessions reset state: app-global like `app`, omitted when nothing is pending and no launch
     /// has consumed a marker. The read side of `zmx.reset`.
     public let liveReset: ControlLiveResetReadback?
+    /// indexUnsaved is true while the last `windows.json` write failed, omitted otherwise. App-global like
+    /// `app`.
+    public let indexUnsaved: Bool?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
                 sidebarVisible: Bool? = nil, sidebarMode: String? = nil, sidebarFlaggedLayout: String? = nil,
@@ -587,9 +643,11 @@ public struct ControlTree: Codable, Sendable, Equatable {
                 zoomedSurface: String? = nil, dashboardMembers: [String]? = nil,
                 dashboardHighlighted: String? = nil, dashboardFontSize: Double? = nil,
                 dashboardFontMode: String? = nil, pickPending: String? = nil, askPending: String? = nil,
-                app: AppIdentity? = nil, liveReset: ControlLiveResetReadback? = nil) {
+                app: AppIdentity? = nil, liveReset: ControlLiveResetReadback? = nil,
+                indexUnsaved: Bool? = nil) {
         self.workspaces = workspaces
         self.liveReset = liveReset
+        self.indexUnsaved = indexUnsaved
         self.idleMs = idleMs
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible

@@ -128,4 +128,20 @@ struct CommandErrorOptionsTests {
         #expect(command.shortcut.isEmpty)
         #expect(command.command == "ctrl+a>p ./script")
     }
+
+    @Test(arguments: ["--repeat --error-hud", "--error-hud --repeat"])
+    func repeatJoinsTheOptionPrefixInAnyOrder(options: String) throws {
+        let parsed = parseKeymap("command \"probe\" ctrl+a>p \(options) ./script")
+        #expect(parsed.diagnostics.isEmpty)
+        let command = try #require(parsed.keymap.commands.first)
+        #expect(command.repeats)
+        #expect(command.errorHud)
+        #expect(command.command == "./script")
+    }
+
+    @Test func repeatedRepeatSkipsTheCommand() {
+        let parsed = parseKeymap("command \"probe\" ctrl+a>p --repeat --repeat ./script")
+        #expect(parsed.keymap.commands.isEmpty)
+        #expect(parsed.diagnostics.map(\.message) == ["command 'probe' repeats option '--repeat'"])
+    }
 }

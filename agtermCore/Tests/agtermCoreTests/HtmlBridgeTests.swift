@@ -75,7 +75,7 @@ struct HtmlBridgeTests {
         #expect(workspace.args?.window == nil)
     }
 
-    @Test(arguments: ["hooks.reload", "hooks.list"])
+    @Test(arguments: ["hooks.reload", "hooks.list", "browser.clear"])
     func aCommandRefusingAnyWindowGetsNone(_ cmd: String) throws {
         let built = try request(#"{"cmd":"\#(cmd)"}"#)
         #expect(built.target == nil)
@@ -95,6 +95,16 @@ struct HtmlBridgeTests {
         let built = try request(#"{"cmd":"\#(cmd)"}"#)
         #expect(built.target == session.uuidString)
         #expect(built.args?.window == nil)
+    }
+
+    // a name-only keymap.run from a background page ran against the window's selected session
+    @Test func anUntargetedKeymapRunActsOnThePagesSession() throws {
+        let built = try request(#"{"cmd":"keymap.run","args":{"name":"Deploy"}}"#)
+        #expect(built.target == session.uuidString)
+        #expect(built.args?.window == nil)
+
+        let explicit = try request(#"{"cmd":"keymap.run","target":"other","args":{"name":"Deploy"}}"#)
+        #expect(explicit.target == "other")
     }
 
     @Test func aTerminalAskGoesToThePagesSessionAndAGuiAskToItsWindow() throws {

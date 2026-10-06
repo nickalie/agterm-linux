@@ -21,12 +21,12 @@ Two source-confirmed routes can create a daemon under the app without a timeout;
 as the route taken in this failure:
 
 - An initial inventory launch, exit or parse failure in
-  `agtermCore/Sources/SessionHostRuntime/HostBackend.swift:124` makes
-  `Host.swift:79` return a `before` failure. `agtermCore/Sources/agtermCore/SessionHost.swift:190`
+  `agtermCore/Sources/SessionHostRuntime/HostBackend.swift:149` makes
+  `Host.swift:82` return a `before` failure. `agtermCore/Sources/agtermCore/SessionHost.swift:190`
   selects `fullAttach`, and `agtermCore/Sources/SessionHostRuntime/Client.swift:45` executes the
   original attach from the app's child. If the daemon is absent, that client creates it.
-- A temporary attach spawn failure at `agtermCore/Sources/SessionHostRuntime/Host.swift:86`, or an
-  early child exit at `Host.swift:116`, returns a `started` failure. The client selects `uncertain`
+- A temporary attach spawn failure at `agtermCore/Sources/SessionHostRuntime/Host.swift:87`, or an
+  early child exit at `Host.swift:117`, returns a `started` failure. The client selects `uncertain`
   and executes bare `zmx attach NAME` at `Client.swift:45`. Removing the command payload prevents its
   replay, but bare attach still creates an absent daemon under the app.
 
@@ -59,3 +59,16 @@ failed before readiness` at 01:43:48, inside the failing test's window, which ma
 above (`started` failure, bare attach from the app's child). The correlation is by time only; the pid in
 that line is not the host pid the test recorded, and the retained `shc-FF830277-...` files from that minute
 are empty.
+
+Third sighting, 2026-10-01, in `agtermTests/ControlServerZmxTests.swift`
+`testRealClientPaneChangesFromSupervisorToOrphanedWhileBarePaneReadsApp`: the supervised pane read `app`
+instead of `supervisor`. It failed once in a full hosted run (1086 tests) and passed in the full run
+before it. The session-host log holds `client agterm-aaaa... host stage=started message=attach client
+exited or failed before readiness` at 11:48:27, inside the failing test, the second route again. The
+retained `shc-7B86B412-...` `host.log` is empty. Afterwards the test passed 83 times alone, its class 60
+times, and 7 further full hosted runs showed no early stop.
+
+Since that sighting the host records why the attach client stopped. On recurrence, read the retained
+`host.log` for `attach client PID for NAME stopped before readiness:`, which carries whichever
+stop details apply (wait status, pre-exec errno, poll error) and the tail of the client's terminal output. The fixture also keeps zmx's
+own logs in `zmx-logs` beside it.

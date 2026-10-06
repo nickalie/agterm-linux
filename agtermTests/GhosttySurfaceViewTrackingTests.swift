@@ -33,6 +33,7 @@ final class GhosttySurfaceViewTrackingTests: XCTestCase {
             window.isReleasedWhenClosed = false
             content = StubContentView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
             window.contentView = content
+            window.orderFront(nil)
             // both surfaces stay at their zero init frame, so `viewDidMoveToWindow` parks in
             // `pendingSurfaceCreation` instead of spawning a libghostty surface and a shell.
             surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
@@ -183,6 +184,82 @@ final class GhosttySurfaceViewTrackingTests: XCTestCase {
         surface.deckOnScreen = true
         surface.removeFromSuperview()
         XCTAssertFalse(surface.showsOnScreen)
+    }
+
+    // a window that was miniaturized, ordered out or hidden with the app kept its panes' swap chains
+    func testAnOrderedOutWindowIsNotOnScreenAndOrderingItInRevealsThePane() async throws {
+        surface.wantsLayer = true
+        surface.layer?.contents = NSColor.red.cgColor
+        XCTAssertTrue(surface.showsOnScreen)
+
+        window.orderOut(nil)
+        XCTAssertFalse(surface.showsOnScreen)
+        try await waitUntil("the hide starts on order-out") { self.surface.rendererVisibilityTask != nil }
+
+        window.orderFront(nil)
+        XCTAssertTrue(surface.showsOnScreen)
+        try await waitUntil("order-in cancels the hide") { self.surface.rendererVisibilityTask == nil }
+        XCTAssertEqual(surface.layer?.needsDisplayOnBoundsChange, true)
+    }
+
+    func testAMiniaturizedWindowIsNotOnScreenAndRestoringItRevealsThePane() async throws {
+        let mini = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
+                            styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
+        mini.isReleasedWhenClosed = false
+        let pane = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        pane.wantsLayer = true
+        defer {
+            pane.removeFromSuperview()
+            mini.orderOut(nil)
+        }
+        mini.contentView?.addSubview(pane)
+        mini.orderFront(nil)
+        pane.layer?.contents = NSColor.red.cgColor
+        try await waitUntil("the pane is on screen") { pane.showsOnScreen && pane.rendererVisibilityTask == nil }
+
+        mini.miniaturize(nil)
+        try await waitUntil("the hide starts on minimize") { !pane.showsOnScreen && pane.rendererVisibilityTask != nil }
+        XCTAssertTrue(mini.isMiniaturized)
+
+        mini.deminiaturize(nil)
+        try await waitUntil("restore cancels the hide") { pane.showsOnScreen && pane.rendererVisibilityTask == nil }
+    }
+
+    func testAPaneAttachedToAWindowNotYetOrderedInIsRevealedWhenItIs() async throws {
+        let late = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.titled],
+                            backing: .buffered, defer: false)
+        late.isReleasedWhenClosed = false
+        let pane = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        pane.wantsLayer = true
+        defer {
+            pane.removeFromSuperview()
+            late.orderOut(nil)
+        }
+        late.contentView?.addSubview(pane)
+        XCTAssertFalse(pane.showsOnScreen)
+        try await waitUntil("an unordered window's pane waits to hide") { pane.rendererVisibilityTask != nil }
+
+        late.orderFront(nil)
+
+        try await waitUntil("order-in reveals it") { pane.rendererVisibilityTask == nil }
+        XCTAssertTrue(pane.showsOnScreen)
+        XCTAssertEqual(pane.layer?.needsDisplayOnBoundsChange, true)
+    }
+
+    func testAnotherWindowsOrderingLeavesAPendingHideAlone() async throws {
+        surface.wantsLayer = true
+        surface.deckOnScreen = false
+        let pending = try XCTUnwrap(surface.rendererVisibilityTask)
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled],
+                             backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+
+        other.orderFront(nil)
+        other.orderOut(nil)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(surface.rendererVisibilityTask, pending)
+        surface.deckOnScreen = true
     }
 
     func testHiddenJanitorSweepsWhileHiddenAndRetiresOnReveal() async throws {

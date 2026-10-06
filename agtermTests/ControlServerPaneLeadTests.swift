@@ -51,6 +51,68 @@ final class ControlServerPaneLeadTests: XCTestCase {
         return (view, identity)
     }
 
+    // pins a swap during the realize wait sending an id's keystrokes to the terminal that took its slot
+    func testTypeByPaneIDReachesItsTerminalAfterASwapDuringTheRealizeWait() async throws {
+        let server = makeServer()
+        let store = try XCTUnwrap(library.activeStore)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: try XCTUnwrap(store.currentWorkspaceID),
+                                                     cwd: NSHomeDirectory()))
+        let (target, identity) = try pane(role: nil)
+        let (other, _) = try pane(role: nil)
+        session.surface = target
+        session.splitSurface = other
+        session.hasSplit = true
+        let registry = SpawnRegistry(pacer: SpawnPacer())
+        let key = UUID()
+        registry.pacer.arm(order: [UUID(), key], burst: [])
+        registry.enqueue(target, key: key, provider: LaunchSeedProvider(shouldPace: true) { _ in
+            LaunchSeed(command: nil, initialInput: nil, waitAfterCommand: false)
+        })
+        XCTAssertFalse(target.requestSpawnPermit())
+        let grant = registry.pacer.onGrant
+        registry.pacer.onGrant = { granted in
+            grant?(granted)
+            XCTAssertNil(store.swapPanes(session.id))
+            _ = ZmxLeadNotice(title: "zmx-role;n:leader:1").map { ZmxLeadBook.shared.apply($0, pane: identity) }
+        }
+
+        let typed = await server.typeSession(session.id.uuidString, window: nil,
+                                             options: ControlSessionTypeOptions(text: "x", select: false, pane: nil,
+                                                                                paneID: identity.uuidString))
+
+        XCTAssertTrue(typed.ok, typed.error ?? "")
+        XCTAssertEqual(typed.result?.pane, "right")
+        XCTAssertEqual(invocations.map(\.arguments), [["type", ZmxSupport.daemonName(for: identity)]])
+    }
+
+    // pins a swap during the realize wait ending the wait while the id's terminal is still coming up
+    func testTypeByPaneIDKeepsWaitingForItsTerminalAfterASwap() async throws {
+        let server = makeServer()
+        let store = try XCTUnwrap(library.activeStore)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: try XCTUnwrap(store.currentWorkspaceID),
+                                                     cwd: NSHomeDirectory()))
+        let (target, identity) = try pane(role: nil)
+        let (other, _) = try pane(role: nil)
+        session.surface = target
+        session.splitSurface = other
+        session.hasSplit = true
+
+        let typing = Task { @MainActor in
+            await server.typeSession(session.id.uuidString, window: nil,
+                                     options: ControlSessionTypeOptions(text: "x", select: false, pane: nil,
+                                                                        paneID: identity.uuidString))
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNil(store.swapPanes(session.id))
+        try await Task.sleep(nanoseconds: 60_000_000)
+        _ = ZmxLeadNotice(title: "zmx-role;n:leader:1").map { ZmxLeadBook.shared.apply($0, pane: identity) }
+        let typed = await typing.value
+
+        XCTAssertTrue(typed.ok, typed.error ?? "")
+        XCTAssertEqual(typed.result?.pane, "right")
+        XCTAssertEqual(invocations.map(\.arguments), [["type", ZmxSupport.daemonName(for: identity)]])
+    }
+
     func testAPaneWhoseZmxNeverReportedKeepsItsOwnSurfaceForEverything() throws {
         let server = makeServer()
         let (view, _) = try pane(role: nil)
@@ -73,7 +135,7 @@ final class ControlServerPaneLeadTests: XCTestCase {
         XCTAssertEqual(server.coveredType("ls\n", into: view, session: UUID())?.ok, true)
 
         let name = ZmxSupport.daemonName(for: identity)
-        XCTAssertEqual(invocations.map(\.arguments), [["screen", name, "--all"], ["screen", name], ["type", name]])
+        XCTAssertEqual(invocations.map(\.arguments), [["screen", name, "--all"], ["screen", name], ["type", name], ["type", name]])
     }
 
     func testALeadingPaneAttachedFromAnotherMacIsDrivenThroughItsOwnSurface() throws {
@@ -125,14 +187,34 @@ final class ControlServerPaneLeadTests: XCTestCase {
                        ControlResponse(ok: true, result: ControlResult(id: session.uuidString)))
         XCTAssertEqual(server.coveredType("\n", into: view, session: session)?.ok, true)
 
-        XCTAssertEqual(invocations.map(\.arguments), Array(repeating: ["type", ZmxSupport.daemonName(for: identity)], count: 2))
-        XCTAssertEqual(invocations.map(\.input), [Data("echo hi\r".utf8), Data([0x0D])])
+        XCTAssertEqual(invocations.map(\.arguments), Array(repeating: ["type", ZmxSupport.daemonName(for: identity)], count: 3))
+        XCTAssertEqual(invocations.map(\.input), [Data("echo hi".utf8), Data([0x0D]), Data([0x0D])],
+                       "the final Return after text is its own call; a bare Return stays one")
         XCTAssertEqual(cleared.count, 2, "the input a blocked agent waited for clears its status, as typing does")
 
         zmxReply = { _ in throw ZmxClient.CommandError.failed(1, "error: type rejected") }
         XCTAssertEqual(server.coveredType("lost", into: view, session: session),
                        ControlResponse(ok: false, error: "the pane's zmx daemon did not accept the input"),
                        "input the daemon did not queue must never answer ok")
+    }
+
+    func testAFinalReturnTheDaemonDidNotConfirmIsAnErrorAndIsNeverRetried() throws {
+        let server = makeServer()
+        let (view, _) = try pane(role: .leader)
+        var cleared: [StatusKeystroke] = []
+        view.onUserInputClearsStatus = { cleared.append($0) }
+        view._markedText = "ni"
+        view._markedRange = NSRange(location: 0, length: 2)
+        zmxReply = { [unowned self] _ in
+            if invocations.count == 2 { throw ZmxClient.CommandError.timedOut }
+            return ""
+        }
+
+        XCTAssertEqual(server.coveredType("one\ntwo\n", into: view, session: UUID()),
+                       ControlResponse(ok: false, error: "text typed, but its final Return could not be confirmed; do not retype the text"))
+        XCTAssertEqual(invocations.map(\.input), [Data("nione\rtwo".utf8), Data([0x0D])])
+        XCTAssertEqual(view.pendingComposition, "", "the composition went with the text the daemon took")
+        XCTAssertTrue(cleared.isEmpty, "the call errored and the agent may still wait for its Return, so its status stays")
     }
 
     func testAPendingCompositionIsTypedFirstAndDroppedOnlyOnceTheDaemonTookIt() throws {
@@ -148,7 +230,7 @@ final class ControlServerPaneLeadTests: XCTestCase {
 
         zmxReply = { _ in "" }
         XCTAssertEqual(server.coveredType("hao\n", into: view, session: UUID())?.ok, true)
-        XCTAssertEqual(invocations.last?.input, Data("nihao\r".utf8))
+        XCTAssertEqual(invocations.suffix(2).map(\.input), [Data("nihao".utf8), Data([0x0D])])
         XCTAssertEqual(view.pendingComposition, "")
     }
 

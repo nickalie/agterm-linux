@@ -121,8 +121,8 @@ targets:
         # Debug/dev builds get a DISTINCT bundle id. XCUITest terminates any running instance of the
         # app-under-test's bundle id before launching, so a shared id would kill the deployed Release
         # app the user runs daily. Release keeps the real id (com.umputun.agterm) — only Debug is
-        # isolated. (State/socket are path-based, not bundle-id-derived, so dev/test launches must still
-        # set AGTERM_STATE_DIR to avoid touching the real app-support state.)
+        # isolated. State/socket are path-based, not bundle-id-derived: a Debug launch without
+        # AGTERM_STATE_DIR adopts its own agterm-debug directory (DebugStateDirectory).
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agterm.debug
           # Debug alone needs the three hardened-runtime exceptions; see the header of the file.
@@ -226,6 +226,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agtermTests
         GENERATE_INFOPLIST_FILE: YES
+        # XCTest instantiates it at bundle load; it makes every hosted window transparent.
+        INFOPLIST_KEY_NSPrincipalClass: HostedWindowHider
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/agterm.app/Contents/MacOS/agterm"
         BUNDLE_LOADER: "$(TEST_HOST)"
         CODE_SIGN_IDENTITY: "-"

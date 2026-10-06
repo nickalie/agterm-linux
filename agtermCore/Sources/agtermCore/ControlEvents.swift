@@ -6,6 +6,7 @@ public enum ControlEventKind: String, Codable, CaseIterable, Sendable, Equatable
     case notify
     case sessionCreated = "session.created"
     case sessionClosed = "session.closed"
+    case sessionSelected = "session.selected"
     case treeChanged = "tree.changed"
     case paneSplit = "pane.split"
     case paneScratch = "pane.scratch"
@@ -24,8 +25,9 @@ public struct ControlEventPayload: Codable, Sendable, Equatable {
     /// The `status` event's per-call glyph silhouette (a `StatusShape` raw value), nil when the glyph uses the
     /// Settings shape / default plain circle. A shape-only change emits a `status` event, unexplainable without it.
     public var shape: String?
-    /// The `status` event's status before the accepted write, so a consumer sees the transition without
-    /// keeping state. Equal to `status` when only shape, color, pane or blink changed.
+    /// previous is what the event replaced. On `status` it is the status before the accepted write, equal
+    /// to `status` when only shape, color, pane or blink changed. On `session.selected` it is the id of
+    /// the session that lost the selection, nil when there was none.
     public var previous: String?
     public var title: String?
     public var body: String?

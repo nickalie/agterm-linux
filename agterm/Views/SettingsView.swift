@@ -827,12 +827,12 @@ private struct AgentStatusSettingsView: View {
 private struct KeyMappingSettingsView: View {
     let model: SettingsModel
 
-    /// The resolved config directory shown in the field: the explicit setting, else `AGTERM_STATE_DIR/config`
-    /// under test isolation, else `~/.config/agterm` — matching `SettingsModel`'s own resolution.
+    /// configDirectoryPath is the directory shown in the field, matching `SettingsModel`'s own resolution.
     private var configDirectoryPath: String {
         ConfigPaths.configDirectory(
             setting: model.settings.configDirectory,
-            stateDir: ProcessInfo.processInfo.environment["AGTERM_STATE_DIR"],
+            stateDir: DebugStateDirectory.configStateDirectory(environment: ProcessInfo.processInfo.environment,
+                                                               liveDirectory: PersistenceStore.defaultDirectory),
             home: FileManager.default.homeDirectoryForCurrentUser).path
     }
 

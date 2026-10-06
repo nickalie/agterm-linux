@@ -544,6 +544,28 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertNil(response.result?.zmx)
     }
 
+    func testScreenReadsTheNamedDaemonAndKeepsTheLastLines() throws {
+        var invocations: [[String]] = []
+        let server = makeServer(runner: {
+            invocations.append($0.arguments)
+            return "3 80 24 0 2 0\none\ntwo\nthree\n\n"
+        })
+
+        XCTAssertEqual(server.readZmxScreen(name: "agterm-a", fullBuffer: false, lines: nil).result?.text,
+                       "one\ntwo\nthree\n\n")
+        XCTAssertEqual(server.readZmxScreen(name: "agterm-a", fullBuffer: true, lines: 2).result?.text, "two\nthree")
+        XCTAssertEqual(invocations, [["screen", "agterm-a"], ["screen", "agterm-a", "--all"]])
+    }
+
+    func testScreenOfADaemonZmxCannotReadIsAnError() {
+        let server = makeServer(runner: { _ in throw ZmxClient.CommandError.failed(1, "error: no such session") })
+
+        let response = server.readZmxScreen(name: "gone", fullBuffer: false, lines: nil)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "could not read the zmx screen of gone")
+    }
+
     func testWithoutAClientTheCommandSaysZmxIsUnavailable() {
         let server = ControlServer(
             library: library, actions: AppActions(library: library), settingsModel: settingsModel,

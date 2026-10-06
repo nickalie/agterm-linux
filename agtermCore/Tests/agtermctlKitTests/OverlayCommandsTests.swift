@@ -28,6 +28,9 @@ struct OverlayCommandsTests {
         #expect(req.args?.color == "#102030")
         #expect(req.args?.navigation == nil)
         #expect(req.args?.javascript == nil)
+        #expect(req.args?.chromeless == nil)
+        let chromeless = try request(["session", "overlay", "open", "--html", "/tmp/r.html", "--chromeless", "--js"])
+        #expect(chromeless.args?.chromeless == true)
         let withToolbar = try request(["session", "overlay", "open", "--html", "/tmp/r.html", "--navigation", "--js"])
         #expect(withToolbar.args?.navigation == true)
         #expect(withToolbar.args?.javascript == true)
@@ -47,6 +50,17 @@ struct OverlayCommandsTests {
         #expect(req.args?.cwd == nil)
         #expect(req.args?.navigation == true)
         #expect(req.args?.javascript == true)
+        #expect(req.args?.persistent == nil)
+    }
+
+    @Test func browserClearTakesNoWindow() throws {
+        #expect(try request(["browser", "clear"]) == ControlRequest(cmd: .browserClear))
+        #expect(rejects(["browser", "clear", "--window", "w1"]))
+    }
+
+    @Test func urlOpenSendsPersistent() throws {
+        let req = try request(["session", "overlay", "open", "--url", "http://localhost:5173/", "--persistent"])
+        #expect(req.args?.persistent == true)
     }
 
     @Test func aProgramOpenLeavesItsCwdAsTyped() throws {
@@ -63,6 +77,11 @@ struct OverlayCommandsTests {
         ["session", "overlay", "open", "--html", "/tmp/r.html", "--block", "--wait"],
         ["session", "overlay", "open", "revdiff", "--navigation"],
         ["session", "overlay", "open", "revdiff", "--js"],
+        ["session", "overlay", "open", "revdiff", "--chromeless"],
+        ["session", "overlay", "open", "--url", "http://localhost:5173/", "--chromeless"],
+        ["session", "overlay", "open", "--html", "/tmp/r.html", "--chromeless", "--navigation"],
+        ["session", "overlay", "open", "revdiff", "--persistent"],
+        ["session", "overlay", "open", "--html", "/tmp/r.html", "--persistent"],
         ["session", "overlay", "open", "revdiff", "--url", "http://localhost:5173/"],
         ["session", "overlay", "open", "--html", "/tmp/r.html", "--url", "http://localhost:5173/"],
         ["session", "overlay", "open", "--url", "http://localhost:5173/", "--wait"],

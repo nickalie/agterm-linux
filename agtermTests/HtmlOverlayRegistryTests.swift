@@ -158,6 +158,8 @@ final class HtmlOverlayRegistryTests: XCTestCase {
     private var directory: URL!
     private var pages: URL!
     private var servers: [LoopbackServer] = []
+    private var profiles: [BrowserProfile] = []
+    private var removal: (@MainActor (WKWebsiteDataStore) async -> Void)!
     private var store: AppStore!
     private var session: Session!
     private let registry = HtmlOverlayRegistry.shared
@@ -174,6 +176,8 @@ final class HtmlOverlayRegistryTests: XCTestCase {
         registry.install()
         registry.browser = browser
         registry.sharing = sharing
+        removal = registry.removeWebsiteData
+        useProfile("profile")
         try write("a.html", #"<title>A</title><script src="s.js"></script><a href="b.html">b</a>"#)
         try write("b.html", "<title>B</title>")
         try "document.title = 'script ran'".write(to: pages.appendingPathComponent("s.js"), atomically: true, encoding: .utf8)
@@ -186,6 +190,9 @@ final class HtmlOverlayRegistryTests: XCTestCase {
         registry.setZoom(1)
         registry.dispatch = nil
         store.closeSession(session.id)
+        registry.removeWebsiteData = removal
+        for profile in profiles { try await TestBrowserStore.remove(profile) }
+        profiles = []
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -245,6 +252,34 @@ final class HtmlOverlayRegistryTests: XCTestCase {
         view.setDropsEnabled(true)
         XCTAssertFalse(view.registeredDraggedTypes.isEmpty)
         XCTAssertNotEqual(view.registeredDraggedTypes, parked)
+    }
+
+    func testAnOffScreenPageLeavesTheDropToTheViewBeneathIt() throws {
+        let frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.orderOut(nil) }
+        let content = NSView(frame: frame)
+        window.contentView = content
+        let beneath = NSView(frame: content.bounds)
+        beneath.registerForDraggedTypes([.fileURL])
+        content.addSubview(beneath)
+        XCTAssertTrue(try dropTarget(in: content) === beneath)
+
+        let view = registry.page(for: try open(), store: store).webView
+        view.frame = content.bounds
+        content.addSubview(view)
+        XCTAssertTrue(try dropTarget(in: content) === view)
+
+        view.setDropsEnabled(false)
+        XCTAssertTrue(view.registeredDraggedTypes.isEmpty)
+        XCTAssertFalse(view.isHidden)
+        XCTAssertTrue(try dropTarget(in: content) === beneath)
+
+        view.setDropsEnabled(true)
+        XCTAssertTrue(try dropTarget(in: content) === view)
+        view.setDropsEnabled(false)
+        XCTAssertTrue(try dropTarget(in: content) === beneath)
     }
 
     func testAnAuthoredBodyBackgroundFillsTheCanvasAndAnUnstyledPageStaysTransparent() async throws {
@@ -474,6 +509,224 @@ final class HtmlOverlayRegistryTests: XCTestCase {
         try await waitFor("next loaded") { self.current?.loadState == .loaded && self.current?.current?.title == "store" }
         let fresh = try await next.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
         XCTAssertEqual(fresh as? String, "null|")
+    }
+
+    func testPersistentStorageOutlivesItsOverlay() async throws {
+        let port = try await serve(.ipv4(.loopback), [
+            "/set": .init(headers: ["Set-Cookie": "s=1; Max-Age=3600; Path=/"], body: "<title>set</title>"),
+            "/": .init(body: "<title>store</title>"),
+        ])
+        let first = registry.page(for: try openURL("http://127.0.0.1:\(port)/set", persistent: true), store: store)
+        try await waitFor("set loaded") { self.current?.loadState == .loaded && self.current?.current?.title == "set" }
+        _ = try await first.webView.evaluateJavaScript("localStorage.setItem('k', 'v')")
+        _ = try await first.webView.callAsyncJavaScript(Self.putRecord, contentWorld: .page)
+        XCTAssertTrue(store.closeOverlay(session.id))
+
+        let next = registry.page(for: try openURL("http://127.0.0.1:\(port)/", persistent: true), store: store)
+        try await waitFor("next loaded") { self.current?.loadState == .loaded && self.current?.current?.title == "store" }
+        let kept = try await next.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
+        XCTAssertEqual(kept as? String, "v|s=1")
+        let record = try await next.webView.callAsyncJavaScript(Self.getRecord, contentWorld: .page)
+        XCTAssertEqual(record as? String, "iv")
+    }
+
+    func testAnInMemoryPageAndThePersistentStoreNeverSeeEachOther() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let address = "http://127.0.0.1:\(port)/"
+        let saved = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("saved loaded") { self.current?.loadState == .loaded }
+        _ = try await saved.webView.evaluateJavaScript("localStorage.setItem('k', 'saved'); document.cookie = 'c=saved; max-age=3600'")
+        XCTAssertTrue(store.closeOverlay(session.id))
+
+        let memory = registry.page(for: try openURL(address), store: store)
+        try await waitFor("memory loaded") { self.current?.loadState == .loaded }
+        let unseen = try await memory.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
+        XCTAssertEqual(unseen as? String, "null|")
+        _ = try await memory.webView.evaluateJavaScript("localStorage.setItem('k', 'memory'); document.cookie = 'c=memory; max-age=3600'")
+        XCTAssertTrue(store.closeOverlay(session.id))
+
+        let again = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("again loaded") { self.current?.loadState == .loaded }
+        let kept = try await again.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
+        XCTAssertEqual(kept as? String, "saved|c=saved")
+    }
+
+    func testTwoPersistentPagesOpenAtOnceShareTheStore() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/"))
+        let one = registry.page(for: try openURL(url.absoluteString, persistent: true), store: store)
+        let beside = HtmlOverlay(source: .url(url), persistent: true)
+        let two = registry.page(for: beside, store: store)
+        defer { registry.release(beside.id) }
+        try await waitFor("both loaded") { self.current?.loadState == .loaded && !two.webView.isLoading && two.webView.url != nil }
+
+        _ = try await one.webView.evaluateJavaScript("localStorage.setItem('k', 'shared'); document.cookie = 'c=shared; max-age=3600'")
+
+        // a write reaches the other page's process a moment after the call that made it returns
+        let deadline = Date().addingTimeInterval(10)
+        var seen: String?
+        while seen != "shared|c=shared", Date() < deadline {
+            seen = try await two.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie") as? String
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(seen, "shared|c=shared")
+    }
+
+    func testTwoProfilesDoNotShareAStore() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let address = "http://127.0.0.1:\(port)/"
+        let first = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("first loaded") { self.current?.loadState == .loaded }
+        _ = try await first.webView.evaluateJavaScript("localStorage.setItem('k', 'v'); document.cookie = 'c=1; max-age=3600'")
+        XCTAssertTrue(store.closeOverlay(session.id))
+
+        useProfile("other")
+        let other = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("other loaded") { self.current?.loadState == .loaded }
+        let unseen = try await other.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
+        XCTAssertEqual(unseen as? String, "null|")
+    }
+
+    func testAPersistentPageWithoutAReadableProfileFailsAndLoadsNothing() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let state = directory.appendingPathComponent("broken")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let file = state.appendingPathComponent("browser-profile")
+        try Data("not a uuid".utf8).write(to: file)
+        registry.profile = BrowserProfile(directory: state)
+        let failure = BrowserProfile.Failure.malformed(file.path).description
+        XCTAssertEqual(registry.persistentStoreFailure(), failure)
+
+        let page = registry.page(for: try openURL("http://127.0.0.1:\(port)/", persistent: true), store: store)
+
+        XCTAssertEqual(current?.loadState, .failed)
+        XCTAssertEqual(current?.loadError, failure)
+        XCTAssertNil(page.webView.url)
+        XCTAssertNil(registry.reload(page.id, target: .original, store: store))
+        page.apply(try XCTUnwrap(current))
+        XCTAssertEqual(current?.loadState, .failed)
+        XCTAssertNil(page.webView.url)
+        XCTAssertEqual(try Data(contentsOf: file), Data("not a uuid".utf8))
+    }
+
+    func testClearEmptiesTheSavedStoreAndKeepsItsProfile() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let address = "http://127.0.0.1:\(port)/"
+        let first = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("loaded") { self.current?.loadState == .loaded }
+        _ = try await first.webView.evaluateJavaScript("localStorage.setItem('k', 'v'); document.cookie = 'c=1; max-age=3600'")
+        _ = try await first.webView.callAsyncJavaScript(Self.putRecord, contentWorld: .page)
+        XCTAssertTrue(store.closeOverlay(session.id))
+        let profile = try XCTUnwrap(registry.profile)
+        let id = try profile.existingIdentifier()
+
+        let failure = await registry.clearPersistentStore()
+
+        XCTAssertNil(failure)
+        XCTAssertEqual(try profile.existingIdentifier(), id)
+        let next = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("next loaded") { self.current?.loadState == .loaded }
+        let left = try await next.webView.evaluateJavaScript("localStorage.getItem('k') + '|' + document.cookie")
+        XCTAssertEqual(left as? String, "null|")
+        let record = try await next.webView.callAsyncJavaScript(Self.getRecord, contentWorld: .page)
+        XCTAssertNil(record as? String)
+    }
+
+    func testClearIsRefusedWhileAPersistentPageIsOpenOrSoftClosed() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        let address = "http://127.0.0.1:\(port)/"
+        let page = registry.page(for: try openURL(address, persistent: true), store: store)
+        try await waitFor("loaded") { self.current?.loadState == .loaded }
+        _ = try await page.webView.evaluateJavaScript("localStorage.setItem('k', 'v')")
+
+        let open = await registry.clearPersistentStore()
+        XCTAssertEqual(open, BrowserClearError.pagesOpen(1))
+
+        XCTAssertTrue(store.softCloseSession(session.id, grace: 60))
+        let softClosed = await registry.clearPersistentStore()
+        XCTAssertEqual(softClosed, BrowserClearError.pagesOpen(1))
+        let kept = try await page.webView.evaluateJavaScript("localStorage.getItem('k')")
+        XCTAssertEqual(kept as? String, "v")
+
+        store.finalizeAllPendingCloses()
+        let closed = await registry.clearPersistentStore()
+        XCTAssertNil(closed)
+    }
+
+    func testAnInMemoryPageDoesNotBlockAClear() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        _ = registry.page(for: try openURL("http://127.0.0.1:\(port)/"), store: store)
+        try await waitFor("loaded") { self.current?.loadState == .loaded }
+        XCTAssertNil(registry.persistentStoreFailure())
+
+        let failure = await registry.clearPersistentStore()
+
+        XCTAssertNil(failure)
+    }
+
+    func testClearWithNoProfileEverCreatedSucceedsAndCreatesNone() async throws {
+        let profile = try XCTUnwrap(registry.profile)
+        var removed = false
+        registry.removeWebsiteData = { _ in removed = true }
+
+        let failure = await registry.clearPersistentStore()
+
+        XCTAssertNil(failure)
+        XCTAssertFalse(removed)
+        XCTAssertNil(try profile.existingIdentifier())
+    }
+
+    func testClearOfAnUnreadableProfileFailsAndRemovesNothing() async throws {
+        let state = directory.appendingPathComponent("broken")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let file = state.appendingPathComponent("browser-profile")
+        try Data("not a uuid".utf8).write(to: file)
+        registry.profile = BrowserProfile(directory: state)
+        var removed = false
+        registry.removeWebsiteData = { _ in removed = true }
+
+        let failure = await registry.clearPersistentStore()
+
+        XCTAssertEqual(failure, BrowserProfile.Failure.malformed(file.path).description)
+        XCTAssertFalse(removed)
+    }
+
+    func testAPersistentOpenIsRefusedUntilARunningClearCompletes() async throws {
+        XCTAssertNil(registry.persistentStoreFailure())
+        let started = expectation(description: "removal started")
+        var finish: CheckedContinuation<Void, Never>?
+        registry.removeWebsiteData = { _ in
+            await withCheckedContinuation { continuation in
+                finish = continuation
+                started.fulfill()
+            }
+        }
+        let clear = Task { await self.registry.clearPersistentStore() }
+        await fulfillment(of: [started], timeout: 5)
+
+        XCTAssertEqual(registry.persistentStoreFailure(), BrowserClearError.clearing)
+        let second = await registry.clearPersistentStore()
+        XCTAssertEqual(second, BrowserClearError.clearing)
+        let page = registry.page(for: try openURL("http://127.0.0.1:1/", persistent: true), store: store)
+        XCTAssertEqual(current?.loadState, .failed)
+        XCTAssertEqual(current?.loadError, BrowserClearError.clearing)
+        XCTAssertFalse(page.usesSavedStore)
+        XCTAssertNil(page.webView.url)
+
+        finish?.resume()
+        let failure = await clear.value
+        XCTAssertNil(failure)
+        XCTAssertNil(registry.persistentStoreFailure())
+    }
+
+    func testAnInMemoryPageNeedsNoProfile() async throws {
+        let port = try await serve(.ipv4(.loopback), ["/": .init(body: "<title>store</title>")])
+        registry.profile = nil
+
+        _ = registry.page(for: try openURL("http://127.0.0.1:\(port)/"), store: store)
+
+        try await waitFor("loaded") { self.current?.loadState == .loaded }
+        XCTAssertEqual(registry.persistentStoreFailure(), OverlayHtmlError.persistentUnavailable)
     }
 
     func testTheAppReadsSixteenPaletteColorsFromTheTheme() {
@@ -1170,6 +1423,16 @@ final class HtmlOverlayRegistryTests: XCTestCase {
             .write(to: pages.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
 
+    // the drag-destination lookup AppKit runs, private and so reached through its implementation
+    private func dropTarget(in container: NSView) throws -> NSView? {
+        let selector = NSSelectorFromString("_hitTest:dragTypes:")
+        let method = try XCTUnwrap(class_getInstanceMethod(type(of: container), selector))
+        typealias Lookup = @convention(c) (AnyObject, Selector, UnsafeMutablePointer<NSPoint>, NSSet) -> NSView?
+        var point = NSPoint(x: container.frame.midX, y: container.frame.midY)
+        let types: NSSet = [NSPasteboard.PasteboardType.fileURL.rawValue]
+        return unsafeBitCast(method_getImplementation(method), to: Lookup.self)(container, selector, &point, types)
+    }
+
     private func open(pane: OverlayPane? = nil, file: String = "a.html", grant: String? = nil,
                       javascript: Bool = false) throws -> HtmlOverlay {
         let overlay = HtmlOverlay(source: .file(path: pages.appendingPathComponent(file).path, grantRoot: grant),
@@ -1178,11 +1441,45 @@ final class HtmlOverlayRegistryTests: XCTestCase {
         return overlay
     }
 
-    private func openURL(_ address: String, javascript: Bool = false) throws -> HtmlOverlay {
-        let overlay = HtmlOverlay(source: .url(try XCTUnwrap(URL(string: address))), javascript: javascript)
+    private func openURL(_ address: String, javascript: Bool = false, persistent: Bool = false) throws -> HtmlOverlay {
+        let overlay = HtmlOverlay(source: .url(try XCTUnwrap(URL(string: address))), javascript: javascript,
+                                  persistent: persistent)
         XCTAssertNil(store.openHtmlOverlay(session.id, pane: nil, overlay: overlay, sizePercent: nil))
         return overlay
     }
+
+    private func useProfile(_ name: String) {
+        let profile = BrowserProfile(directory: directory.appendingPathComponent(name))
+        profiles.append(profile)
+        registry.profile = profile
+    }
+
+    private static let putRecord = """
+        return await new Promise((resolve, reject) => {
+            const open = indexedDB.open('d', 1)
+            open.onupgradeneeded = () => open.result.createObjectStore('s')
+            open.onerror = () => reject(open.error)
+            open.onsuccess = () => {
+                const write = open.result.transaction('s', 'readwrite')
+                write.objectStore('s').put('iv', 'ik')
+                write.onerror = () => reject(write.error)
+                write.oncomplete = () => { open.result.close(); resolve(true) }
+            }
+        })
+        """
+
+    private static let getRecord = """
+        return await new Promise((resolve, reject) => {
+            const open = indexedDB.open('d', 1)
+            open.onupgradeneeded = () => open.result.createObjectStore('s')
+            open.onerror = () => reject(open.error)
+            open.onsuccess = () => {
+                const read = open.result.transaction('s').objectStore('s').get('ik')
+                read.onerror = () => reject(read.error)
+                read.onsuccess = () => { open.result.close(); resolve(read.result ?? null) }
+            }
+        })
+        """
 
     private func serve(_ host: NWEndpoint.Host, _ routes: [String: LoopbackServer.Response]) async throws -> UInt16 {
         let server = try LoopbackServer(host, routes: routes)

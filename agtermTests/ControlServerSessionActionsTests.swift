@@ -254,6 +254,11 @@ final class ControlServerSessionActionsTests: XCTestCase {
         XCTAssertEqual(cached?.result?.windows?.first { $0.id == windowID }?.name, "from-page")
     }
 
+    private func persistentOptions() throws -> ControlSessionOverlayOpenOptions {
+        ControlSessionOverlayOpenOptions(command: "", cwd: nil, wait: false, sizePercent: nil, backgroundColor: nil,
+                                         page: .url(try XCTUnwrap(URL(string: "http://127.0.0.1:1/"))), persistent: true)
+    }
+
     private func overlayOptions(follow: Bool, pane: OverlayPane? = nil) -> ControlSessionOverlayOpenOptions {
         ControlSessionOverlayOpenOptions(command: "true", cwd: nil, wait: false, sizePercent: nil,
                                          backgroundColor: nil, follow: follow, pane: pane)
@@ -400,6 +405,65 @@ final class ControlServerSessionActionsTests: XCTestCase {
         let response = server.setSessionContext(UUID().uuidString, window: nil, context: "PR #517")
 
         XCTAssertFalse(response.ok)
+    }
+
+    func testAPersistentOpenIsRefusedWhenTheProfileCannotBeRead() throws {
+        let (_, session) = try addSession()
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        let file = stateDir.appendingPathComponent("browser-profile")
+        try Data("not a uuid".utf8).write(to: file)
+        let registry = HtmlOverlayRegistry.shared
+        let before = registry.profile
+        defer { registry.profile = before }
+        registry.profile = BrowserProfile(directory: stateDir)
+
+        let response = server.openSessionOverlay(session.id.uuidString, window: nil, options: try persistentOptions())
+
+        XCTAssertEqual(response, ControlResponse(
+            ok: false, error: "session.overlay.open: \(BrowserProfile.Failure.malformed(file.path).description)"))
+        XCTAssertNil(session.htmlOverlay)
+        XCTAssertEqual(try Data(contentsOf: file), Data("not a uuid".utf8))
+    }
+
+    func testAPersistentOpenPutsAPersistentPageInTheSlot() async throws {
+        let (store, session) = try addSession()
+        let registry = HtmlOverlayRegistry.shared
+        let before = registry.profile
+        let profile = BrowserProfile(directory: stateDir)
+        registry.profile = profile
+
+        let response = server.openSessionOverlay(session.id.uuidString, window: nil, options: try persistentOptions())
+
+        XCTAssertTrue(response.ok, response.error ?? "")
+        XCTAssertEqual(session.htmlOverlay?.persistent, true)
+        XCTAssertNotNil(try profile.existingIdentifier())
+        store.closeOverlay(session.id)
+        try await TestBrowserStore.remove(profile)
+        registry.profile = before
+    }
+
+    // an accepted page no view had shown yet did not block a clear, which then failed that page for good
+    func testAnAcceptedPersistentPageBlocksAClearBeforeAnyViewShowsIt() async throws {
+        let (store, session) = try addSession()
+        let registry = HtmlOverlayRegistry.shared
+        let before = registry.profile
+        let profile = BrowserProfile(directory: stateDir)
+        registry.profile = profile
+
+        let response = server.openSessionOverlay(session.id.uuidString, window: nil, options: try persistentOptions())
+        XCTAssertTrue(response.ok, response.error ?? "")
+        let overlay = try XCTUnwrap(session.htmlOverlay)
+
+        let refused = await server.clearBrowser()
+
+        XCTAssertEqual(refused, ControlResponse(ok: false, error: "browser.clear: \(BrowserClearError.pagesOpen(1))"))
+        XCTAssertEqual(registry.existing(overlay.id)?.usesSavedStore, true)
+        XCTAssertTrue(registry.page(for: overlay, store: store).usesSavedStore)
+        store.closeOverlay(session.id)
+        let cleared = await server.clearBrowser()
+        XCTAssertEqual(cleared, ControlResponse(ok: true))
+        try await TestBrowserStore.remove(profile)
+        registry.profile = before
     }
 
     func testFollowSelectsTheTargetWhenNothingIsSelected() throws {
@@ -662,10 +726,9 @@ final class ControlServerSessionActionsTests: XCTestCase {
                                                   env: ["AGTERM_PANE_ID": "right-token"])
         session.hasSplit = true
 
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .left, paneID: "right-token"),
-                       .right)
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .scratch, paneID: "unknown"),
-                       .scratch, "an unknown token falls back to the explicit role")
+        XCTAssertEqual(session.paneAddress(token: "right-token", pane: .left), .pane(.right))
+        XCTAssertEqual(session.paneAddress(token: "unknown", pane: .scratch), .pane(.scratch),
+                       "an unknown token falls back to the explicit role")
     }
 
     func testTextPaneIDFollowsItsSurfaceAfterSwap() throws {
@@ -680,8 +743,76 @@ final class ControlServerSessionActionsTests: XCTestCase {
 
         XCTAssertNil(store.swapPanes(session.id))
 
-        XCTAssertEqual(ControlServer.resolvedSessionTextPane(in: session, pane: .left, paneID: "moving-token"),
-                       .right)
+        XCTAssertEqual(session.paneAddress(token: "moving-token", pane: .left), .pane(.right))
+    }
+
+    // pins an unknown id given alone reading the on-screen pane and answering ok
+    func testAnUnknownPaneIDWithoutAPaneIsRefusedByTextTypeAndCursor() async throws {
+        let (store, session) = try addSession()
+        session.surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory(),
+                                             env: ["AGTERM_PANE_ID": "left-token"])
+        let id = session.id.uuidString
+
+        let text = server.readSessionText(id, window: nil,
+                                          options: ControlSessionTextOptions(pane: nil, paneID: "gone", all: false, lines: nil))
+        let typed = await server.typeSession(id, window: nil,
+                                             options: ControlSessionTypeOptions(text: "x", select: false, pane: nil, paneID: "gone"))
+        let cursor = server.readSurfaceCursor(id, window: nil, paneID: "gone")
+
+        XCTAssertEqual(text.error, "unknown pane id: gone")
+        XCTAssertEqual(typed.error, "unknown pane id: gone")
+        XCTAssertEqual(cursor.error, "unknown pane id: gone")
+        XCTAssertEqual(store.selectedSessionID, session.id)
+    }
+
+    func testAPaneIDAddressesItsSlotForTextTypeAndCursor() async throws {
+        let (_, session) = try addSession()
+        session.surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory(),
+                                             env: ["AGTERM_PANE_ID": "left-token"])
+        let id = session.id.uuidString
+
+        let text = server.readSessionText(id, window: nil,
+                                          options: ControlSessionTextOptions(pane: nil, paneID: "right-token", all: false, lines: nil))
+        let fallback = server.readSessionText(id, window: nil,
+                                              options: ControlSessionTextOptions(pane: .right, paneID: "gone", all: false, lines: nil))
+        let typed = await server.typeSession(id, window: nil,
+                                             options: ControlSessionTypeOptions(text: "x", select: false, pane: .right, paneID: "gone"))
+        let cursor = server.readSurfaceCursor(id, window: nil, paneID: "left-token")
+
+        XCTAssertEqual(text.error, "unknown pane id: right-token")
+        XCTAssertEqual(fallback.error, "session has no split pane", "an unknown id beside an explicit pane uses that pane")
+        XCTAssertEqual(typed.error, "session has no split pane")
+        XCTAssertEqual(cursor.error, "surface not realized", "the id resolved to the parked left pane")
+    }
+
+    // pins a pane replaced during the realize wait taking the keystrokes meant for the id's terminal
+    func testTypeByPaneIDFollowsTheIDThroughTheRealizeWait() async throws {
+        let (_, session) = try addSession()
+        session.surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory(),
+                                             env: ["AGTERM_PANE_ID": "left-token"])
+        let server = try XCTUnwrap(self.server)
+        let id = session.id.uuidString
+
+        let typing = Task { @MainActor in
+            await server.typeSession(id, window: nil,
+                                     options: ControlSessionTypeOptions(text: "x", select: false, pane: nil, paneID: "left-token"))
+        }
+        try await Task.sleep(nanoseconds: 60_000_000)
+        session.surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory(),
+                                             env: ["AGTERM_PANE_ID": "other-token"])
+        let typed = await typing.value
+
+        XCTAssertEqual(typed.error, "unknown pane id: left-token")
+    }
+
+    func testCursorPaneIDRefusesASurfaceTarget() throws {
+        let (_, session) = try addSession()
+        let id = session.id.uuidString
+
+        XCTAssertEqual(server.readSurfaceCursor("surface:\(id):left", window: nil, paneID: "left-token").error,
+                       "surface.cursor: --pane-id takes a session target")
+        XCTAssertEqual(server.readSurfaceCursor("quick", window: nil, paneID: "left-token").error,
+                       "surface.cursor: --pane-id takes a session target")
     }
 
     // the same parked pane, one command over: `surfaceBindingAction`'s cast proves only that the SLOT is

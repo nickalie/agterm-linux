@@ -40,7 +40,7 @@
     <meta name="theme-color" content="#191d20" />
     <link rel="preload" href="/assets/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/assets/fonts/ibm-plex-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/style.css?v=2" />
   </head>
   <body>
     <div
@@ -1076,10 +1076,13 @@
                   session focused and typable underneath. With <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--html</span>
                   the overlay shows a local HTML page instead, such as a report or chart an agent just generated, or with
                   <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--url</span> a web page such as a running dev server, under a strip
-                  naming the file or site with a close button and, with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--navigation</span>,
+                  naming the file or site, then the page's title dimmed, with a close button and, with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--navigation</span>,
                   back, forward, reload, open in browser, and Show in Finder for a file or Copy Link for a URL;
-                  ⌘W closes it like any overlay. ⌘+, ⌘− and ⌘0 zoom the page, and every later page opens at that zoom. A page runs no JavaScript of its
-                  own unless opened with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--js</span>. A link the page opens in your browser
+                  ⌘W closes it like any overlay. A file page opened with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--chromeless</span>
+                  has no strip, so a dashboard fills its session or split pane like a native view. ⌘+, ⌘− and ⌘0 zoom the page, and every later page opens at that zoom. A page runs no JavaScript of its
+                  own unless opened with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--js</span>. A web page keeps cookies and logins only while it is open, unless opened with
+                  <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--persistent</span>, which uses one saved store shared by these pages;
+                  <span style="font-family: &quot;JetBrains Mono&quot;, monospace">agtermctl browser clear</span> empties it. A login that goes through another site still fails. A link the page opens in your browser
                   asks you first. Pages can match the terminal
                   through the theme's <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--agterm-*</span> CSS variables, and
                   drive agterm themselves through the <a href="#page-bridge" style="color: #6d82f3">page bridge</a>. See the
@@ -1116,7 +1119,9 @@
                   session+pane — a non-split session is one cell, a split session is two (its left and right panes), capped at nine
                   cells. Each cell's name chip also reflects the session's agent status, filling with the status color and pulsing
                   while it blinks, unless macOS Reduce Motion is enabled; the status color and text remain visible without the
-                  repeating animation. It is view-only — no cell's terminal
+                  repeating animation. A pane covered by a full overlay or its own pane overlay shows a label in its cell instead of
+                  the terminal underneath: the page's file or origin with its title when it has one, or the program's command when
+                  available. It is view-only — no cell's terminal
                   takes input; the arrow keys move a highlight, Enter (or a single mouse click on a cell) jumps into that
                   session and focuses that exact pane, and Esc closes. Opened over the control channel with
                   <code style="color: #e6e1d7">agtermctl dashboard &lt;ids…&gt;</code>, or
@@ -1173,7 +1178,7 @@
             </h2>
             <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 20px">
               agterm is built to run from the keyboard. Every action has a shortcut and appears in the menus. Three fuzzy palettes
-              (type to filter, Enter to run, Esc to dismiss) and a Ctrl-Tab MRU switcher cover the rest; a title-bar clock button
+              (type to filter, arrows or Ctrl-J/Ctrl-K to move, Enter to run, Esc to dismiss) and a Ctrl-Tab MRU switcher cover the rest; a title-bar clock button
               opens the recent-session list with the mouse. Right-clicking agterm's Dock icon offers New Session, New Window, Quick Terminal,
               Dashboard, recent sessions, and sessions needing attention for the last-active window; those lists and actions stay
               scoped to that window even if another window comes forward while the menu is open, apart from New Window, which
@@ -1613,16 +1618,16 @@
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">opt</span>,
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">shift</span>) joined by
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">+</span> and a base key (a single
-              character or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tab</span>/<span
+              character or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tab</span>/<wbr /><span
                 style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc"
                 >space</span
-              >/<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">return</span>/<span
+              >/<wbr /><span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">return</span>/<wbr /><span
                 style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc"
                 >delete</span
-              >/<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">left</span>/<span
+              >/<wbr /><span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">left</span>/<wbr /><span
                 style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc"
                 >right</span
-              >/<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">up</span>/<span
+              >/<wbr /><span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">up</span>/<wbr /><span
                 style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc"
                 >down</span
               >, or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">f1</span> through
@@ -1674,6 +1679,19 @@
               another action to claim. A typo in one alternative rejects the whole line, so a mistake can't hide behind a line that
               half worked; an alternative that merely breaks a rule or collides with an existing binding drops on its own and its
               siblings keep firing. If a line ends up binding nothing at all, the action simply keeps the shortcut it shipped with.
+            </p>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
+              A leader sequence fires once and forgets its prefix. Add
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--repeat</span> after the chord, on either
+              verb, to keep the prefix live until half a second after you release the key, like tmux's
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">bind -r</span>:
+              with <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">map cmd+opt+up|ctrl+a&gt;ctrl+h --repeat previous_session</span>
+              and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">map cmd+opt+down|ctrl+a&gt;ctrl+l --repeat next_session</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">⌃A ⌃L ⌃L ⌃H</span> walks two sessions down and one back,
+              the shipped ⌘⌥↑/⌘⌥↓ still working, and holding the tail repeats it. Any other key ends the window and reaches the terminal
+              as usual; only a leader sequence repeats. A tail without a modifier, like
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ctrl+a&gt;n</span>, takes that letter when you type it
+              within half a second of releasing the previous one.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               Chords are written in Latin and keep working on a non-Latin keyboard layout. A layout that cannot type ASCII —
@@ -1998,7 +2016,7 @@ afplay /System/Library/Sounds/Glass.aiff &amp;
 agtermctl notify "needs input" --target "$AGT_SESSION_ID" --socket "$AGT_SOCKET"</div>
             <ul style="list-style: none; padding: 0; margin: 20px 0 0; display: flex; flex-direction: column; gap: 10px">
               <li style="font-size: 14.5px; line-height: 1.6; color: #949ba4; padding-left: 22px; position: relative">
-                <span style="position: absolute; left: 0; top: 1px; color: #6d82f3; font-family: &quot;JetBrains Mono&quot;, monospace">›</span><strong style="color: #bfbab0">Kinds.</strong> <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">status</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">notify</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.created</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.closed</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tree.changed</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">pane.split</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">pane.scratch</span>. The two pane kinds carry <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">shown</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">hidden</span> and fire only on a real change, closing a split or the scratch shell exiting included. <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.opened</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.closed</span> fire beside the created and closed edges of a local row created by <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">zmx attach</span> and carry its ssh destination as <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">host</span>; they describe the row in the tree, not the ssh connection, so undo re-emits <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.opened</span>. The same kinds <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl events</span> prints; a <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">status</span> event also carries <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">previous</span>, the status before the write, so a script sees the transition without keeping state.
+                <span style="position: absolute; left: 0; top: 1px; color: #6d82f3; font-family: &quot;JetBrains Mono&quot;, monospace">›</span><strong style="color: #bfbab0">Kinds.</strong> <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">status</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">notify</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.created</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.closed</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.selected</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tree.changed</span>, <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">pane.split</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">pane.scratch</span>. The two pane kinds carry <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">shown</span> or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">hidden</span> and fire only on a real change, closing a split or the scratch shell exiting included. <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.opened</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.closed</span> fire beside the created and closed edges of a local row created by <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">zmx attach</span> and carry its ssh destination as <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">host</span>; they describe the row in the tree, not the ssh connection, so undo re-emits <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remote.opened</span>. The same kinds <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl events</span> prints; a <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">status</span> event also carries <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">previous</span>, the status before the write, so a script sees the transition without keeping state.
               </li>
               <li style="font-size: 14.5px; line-height: 1.6; color: #949ba4; padding-left: 22px; position: relative">
                 <span style="position: absolute; left: 0; top: 1px; color: #6d82f3; font-family: &quot;JetBrains Mono&quot;, monospace">›</span><strong style="color: #bfbab0">Several lines per kind.</strong> Each line is its own hook with its own queue and child; they start together with no ordering between them. An identical kind and command twice is skipped with a diagnostic.
@@ -2898,7 +2916,7 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 12px 0 0">
               While the stream is down the row says so and names the host. A question goes back to the other side, a finished
               overlay held open with <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--wait</span> closes, and a running overlay keeps running until its program
-              ends. Retrying is automatic; close and reattach the session to retry at once.
+              ends. Retrying is automatic, and at once when the Mac wakes or the network changes; close and reattach the session to retry by hand.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 12px 0 0">
               Each pane has one Mac that leads it, and the program inside sees that Mac's window size. Attaching takes the
@@ -2911,10 +2929,13 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
               the attach still arrives at the other Mac's size until you type. When a connection drops, the pane keeps its last screen. If ssh
               itself failed (exit 255, which is also what a refused login gives), a bar under it names the host and says it is reconnecting,
               under whatever ssh printed, and agterm attaches the pane again once the host answers, retried on the
-              schedule the stream uses; any key retries at once and ⌘W still closes the session. The last screen is replaced when the host answers, before the new connection is up, so if the link drops again right away the pane waits on an empty terminal with only the bar. The pane comes back without taking the lead, so
+              schedule the stream uses; any key, waking the Mac or a network change retries at once and starts that schedule over, and ⌘W still closes the session. While the host keeps refusing, a line along the pane's bottom edge shows what ssh said on the last try, such as a changed host key or a rejected login. The last screen is replaced when the host answers, before the new connection is up, so if the link drops again right away the pane waits on an empty terminal with only the bar. The pane comes back without taking the lead, so
               if the other Mac leads it by then, it arrives covered, and also while the other Mac still counts this Mac's dropped connection
               as the leader, which clears by itself once that connection times out. Any other exit prints one line naming the host, the
-              session, the pane and the exit status, and holds on Ghostty's press-any-key prompt.
+              session, the pane and the exit status, and holds on Ghostty's press-any-key prompt. When your ssh config sets no
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ServerAliveInterval</span> for the connection, or sets it to 0, agterm adds ssh keepalive options (<span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ServerAliveInterval</span> 5,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ServerAliveCountMax</span> 2), so a dead connection is noticed within about fifteen seconds; a large value is the way to opt out.
+              When the pane's ssh joins an existing <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">ControlMaster</span> connection the options do nothing, and that master's own settings decide.
             </p>
 
             <div
@@ -2942,8 +2963,11 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
               swap and is unset in an overlay), and
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace">AGTERM_PANE_ID</span> (the stable per-surface token used by
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session status --pane-id</span>,
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session restore --pane-id</span> and
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session text --pane-id</span> to resolve the current slot), so a
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session restore --pane-id</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session text --pane-id</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session type --pane-id</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">session restart --pane-id</span> and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace">surface cursor --pane-id</span> to resolve the current slot), so a
               script can drive its own window without hard-coding ids. The shell also identifies its terminal as
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace">TERM_PROGRAM=agterm</span>, with
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace">TERM_PROGRAM_VERSION</span> carrying agterm's version, so a
@@ -3447,7 +3471,7 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
               On Stop, a final assistant message that ends a sentence with
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">?</span> reports blocked.
               The check is a heuristic: it ignores single-backtick spans and triple-backtick blocks, and a mark
-              that stands alone or sits inside a word, as in a URL query string, does not count.
+              that stands alone, opens quoted text, or sits inside a word, as in a URL query string, does not count.
               Every other final message reports completed and auto-resets.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
@@ -3468,9 +3492,9 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
               after installing it. Re-running upgrades agterm-managed integrations and is otherwise idempotent.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
-              When OpenCode has already created
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.config/opencode</span>,
-              the installer also adds a lifecycle plugin at
+              When OpenCode's selected configuration directory already exists,
+              the installer runs <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">opencode --version</span>
+              and installs the matching plugin. OpenCode v1 uses
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.config/opencode/plugins/agterm-status.js</span>:
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.status</span>
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">busy</span>/<span
@@ -3492,7 +3516,27 @@ for (const ws of tree.workspaces) for (const s of ws.sessions) {
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.idle</span>
               is ignored so it does not double-fire with
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.status</span>.
-              Restart OpenCode after installing it.
+              Restart OpenCode after installing it. The plugin serves OpenCode 1.x; OpenCode 2 does not load 1.x plugins,
+              so it shows no status there.
+            </p>
+
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
+              For OpenCode v2, the default plugin path is
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.config/opencode/plugins/agterm-v2/tui.js</span>.
+              This CLI plugin reports the selected OpenCode session and its descendants into the current agterm pane,
+              even when several clients share a server. Background tabs, ancestors, and sibling sessions are excluded.
+              Running work, retries, and recovering compaction stay active; pending permissions and questions are blocked
+              until all are answered or cancelled. Success or user interruption completes only when the family is no longer busy;
+              a terminal failure becomes blocked once the family stops working and stays blocked until the next run.
+              Switching sessions, reconnecting, and unloading the plugin refresh or clear the indicator.
+              Detection uses your interactive login shell's PATH ($SHELL, or /bin/zsh if unset).
+              V2 resolves its directory from that shell's OPENCODE_CONFIG_DIR, then $XDG_CONFIG_HOME/opencode,
+              then ~/.config/opencode. An empty OPENCODE_CONFIG_DIR skips v2 with a warning. So does an unavailable shell
+              configuration when ~/.config/opencode exists; without that directory OpenCode is skipped as not installed.
+              If the version cannot be determined, choose v1 or v2 in the installer, or skip OpenCode.
+              No npm dependencies or configuration edits are needed. Re-run the installer after switching major versions:
+              a v2 install removes the marked v1 plugin in its selected directory, while a v1 install leaves the v2 plugin directory alone.
+              User-owned or unreadable v1 files are preserved and reported in the install result. Then restart OpenCode.
             </p>
 
             <h3
@@ -3639,6 +3683,7 @@ command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' stop"
                 and a notification afterwards says how many sessions the reset covered.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx reset --force</span> does the same without the dialog.
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx list</span> shows every daemon and the pane that claims it,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx screen</span> prints one daemon's screen even when its window is closed,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx prune</span> clears the ones nothing claims, and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx kill</span> destroys a single pane's daemon. A closed window's panes stay
                 claimed with no clients attached, which is their resting state rather than something to clean up. Every one of

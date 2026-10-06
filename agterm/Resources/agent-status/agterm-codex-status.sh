@@ -27,7 +27,7 @@ report_status() {
 }
 
 assistant_message_contains_question() {
-  local message prose question
+  local message prose question quoted_mark
   if [ -x /usr/bin/plutil ]; then
     message=$(/usr/bin/plutil -extract last_assistant_message raw -o - - 2>/dev/null) || return 1
   elif command -v python3 >/dev/null 2>&1; then
@@ -45,10 +45,12 @@ sys.stdout.write(value)
   else
     return 1
   fi
+  # a ? that opens quoted text ("? for shortcuts") ends no word, yet its opener would pass as one
+  quoted_mark=$'s/(^|[[:space:]])([“‘"\'([*_]+)\\?/\\1\\2/g'
   # a span becomes a word rather than nothing so "run `make test`?" keeps its ? attached
   prose=$(printf '%s\n' "$message" \
     | /usr/bin/awk '/^[[:space:]]*```/ { fenced = !fenced; next } !fenced' \
-    | /usr/bin/sed 's/`[^`]*`/code/g')
+    | /usr/bin/sed -E -e 's/`[^`]*`/code/g' -e "$quoted_mark")
   # bash 3.2 cannot parse this bracket set inline in [[ ]]
   question=$'[^[:space:]]\\?[]"\')*_!’”]*([[:space:]]|$)'
   [[ "$prose" =~ $question ]]

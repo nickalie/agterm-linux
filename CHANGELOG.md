@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.35.1 - 2026-10-05
+
+### Improved
+
+- **Restart the program in one pane.** `session restart --command LINE (--pane-id ID | --pane left|right)` ends one Live pane's shell and its foreground program, then starts a new login shell in the same pane that runs LINE and stays interactive. The pane keeps its place, its stable id and its `AGTERM_*` environment, and nothing is typed into it. The reply carries the old and new shell pids. It works on a hidden split, in a background window and with the display asleep. Non-live, remote and scratch panes are refused #699 @umputun
+
+### Bug Fixes
+
+- the command a Live pane was created with (`session new --command`) kept running after the pane or its session was closed. Ending a pane's shell now sends a hangup to its foreground job, the way closing a terminal does. Background jobs, including nohup and disowned ones, are left alone #699 @umputun
+
+## v0.35.0 - 2026-10-04
+
+### New Features
+
+- **Address a pane by its stable id.** `session type` and `surface cursor` take `--pane-id`, the token a shell sees as `$AGTERM_PANE_ID`, and `tree --json` lists it as `surfaces[].paneID`. A script can read a pane, check its caret and type into it by that id, and the id keeps naming the same terminal after `session swap` or a split-pane promotion. `session text` and `session type` report the pane they acted on as `result.pane`. **Behavior change:** `session text --pane-id` with an unknown id and no `--pane` used to read the on-screen pane and answer ok. It now fails with `unknown pane id: <id>`, as `session type` and `surface cursor` do #698 @umputun
+- **OpenCode 2 agent status.** Help ▸ Install Agent Status Hooks installs a separate plugin for OpenCode 2, by default at `~/.config/opencode/plugins/agterm-v2/tui.js` with `OPENCODE_CONFIG_DIR` and `XDG_CONFIG_HOME` honored, and the OpenCode 1 plugin stays as it was. The installer detects the major version; when it cannot, it offers a choice if an OpenCode config exists and skips otherwise. Each client reports its selected session and that session's subagents to its own pane #658 @LerikP #696 @umputun #637
+- **Saved logins for URL overlays.** `session overlay open --url URL --persistent` keeps cookies, `localStorage` and IndexedDB in one saved store shared by every persistent page, so a login survives closing the overlay and restarting the app. `browser clear` removes the saved data and is refused while a persistent page is open. `tree` reads `persistent` back on each `htmlOverlays` node. A login that leaves the page's origin (OAuth, SSO, a popup) still fails #689 @umputun
+- **`--repeat` for leader sequences**, like tmux `bind -r`. With `map ctrl+a>ctrl+l --repeat next_session` and `map ctrl+a>ctrl+h --repeat previous_session`, ⌃A ⌃L ⌃L ⌃H walks two sessions down and one back, and holding the tail repeats it. Any other key ends the window and is handled as usual. `keymap list` reports `repeats` #666 @dderg #682 @umputun
+- **Page titles and chromeless pages in HTML overlays.** The strip over a page shows its `<title>` dimmed after the file name or URL origin. `session overlay open --html FILE --chromeless` hides the strip, so a small page can look like a native view; it is refused with `--url` and `--navigation`. A `--js` page that cancels every keydown can no longer swallow ⌘W #678 @umputun
+- `keymap run NAME [--target T] [--window W]` runs a custom command from `keymap.conf` against the addressed session, as the palette does for the active one. The reply means the process started #694 @umputun
+- `zmx screen NAME [--all|--lines N]` reads the screen of a Live session's daemon by the name `zmx list` prints, including one whose window is closed. It attaches nothing and changes no pane's size #694 @umputun
+- a `session.selected` event fires on every selection change and carries the session that lost the selection as `previous` #694 @umputun
+- ctrl+j and ctrl+k move the selection down and up in the palettes and in `agtermctl pick`, next to the arrow keys, and ctrl+k no longer deletes to the end of the query there #695 @umputun
+
+### Improved
+
+- a remote pane whose network goes away ends within about 15 seconds and shows the reconnect bar, where it used to freeze until the TCP timeout. The attach adds `ServerAliveInterval=5` and `ServerAliveCountMax=2` unless the user's ssh config sets a nonzero interval. A pane whose ssh joins an existing `ControlMaster` connection keeps that connection's settings #683 @wildsurfer
+- panes waiting to reconnect and dropped presentation streams retry at once when the Mac wakes or the network returns, and their backoff starts over. A Mac that slept all night no longer waits up to five minutes per pane #687 @wildsurfer
+- a pane waiting to reconnect shows why its last attempt failed, as one line along its bottom edge, and `tree` carries the same reason and the retry count as `reconnect` on the surface node. A refused key or a changed host key no longer looks like an offline host #694 @umputun
+
+### Bug Fixes
+
+- `session type` and `quick type` with a trailing newline could leave a line of about 100 characters or more sitting unsubmitted in Claude Code, which read the Return as part of a paste. The final Return now follows the text after 10 ms. Returns inside a multi-line payload are not spaced, and one very long line can still be read as a paste #681 @umputun #679
+- a `map` onto a stock macOS menu shortcut could list the action as bound while the stock command fired: `map cmd+opt+w focus_workspace` asked to close the window. A built-in now takes the shortcut from the stock item and gives it back when released #680 @umputun
+- halving a wide window in one step left one pane of a left/right split at zero width. The stored ratio is now applied again when the split's length changes #692 @umputun #691
+- an HTML overlay page that was not on screen took file drops aimed at the pane under the cursor, and the drop was lost #685 @umputun #677
+- a dashboard cell showed the shell under a full session overlay or the pane's own overlay. It now shows a cover naming the page or program that hides the pane #690 @umputun #688
+- the Codex status hook reported a finished turn as blocked when its final message quoted a footer hint such as `"? for shortcuts"` #684 @umputun
+- a minimized, ordered-out or app-hidden window kept the GPU surfaces of its panes. They are released while the window is hidden and return when it is shown #694 @umputun
+- after a Live restore of an idle Claude Code session a black block sat between the logo and its title. A daemon already running keeps the old behavior until it is recreated #694 @umputun
+- a failed `windows.json` write could drop a new window from the next restore after a crash. The write is retried on the next successful save and at exit, and `tree` reports `indexUnsaved` while it is outstanding #694 @umputun
+- with auto-hide of inactive sidebars on, a window restored by Reopen from the quick terminal over another app came up with its sidebar collapsed #694 @umputun
+- an overlay program ran `~/.profile` first when the `sh` on PATH is dash or zsh, because the wrapper started as a login shell. It now runs `/bin/sh` as a non-login shell #694 @umputun
+
 ## v0.34.0 - 2026-09-30
 
 ### New Features

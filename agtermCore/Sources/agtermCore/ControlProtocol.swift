@@ -27,6 +27,7 @@ public enum Command: String, Codable, Sendable {
     case sessionContext = "session.context"
     case sessionSeen = "session.seen"
     case sessionRestore = "session.restore"
+    case sessionRestart = "session.restart"
     case sessionBackground = "session.background"
     case sessionSplit = "session.split"
     case sessionSplitClose = "session.split.close"
@@ -82,8 +83,10 @@ public enum Command: String, Codable, Sendable {
     case windowMinimize = "window.minimize"
     case keymapReload = "keymap.reload"
     case keymapList = "keymap.list"
+    case keymapRun = "keymap.run"
     case hooksReload = "hooks.reload"
     case hooksList = "hooks.list"
+    case browserClear = "browser.clear"
     case configReload = "config.reload"
     case themeSet = "theme.set"
     case themeList = "theme.list"
@@ -104,6 +107,7 @@ public enum Command: String, Codable, Sendable {
     case zmxTree = "zmx.tree"
     case zmxAttach = "zmx.attach"
     case zmxPresent = "zmx.present"
+    case zmxScreen = "zmx.screen"
     /// A viewer's helper claiming a remote overlay job; after an ok reply the connection carries job frames.
     case sessionOverlayJobRun = "session.overlay.job.run"
     /// UI-TEST-ONLY: forces the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
@@ -214,12 +218,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// unaffected. A pane overlay is always full-pane, so
     /// `--pane` conflicts with `session.overlay.open --size-percent` and `session.overlay.resize` refuses it.
     public var pane: String?
-    /// A surface's STABLE spawn token for `session.status`/`session.restore`/`session.text`/`session.hud.*`
-    /// (the shell's baked `AGTERM_PANE_ID`, forwarded by the agent-status hook). Resolving it against the session's
-    /// live surfaces OVERRIDES the stale role `pane`, so a call from a moved pane reaches the CURRENT slot;
-    /// empty/unknown falls back to `pane`. Opaque — validated only by resolving.
-    /// `session.restore` and `session.hud.*` diverge: an unresolvable token with NO explicit `pane` errors
-    /// rather than silently choosing session-wide or main placement. See `Session.paneRole(forToken:)`, #199.
+    /// paneID is the stable `AGTERM_PANE_ID` token; a known id overrides `pane` and an empty one counts as
+    /// absent. An unknown id needs an explicit `pane` to fall back on, except for `session.status`, which
+    /// always falls back, and `surface.cursor`, which never does.
     public var paneID: String?
     /// Absolute primary-pane split fraction (0...1) of the pane area below the titlebar band, for
     /// `session.resize`, clamped server-side to `AppStore.splitRatioMin...splitRatioMax`. Mutually exclusive
@@ -375,6 +376,10 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var url: String?
     /// javascript lets an `--html` or `--url` page run its own scripts (`--js`); off by default.
     public var javascript: Bool?
+    /// chromeless opens an `--html` page with no identity strip (`--chromeless`).
+    public var chromeless: Bool?
+    /// persistent opens a `--url` page on the saved browser store (`--persistent`) instead of an in-memory one.
+    public var persistent: Bool?
     /// value is the answer `session.overlay.submit` hands back from a page; empty is a real answer.
     public var value: String?
     /// page is the page id `session.overlay.result` reads the outcome of, instead of a program's exit status.
@@ -406,7 +411,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 light: String? = nil, dark: String? = nil,
                 close: Bool? = nil, fontSize: Double? = nil, autoSize: Bool? = nil, mru: Bool? = nil,
                 html: String? = nil, current: Bool? = nil, navigation: Bool? = nil, url: String? = nil,
-                javascript: Bool? = nil, value: String? = nil, page: String? = nil) {
+                javascript: Bool? = nil, value: String? = nil, page: String? = nil, chromeless: Bool? = nil,
+                persistent: Bool? = nil) {
         self.name = name
         self.cwd = cwd
         self.targets = targets
@@ -488,6 +494,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.javascript = javascript
         self.value = value
         self.page = page
+        self.chromeless = chromeless
+        self.persistent = persistent
     }
 }
 
@@ -546,8 +554,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     /// from. Without the echo a caller cannot tell an out-of-range request from an honored one, both
     /// answering ok.
     public var sidebarWidth: Double?
-    /// pane is the role written by session.restore or the pane anchor resolved by ask.open.
-    /// session.restore reports it on every success, including the default-to-main path.
+    /// pane is the pane session.restore wrote, session.text read or session.type typed into, or the anchor
+    /// ask.open resolved. The first three report it on every success, the default-pane paths included.
     public var pane: String?
     /// The light/dark syncing state for `theme.set`/`theme.list`, from the stored theme: `sync` = whether it
     /// is ghostty's dual `light:,dark:` form (the terminal tracks the macOS appearance), `light`/`dark` its
@@ -582,6 +590,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var pageID: String?
     /// A page's selector outcome for `session.overlay.result --page`.
     public var pageOutcome: ControlHtmlPageOutcome?
+    /// restart is what `session.restart` replaced: the pane's stable id and its shell before and after.
+    public var restart: ControlRestartReceipt?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
@@ -595,7 +605,9 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil,
                 liveReset: ControlLiveResetStatus? = nil,
                 width: Int? = nil, height: Int? = nil,
-                pageID: String? = nil, pageOutcome: ControlHtmlPageOutcome? = nil) {
+                pageID: String? = nil, pageOutcome: ControlHtmlPageOutcome? = nil,
+                restart: ControlRestartReceipt? = nil) {
+        self.restart = restart
         self.width = width
         self.height = height
         self.restore = restore
@@ -664,6 +676,15 @@ public enum OverlayHudError {
     public static let writeFailed = "could not write the hud message"
 }
 
+/// BrowserClearError holds the reasons the saved browser store cannot be cleared or opened right now.
+public enum BrowserClearError {
+    public static let clearing = "browser storage is being cleared"
+
+    public static func pagesOpen(_ count: Int) -> String {
+        "\(count) persistent \(count == 1 ? "page" : "pages") still open"
+    }
+}
+
 /// OverlayHtmlError holds the error strings for `session.overlay.*` against an HTML page.
 public enum OverlayHtmlError {
     public static let commandAndHtml = "session.overlay.open takes a command or --html, not both"
@@ -676,6 +697,11 @@ public enum OverlayHtmlError {
     public static let invalidURL = "session.overlay.open: --url must be an absolute http or https URL"
     public static let navigationWithoutPage = "session.overlay.open: --navigation requires --html or --url"
     public static let javascriptWithoutPage = "session.overlay.open: --js requires --html or --url"
+    /// chromelessRequiresFile: the strip is what names a URL page's origin, so only a file page may drop it.
+    public static let chromelessRequiresFile = "session.overlay.open: --chromeless requires --html"
+    public static let chromelessWithNavigation = "session.overlay.open: --chromeless cannot be combined with --navigation"
+    public static let persistentRequiresURL = "session.overlay.open: --persistent requires --url"
+    public static let persistentUnavailable = "persistent browser storage is not available"
     /// presenter: a page is shown on this Mac, so it is refused while another Mac presents the session.
     public static let presenter = "a viewer presents this session: an html overlay would open where nobody sees it"
     public static let noOverlay = "no overlay"

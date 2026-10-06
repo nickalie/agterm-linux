@@ -4,11 +4,13 @@ public struct ControlSessionTypeOptions: Equatable, Sendable {
     /// The parsed pane, nil for the main one. The dispatcher owns the spelling, so the role and position
     /// aliases the CLI accepts resolve here rather than being matched again in the host.
     public let pane: StatusPane?
+    public let paneID: String?
 
-    public init(text: String, select: Bool, pane: StatusPane?) {
+    public init(text: String, select: Bool, pane: StatusPane?, paneID: String? = nil) {
         self.text = text
         self.select = select
         self.pane = pane
+        self.paneID = paneID
     }
 }
 
@@ -26,10 +28,12 @@ public struct ControlSessionOverlayOpenOptions: Equatable, Sendable {
     public let page: HtmlSource?
     public let navigation: Bool
     public let javascript: Bool
+    public let chromeless: Bool
+    public let persistent: Bool
 
     public init(command: String, cwd: String?, wait: Bool, sizePercent: Int?, backgroundColor: String?,
                 follow: Bool = false, pane: OverlayPane? = nil, page: HtmlSource? = nil, navigation: Bool = false,
-                javascript: Bool = false) {
+                javascript: Bool = false, chromeless: Bool = false, persistent: Bool = false) {
         self.command = command
         self.cwd = cwd
         self.wait = wait
@@ -40,6 +44,8 @@ public struct ControlSessionOverlayOpenOptions: Equatable, Sendable {
         self.page = page
         self.navigation = navigation
         self.javascript = javascript
+        self.chromeless = chromeless
+        self.persistent = persistent
     }
 }
 
@@ -81,5 +87,37 @@ public struct ControlSessionOverlayTextOptions: Equatable, Sendable {
         self.pane = pane
         self.all = all
         self.lines = lines
+    }
+}
+
+/// ControlSessionRestartOptions is the parsed `session.restart` payload. At least one of `pane` and
+/// `paneID` is set; the host resolves them against the live slots.
+public struct ControlSessionRestartOptions: Equatable, Sendable {
+    /// maxCommandBytes bounds the shell line in UTF-8 bytes. It travels in the new shell's argv, inside
+    /// the session host's 64 KiB creation frame beside the pane's environment.
+    public static let maxCommandBytes = 4096
+
+    public let command: String
+    public let pane: StatusPane?
+    public let paneID: String?
+
+    public init(command: String, pane: StatusPane?, paneID: String? = nil) {
+        self.command = command
+        self.pane = pane
+        self.paneID = paneID
+    }
+}
+
+/// ControlRestartReceipt is what a successful `session.restart` proves: the pane's shell was replaced.
+/// The pids are the daemon leaders, the pane's root shells, not the program the caller's line starts.
+public struct ControlRestartReceipt: Codable, Equatable, Sendable {
+    public let paneID: String
+    public let oldPid: Int32
+    public let newPid: Int32
+
+    public init(paneID: String, oldPid: Int32, newPid: Int32) {
+        self.paneID = paneID
+        self.oldPid = oldPid
+        self.newPid = newPid
     }
 }

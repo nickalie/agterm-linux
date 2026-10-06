@@ -77,6 +77,8 @@ enum EventFormatter {
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.title ?? name): \(event.payload.body ?? "")"
         case .sessionCreated, .sessionClosed, .treeChanged:
             return "\(time) \(event.kind.rawValue) \(name)"
+        case .sessionSelected:
+            return "\(time) \(event.kind.rawValue) \(name) previous=\(event.payload.previous ?? "-")"
         case .paneSplit, .paneScratch:
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.status ?? "")"
         case .remoteOpened, .remoteClosed:

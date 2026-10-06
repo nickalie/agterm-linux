@@ -40,7 +40,7 @@
     <meta name="theme-color" content="#191d20" />
     <link rel="preload" href="/assets/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/assets/fonts/ibm-plex-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/style.css?v=2" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -54,7 +54,7 @@
         "author": { "@type": "Person", "name": "Umputun", "url": "https://github.com/umputun" },
         "codeRepository": "https://github.com/umputun/agterm",
         "downloadUrl": "https://github.com/umputun/agterm/releases",
-        "softwareVersion": "0.34.0"
+        "softwareVersion": "0.35.1"
       }
     </script>
   </head>
@@ -411,7 +411,7 @@
           sessions, each progressing on its own. A tabbed terminal loses track of them quickly. agterm doesn't.
         </p>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
           <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; padding: 30px">
             <svg width="30" height="30" viewBox="0 0 30 30" fill="none" style="margin-bottom: 20px">
               <rect x="1" y="1" width="12" height="12" rx="2" stroke="#6d82f3" stroke-width="1.6"></rect>
@@ -867,10 +867,7 @@
             background: #22272b;
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 16px;
-            padding: 36px;
             display: grid;
-            grid-template-columns: 1.1fr 0.9fr;
-            gap: 36px;
             align-items: center;
           "
         >
@@ -980,7 +977,7 @@
       <!-- ===== SHOWCASE ===== -->
 
       <div style="max-width: 1140px; margin: 0 auto; padding: 80px 28px 40px">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 16px">
           <figure
             style="
               margin: 0;
@@ -1425,7 +1422,7 @@ agtermctl session status completed --auto-reset \
           Get agterm.
         </h2>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
           <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; padding: 28px">
             <div
               style="

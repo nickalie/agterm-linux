@@ -689,6 +689,13 @@ agtermctl session text --lines 50              # the last 50 lines of the buffer
 agtermctl session text --pane right            # the split pane (errors if there is no split)
 agtermctl session text --pane-id "$AGTERM_PANE_ID" # this shell's terminal, even after a swap
 agtermctl session text --pane scratch --all    # the scratch terminal's full buffer, even while it's hidden
+# drive the split pane's terminal by its stable id, wherever a swap moves it; an empty id counts as no id
+# and reaches the default pane, so stop when the lookup finds none (no split, or the session is in another window)
+id=$(agtermctl tree --json | jq -er --arg s "$AGTERM_SESSION_ID" \
+  '.result.tree.workspaces[].sessions[] | select(.id == $s) | .surfaces[] | select(.kind == "right") | .paneID | select(. != null and . != "")') &&
+  agtermctl session text --pane-id "$id" --target "$AGTERM_SESSION_ID" --lines 5 &&
+  agtermctl surface cursor --pane-id "$id" --target "$AGTERM_SESSION_ID" &&
+  agtermctl session type $'make test\n' --pane-id "$id" --target "$AGTERM_SESSION_ID"
 # extract every URL from the full scrollback:
 agtermctl session text --all --json | jq -r '.result.text' | grep -oE 'https?://[^ ]+'
 ```
@@ -1225,7 +1232,7 @@ agtermctl keymap list --json \
 ```
 
 If those disagree, the keymap is fine and the menu is stale or the chord was taken: SwiftUI rebuilds the
-menu only on the next app activation, so switch away and back before concluding anything, and relaunch if
+menu lazily (on activation or a key press), so switch away and back before concluding anything, and relaunch if
 it persists.
 
 A menu entry with `"enabled": false` holds the chord but is inert — AppKit consumes the key and fires

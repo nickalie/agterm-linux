@@ -48,6 +48,14 @@ public extension ControlActions {
         ControlResponse(ok: false, error: ControlActionsUnsupported.message("hooks.list"))
     }
 
+    func clearBrowser() async -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("browser.clear"))
+    }
+
+    func runCustomCommand(name _: String, target _: String?, window _: String?) -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("keymap.run"))
+    }
+
     func readRestoreMode() -> ControlResponse {
         ControlResponse(ok: false, error: ControlActionsUnsupported.message("restore.mode"))
     }
@@ -62,6 +70,10 @@ public extension ControlActions {
 
     func pruneZmxDaemons() -> ControlResponse {
         ControlResponse(ok: false, error: ControlActionsUnsupported.message("zmx.prune"))
+    }
+
+    func readZmxScreen(name _: String, fullBuffer _: Bool, lines _: Int?) -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("zmx.screen"))
     }
 
     func killZmxDaemon(target _: String, window _: String?, pane _: ZmxPaneRole) -> ControlResponse {
@@ -91,6 +103,13 @@ public extension ControlActions {
         return await attachRemoteSession(host: host, session: session)
     }
 
+    func readSurfaceCursor(_ target: String?, window: String?, paneID: String?) -> ControlResponse {
+        guard paneID?.isEmpty != false else {
+            return ControlResponse(ok: false, error: ControlActionsUnsupported.message("surface.cursor --pane-id"))
+        }
+        return readSurfaceCursor(target, window: window)
+    }
+
     func attachRemoteSession(host _: String, session _: String) async -> ControlResponse {
         ControlResponse(ok: false, error: ControlActionsUnsupported.message("zmx.attach"))
     }
@@ -101,6 +120,11 @@ public extension ControlActions {
 
     func swapSessionPanes(_: String?, window _: String?) async -> ControlResponse {
         ControlResponse(ok: false, error: "session.swap is not supported by this host")
+    }
+
+    func restartSessionPane(_: String?, window _: String?,
+                            options _: ControlSessionRestartOptions) async -> ControlResponse {
+        ControlResponse(ok: false, error: "session.restart is not supported by this host")
     }
 
     func takeSessionLead(_: String?, window _: String?, pane _: StatusPane?) -> ControlResponse {

@@ -48,7 +48,7 @@ public enum HtmlBridge {
     // commands that address no session, or address it some other way than by `target`
     private static let notSessionTargeted: Set<Command> = [.sessionNew, .sessionGo, .sessionOverlayJobRun]
     // session commands outside the `session.` names; `ask.open` joins them unless it asks in the window's GUI
-    private static let sessionTargeted: Set<Command> = [.notify, .fontInc, .fontDec, .fontReset]
+    private static let sessionTargeted: Set<Command> = [.notify, .fontInc, .fontDec, .fontReset, .keymapRun]
     private static let ownOverlay: Set<Command> = [.sessionOverlayClose, .sessionOverlayReload,
                                                    .sessionOverlayNavigate, .sessionOverlaySubmit]
     // these take their window as `target`, not as `args.window`
@@ -56,7 +56,7 @@ public enum HtmlBridge {
                                                        .windowResize, .windowMove, .windowZoom, .windowFullscreen,
                                                        .windowMinimize]
     // app-global commands that refuse any window
-    private static let windowless: Set<Command> = [.hooksReload, .hooksList]
+    private static let windowless: Set<Command> = [.hooksReload, .hooksList, .browserClear]
     // their ids name something else (a remote session, dashboard cells), and they still land in a local window
     private static let placedLocally: Set<Command> = [.zmxAttach, .dashboard]
 

@@ -18,7 +18,7 @@ You are inside agterm (`AGTERM_ENABLED=1`). Use:
 - **A keybinding does not fire** — `agtermctl keymap list` shows the chord each action resolved to AND the
   key equivalents the menu bar is actually dispatching. If the action's `chord` looks right but no `menu`
   entry carries it (or a different item does), the keymap is fine and the menu is the problem: SwiftUI
-  rebuilds the menu only on the next app activation, so switch to another app and back, then relaunch if it
+  rebuilds the menu lazily (on activation or a key press), so switch to another app and back, then relaunch if it
   persists. Exceptions: `undo_close` (⌘Z) and `toggle_fullscreen` (⌃⌘F) are delivered by a key monitor
   rather than a menu item, so they never appear under `menu` and their absence there means nothing.
 - **Ghostty settings** - `agtermctl config reload` re-reads the ghostty config and prints the diagnostic
@@ -272,8 +272,14 @@ prompt itself as an agterm bug.
 Install the hooks from Help ▸ Install Agent Status Hooks…. For shell-integrated agents, start a fresh shell
 so the installer-added `source` line takes effect. For Pi, restart it or run `/reload` so it loads
 `~/.pi/agent/extensions/agterm-status.ts`; the extension installs only after Pi has created `~/.pi/agent`.
-For OpenCode, restart it so it loads `~/.config/opencode/plugins/agterm-status.js`;
-the plugin installs only after OpenCode has created `~/.config/opencode`.
+For OpenCode, restart it to load `~/.config/opencode/plugins/agterm-status.js` (v1) or
+`~/.config/opencode/plugins/agterm-v2/tui.js` (v2).
+The installer detects the major via `opencode --version` in your interactive login shell; failed detection offers a manual choice.
+V1 uses `~/.config/opencode`. V2 uses the shell's `OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then `~/.config/opencode`.
+The selected directory must already exist. An empty `OPENCODE_CONFIG_DIR` skips v2 with a warning. So does an unavailable shell configuration when `~/.config/opencode` exists; without that directory OpenCode is skipped as not installed.
+Re-run it after switching major versions: v2 removes the marked v1 plugin in its selected directory; v1 leaves the v2 directory alone.
+User-owned or unreadable v1 files are preserved and reported in the install result.
+The v2 CLI plugin follows the selected session and its descendants, excluding background tabs and headless runs.
 The installed wrapper resolves the bundled `agtermctl` itself; a bare development build instead needs
 `agtermctl` on `PATH`. Moving or replacing agterm.app invalidates the path the installer baked in — the
 wrapper then falls back to `agtermctl` on `PATH`, and with nothing there the glyph silently stops

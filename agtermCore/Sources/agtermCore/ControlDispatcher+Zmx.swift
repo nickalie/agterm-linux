@@ -65,6 +65,16 @@ extension ControlDispatcher {
                 return ControlResponse(ok: false, error: "zmx.kill requires --force")
             }
             return actions.killZmxDaemon(target: target, window: request.args?.window, pane: pane)
+        case .zmxScreen:
+            // a daemon name, as `zmx list` prints it: the session resolver sees only open windows
+            guard let name = request.args?.name?.trimmedOrNil, RemoteSession.isPlain(name) else {
+                return ControlResponse(ok: false, error: "zmx.screen requires a daemon name")
+            }
+            switch parseBufferExtent(request.args) {
+            case .rejected(let response): return response
+            case .extent(let all, let lines):
+                return actions.readZmxScreen(name: name, fullBuffer: all || lines != nil, lines: lines)
+            }
         case .zmxReset:
             guard request.args?.force == true else {
                 return ControlResponse(ok: false, error: "zmx.reset requires --force")

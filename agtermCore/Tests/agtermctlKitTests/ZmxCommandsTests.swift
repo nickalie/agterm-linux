@@ -100,6 +100,22 @@ struct ZmxCommandsTests {
                 "silence reads the same as a failed read")
     }
 
+    @Test func screenSendsTheDaemonNameAndExtent() throws {
+        let plain = try Zmx.Screen.parse(["agterm-a"]).makeRequest()
+        #expect(plain.cmd == .zmxScreen)
+        #expect(plain.target == nil)
+        #expect(plain.args?.name == "agterm-a")
+        #expect(plain.args?.all == nil)
+
+        #expect(try Zmx.Screen.parse(["agterm-a", "--all"]).makeRequest().args?.all == true)
+        #expect(try Zmx.Screen.parse(["agterm-a", "--lines", "20"]).makeRequest().args?.lines == 20)
+    }
+
+    @Test(arguments: [["agterm-a", "--all", "--lines", "3"], ["agterm-a", "--lines", "0"], []])
+    func screenRefusesABadExtentOrAMissingName(arguments: [String]) {
+        #expect(throws: (any Error).self) { try Zmx.Screen.parse(arguments) }
+    }
+
     @Test func listAndPruneSendTheirCommandWithNothingToResolve() throws {
         let list = try Zmx.List.parse([])
         #expect(try list.makeRequest().cmd == .zmxList)

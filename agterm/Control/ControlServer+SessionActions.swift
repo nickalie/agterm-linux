@@ -12,8 +12,17 @@ extension ControlServer: ControlActions {
         case .failure(let response):
             return response
         case .success(let (store, id)):
-            return await injectText(options.text, into: id, store: store, select: options.select,
-                                    pane: options.pane)
+            let session = store.session(withID: id)
+            let pane: StatusPane?
+            switch session?.paneAddress(token: options.paneID, pane: options.pane) ?? .pane(options.pane) {
+            case .unknownToken(let token): return Self.unknownPaneID(token)
+            case .pane(let resolved): pane = resolved
+            }
+            let token = options.paneID.flatMap { session?.paneRole(forToken: $0) == nil ? nil : $0 }
+            var response = await injectText(options.text, into: id, store: store, select: options.select,
+                                            pane: pane, token: token)
+            if response.ok, response.result?.pane == nil { response.result?.pane = (pane ?? .left).rawValue }
+            return response
         }
     }
 
@@ -63,10 +72,19 @@ extension ControlServer: ControlActions {
         if store.session(withID: id)?.remoteOverlays.slot(options.pane) != nil {
             return ControlResponse(ok: false, error: options.pane == nil ? "overlay already open" : PaneOverlayError.alreadyOpen)
         }
-        let overlay = HtmlOverlay(source: page, navigation: options.navigation, javascript: options.javascript)
+        if options.persistent, let failure = HtmlOverlayRegistry.shared.persistentStoreFailure() {
+            return ControlResponse(ok: false, error: "session.overlay.open: \(failure)")
+        }
+        let overlay = HtmlOverlay(source: page, navigation: options.navigation, javascript: options.javascript,
+                                  chromeless: options.chromeless, persistent: options.persistent)
         if let failure = store.openHtmlOverlay(id, pane: options.pane, overlay: overlay,
                                                sizePercent: options.sizePercent, backgroundColor: options.backgroundColor) {
             return ControlResponse(ok: false, error: failure.message(pane: options.pane))
+        }
+        // a page exists only once a view asks for it; built here, an accepted persistent page already
+        // counts as open to browser.clear, which would otherwise leave it failed for good
+        if options.persistent {
+            _ = HtmlOverlayRegistry.shared.page(for: overlay, store: store, backgroundColor: options.backgroundColor)
         }
         if options.follow { store.selectSession(id) }
         return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, pageID: overlay.id.uuidString))
@@ -540,15 +558,9 @@ extension ControlServer: ControlActions {
                 return ControlResponse(ok: false, error: "no such session: \(target ?? "active")")
             }
             let pane: StatusPane
-            // an EMPTY token (an older shell exporting no `AGTERM_PANE_ID`) counts as absent: the plain
-            // `--pane`/main-pane path, not an error.
-            if let token = update.paneID, !token.isEmpty {
-                guard let resolved = session.paneRole(forToken: token) ?? update.pane else {
-                    return ControlResponse(ok: false, error: "unknown pane id: \(token)")
-                }
-                pane = resolved
-            } else {
-                pane = update.pane ?? .left
+            switch session.paneAddress(token: update.paneID, pane: update.pane) {
+            case .unknownToken(let token): return Self.unknownPaneID(token)
+            case .pane(let resolved): pane = resolved ?? .left
             }
             guard pane != .scratch else {
                 return ControlResponse(ok: false, error: "the scratch terminal is never restored")

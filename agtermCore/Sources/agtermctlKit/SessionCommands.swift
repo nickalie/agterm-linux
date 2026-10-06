@@ -18,7 +18,7 @@ struct Session: ParsableCommand {
         subcommands: [New.self, Duplicate.self, Close.self, Select.self, Go.self, Rename.self, Reveal.self, Move.self, TypeText.self,
                       Split.self, Swap.self, Lead.self, Scratch.self, Focus.self, Resize.self, Copy.self, Paste.self,
                       SelectAll.self,
-                      Text.self, Status.self, Restore.self, FlagCommand.self, Context.self,
+                      Text.self, Status.self, Restore.self, Restart.self, FlagCommand.self, Context.self,
                       Seen.self, Search.self, Background.self, Overlay.self, Hud.self]
     )
 
@@ -195,6 +195,8 @@ struct Session: ParsableCommand {
         @OptionGroup var target: TargetOptions
         @OptionGroup var options: ClientOptions
 
+        @Option(name: .customLong("pane-id"), help: "Stable pane token ($AGTERM_PANE_ID); overrides --pane, and unknown without --pane is an error.") var paneID: String?
+
         func validate() throws { try validatePaneArgument(pane) }
 
         func makeRequest() throws -> ControlRequest {
@@ -209,7 +211,7 @@ struct Session: ParsableCommand {
 
         private func makeRequest(payload: String) -> ControlRequest {
             return ControlRequest(cmd: .sessionType, target: target.target,
-                                  args: options.withWindow(ControlArgs(text: payload, select: select, pane: pane)))
+                                  args: options.withWindow(ControlArgs(text: payload, select: select, pane: pane, paneID: paneID)))
         }
     }
 
@@ -358,7 +360,7 @@ struct Session: ParsableCommand {
         @Flag(name: .long, help: "Read the full screen + scrollback instead of just the visible screen.") var all = false
         @Option(name: .long, help: "Keep only the last N lines of the full buffer.") var lines: Int?
         @Option(name: .long, help: "Which pane to read: primary/left/top, split/right/bottom, or scratch (even when hidden). Defaults to the on-screen pane.") var pane: String?
-        @Option(name: .customLong("pane-id"), help: "Stable pane token ($AGTERM_PANE_ID); overrides --pane when it resolves.")
+        @Option(name: .customLong("pane-id"), help: "Stable pane token ($AGTERM_PANE_ID); overrides --pane when it resolves, and an unknown token without --pane is an error.")
         var paneID: String?
         @OptionGroup var target: TargetOptions
         @OptionGroup var options: ClientOptions
@@ -564,6 +566,8 @@ struct Session: ParsableCommand {
             @Flag(name: .long, help: "With --html or --url, add back, forward, reload, open in browser, and Show in Finder or Copy Link buttons.")
             var navigation = false
             @Flag(name: .customLong("js"), help: "With --html or --url, let the page run its own JavaScript (off by default).") var javascript = false
+            @Flag(name: .long, help: "With --html, show the page without agterm's strip naming it; ⌘W or session overlay close closes it.") var chromeless = false
+            @Flag(name: .long, help: Open.persistentHelp) var persistent = false
             @Option(name: .long, help: """
                 Working directory (default: the session's current directory). With --html, grants read access \
                 inside this directory; relative links resolve beside FILE. Without --cwd, the page has no file access.
@@ -593,6 +597,9 @@ struct Session: ParsableCommand {
                 if command == nil, wait || (url != nil && block) { throw ValidationError("a page takes no --wait, and a --url page no --block") }
                 if navigation, command != nil { throw ValidationError("--navigation requires --html or --url") }
                 if javascript, command != nil { throw ValidationError("--js requires --html or --url") }
+                if chromeless, html == nil { throw ValidationError("--chromeless requires --html") }
+                if chromeless, navigation { throw ValidationError("--chromeless cannot be combined with --navigation") }
+                if persistent, url == nil { throw ValidationError("--persistent requires --url") }
                 if url != nil, cwd != nil { throw ValidationError("--cwd cannot be combined with --url") }
                 if let backgroundColor, !WatermarkConfig.isValidColorHex(backgroundColor) {
                     throw ValidationError("background-color must be a #rrggbb hex value")
@@ -612,15 +619,7 @@ struct Session: ParsableCommand {
                                                                      pane: pane, color: backgroundColor,
                                                                      html: html.map(Overlay.absolutePath),
                                                                      navigation: navigation ? true : nil, url: url,
-                                                                     javascript: javascript ? true : nil)))
-            }
-
-            /// The `--block` poll request. Extracted from `run()` so the `--pane` forwarding is assertable
-            /// without a live socket: polling a pane overlay with no pane reads the session-wide slot and
-            /// blocks forever. No window scope — the returned id is globally unique and resolves cross-window,
-            /// so a frontmost-window change during the run cannot make the poll miss the session.
-            func resultRequest(id: String) -> ControlRequest {
-                ControlRequest(cmd: .sessionOverlayResult, target: id, args: pane.map { ControlArgs(pane: $0) })
+                                                                     javascript: javascript ? true : nil, chromeless: chromeless ? true : nil, persistent: persistent ? true : nil)))
             }
 
             func run() throws {

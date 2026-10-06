@@ -11,8 +11,9 @@ The user's own key order is replaced by alphabetical, indentation is normalized,
 (`0.1` becomes `0.10000000000000001`, `1e3` becomes `1000`). No key is dropped, and a file carrying `//`
 comments is refused by `parsedObject` rather than silently stripped.
 
-Today this fires once, on first install: a re-run finds the hooks already present and early-returns
-`existing` verbatim with `changed == false`, so nobody sees a second rewrite. Any future change that makes
+This fires on first install and once more for an install still carrying a historical generated command,
+which the adapter migration rewrites; any other re-run finds the hooks already present and early-returns
+`existing` verbatim with `changed == false`. Any future change that makes
 the merge report `changed` on an already-installed file turns it into a rewrite every affected user gets.
 
 Not worth fixing as it stands. `AgentHooksInstaller.mergeClaudeSettings` writes a `.bak` first, the write

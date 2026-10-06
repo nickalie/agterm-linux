@@ -446,12 +446,13 @@ struct SocketClient {
             let mark = action.overridden == true ? "*" : " "
             let name = action.action.padding(toLength: max(width, action.action.count), withPad: " ", startingAt: 0)
             let binds = ((action.chord.map { [$0] } ?? []) + (action.alternates ?? [])).joined(separator: "|")
-            lines.append("  \(mark) \(name)  \(binds.isEmpty ? "-" : binds)")
+            lines.append("  \(mark) \(name)  \(binds.isEmpty ? "-" : binds)\(action.repeats == true ? "  --repeat" : "")")
         }
         if !keymap.commands.isEmpty {
             lines.append(contentsOf: ["", "commands:"])
             lines.append(contentsOf: keymap.commands.map { command in
                 var row = "    \(command.name)  \(command.shortcut ?? "(palette only)")"
+                if command.repeats { row += "  --repeat" }
                 if command.errorHud {
                     row += "  --error-hud --error-position \(command.errorPosition.rawValue)"
                     if let pane = command.errorPane { row += " --error-pane \(pane.rawValue)" }

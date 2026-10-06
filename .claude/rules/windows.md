@@ -43,6 +43,12 @@ session drag are out of scope.
 - State lives under `AGTERM_STATE_DIR` or Application Support: `windows.json` plus
   `windows/<uuid>.json`. Legacy `workspaces.json` remains dormant after migration. `PersistenceStore.fileName`
   defaults to `workspaces.json`; index and window mutations save only their own files.
+- A failed `windows.json` write sets `WindowLibrary.indexUnsaved`, which the tree reports and which
+  clears only on an index write that lands. While it stands, each snapshot save that lands retries the
+  index (`AppStore.snapshotDidSave`), and the exit flush writes it through `saveAllChecked`, ahead of
+  arming a Live reset. It does not recover a crash with no later write: a valid index that names no
+  entry for a window still short-circuits bootstrap past the orphan scan, which stays index-loss only
+  because scanning after a clean load can resurrect a window whose snapshot removal failed.
 - Bootstrap never throws. Load a valid index; otherwise recover every UUID-named per-window file before
   considering legacy migration or an empty seed. Recovered files are appended before `loadStore`, named
   `window N`, all opened, and the first made frontmost. Missing/corrupt window snapshots open with a
@@ -64,9 +70,10 @@ session drag are out of scope.
   [[settings]] for that contract.
 - `AppActions`, commands, palette construction, `ControlServer`, `SettingsModel`, and `SessionSwitcher`
   resolve through observable `WindowLibrary.activeStore`: frontmost open store, then first open store.
-- On termination, set `isTerminating` before windows close, then `saveAllOpen` and `saveIndex`. This preserves
-  live cwd changes, which structural saves may not capture. Selection and font use a roughly 0.3-second
-  `Debouncer`; structural mutations save synchronously and cancel pending saves.
+- On termination, set `isTerminating` before windows close, then `saveAllChecked` writes every open
+  store and the index. This preserves live cwd changes, which structural saves may not capture.
+  Selection and font use a roughly 0.3-second `Debouncer`; structural mutations save synchronously and
+  cancel pending saves.
 - Quit uses `applicationShouldTerminate` and a warning alert with host-free `openCounts` and
   `QuitPrompt.message`, which takes the launch decision's active restore mode:
   Live drops the shell clause and promises no reattachment.

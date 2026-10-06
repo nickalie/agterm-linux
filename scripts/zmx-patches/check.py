@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""drive two managed zmx attach clients on ptys of different sizes against one daemon."""
+"""drive managed zmx attach clients on ptys of different sizes against one daemon."""
 import fcntl
 import os
 import pty
@@ -110,6 +110,18 @@ def main():
 
         missing = cli("screen", "no-such-session")
         ok &= check("screen on a missing session fails", missing.returncode != 0)
+
+        # a re-attach replayed a cursor-skipped gap under the previous cell's style
+        cli("type", NAME, stdin=b"clear; printf '\\033[41mab\\033[5Gc\\033[0m\\n\\033[41mab  c\\033[0m\\n'\r")
+        time.sleep(0.7)
+        p3, f3 = attach("viewer-3", 40, 120, claim=False)
+        pids.append(p3)
+        replay = drain(f3, 2.0)
+        red = b"\x1b[48;5;1m"
+        ok &= check("a replayed gap the program skipped is unstyled and the run resumes after it",
+                    red + b"ab\x1b[0m  \x1b[0m" + red + b"c\x1b[0m" in replay, repr(replay[-300:]))
+        ok &= check("replayed spaces the program wrote keep their style",
+                    red + b"ab  c\x1b[0m" in replay, repr(replay[-300:]))
     finally:
         cli("kill", NAME, "--force")
         for pid in pids:

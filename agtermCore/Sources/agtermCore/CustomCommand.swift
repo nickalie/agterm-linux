@@ -16,9 +16,12 @@ public struct CustomCommand: Codable, Equatable, Sendable, Identifiable {
     public var errorHud: Bool
     public var errorPosition: HudPosition
     public var errorPane: OverlayPane?
+    /// `--repeat`: a leader shortcut stays live for another press of its last chord after firing.
+    public var repeats: Bool
 
     public init(id: UUID = UUID(), name: String, command: String, shortcut: String,
-                errorHud: Bool = false, errorPosition: HudPosition = .defaultPosition, errorPane: OverlayPane? = nil) {
+                errorHud: Bool = false, errorPosition: HudPosition = .defaultPosition, errorPane: OverlayPane? = nil,
+                repeats: Bool = false) {
         self.id = id
         self.name = name
         self.command = command
@@ -26,10 +29,11 @@ public struct CustomCommand: Codable, Equatable, Sendable, Identifiable {
         self.errorHud = errorHud
         self.errorPosition = errorPosition
         self.errorPane = errorPane
+        self.repeats = repeats
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, command, shortcut, errorHud, errorPosition, errorPane
+        case id, name, command, shortcut, errorHud, errorPosition, errorPane, repeats
     }
 
     public init(from decoder: Decoder) throws {
@@ -41,6 +45,7 @@ public struct CustomCommand: Codable, Equatable, Sendable, Identifiable {
         errorHud = try values.decodeIfPresent(Bool.self, forKey: .errorHud) ?? false
         errorPosition = try values.decodeIfPresent(HudPosition.self, forKey: .errorPosition) ?? .defaultPosition
         errorPane = try values.decodeIfPresent(OverlayPane.self, forKey: .errorPane)
+        repeats = try values.decodeIfPresent(Bool.self, forKey: .repeats) ?? false
     }
 }
 

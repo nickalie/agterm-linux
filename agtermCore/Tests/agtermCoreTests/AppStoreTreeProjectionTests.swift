@@ -6,6 +6,35 @@ import Testing
 // reports. Split out of `AppStoreTests.swift` for the file size limit.
 @MainActor
 struct AppStoreTreeProjectionTests {
+    @Test func controlTreeReportsEachSurfacesPaneIDAndFollowsASwap() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.surface = SpySurface(paneToken: "one")
+        session.hasSplit = true
+        session.isSplit = true
+        session.splitPaneIdentity = UUID()
+        session.splitSurface = SpySurface()
+        func paneIDs() -> [String: String?] {
+            let surfaces = store.controlTree().workspaces[0].sessions[0].surfaces ?? []
+            return Dictionary(uniqueKeysWithValues: surfaces.map { ($0.kind, $0.paneID) })
+        }
+        #expect(paneIDs() == ["left": "one", "right": nil])
+
+        #expect(store.swapPanes(session.id) == nil)
+
+        #expect(paneIDs() == ["left": nil, "right": "one"])
+    }
+
+    @Test func surfaceNodeEncodesItsPaneIDAndOmitsAnAbsentOne() throws {
+        func json(_ paneID: String?) throws -> String {
+            String(decoding: try JSONEncoder().encode(ControlSurfaceNode(
+                id: "s", kind: "left", active: true, visible: true, backedByZmx: true, paneID: paneID)), as: UTF8.self)
+        }
+        #expect(try json("tok").contains(#""paneID":"tok""#))
+        #expect(try !json(nil).contains("paneID"))
+    }
+
     @Test(arguments: [SessionHost.Attribution.supervisor, .app, .orphaned, .unknown])
     func liveAttributionProjectsBothPanesIncludingHiddenSplits(_ attribution: SessionHost.Attribution) throws {
         let store = makeStore()
@@ -577,27 +606,35 @@ struct AppStoreTreeProjectionTests {
         #expect(store.controlTree().workspaces[0].sessions[0].htmlOverlays == nil)
 
         let wide = HtmlOverlay(source: .file(path: "/tmp/a/wide.html", grantRoot: "/tmp/a"), navigation: true, javascript: true)
-        let right = HtmlOverlay(source: .url(try #require(URL(string: "http://localhost:5173/"))))
+        let right = HtmlOverlay(source: .url(try #require(URL(string: "http://localhost:5173/"))), persistent: true)
+        let left = HtmlOverlay(source: .file(path: "/tmp/a/bare.html", grantRoot: nil), chromeless: true)
         #expect(store.openHtmlOverlay(session.id, pane: nil, overlay: wide, sizePercent: 70) == nil)
         #expect(store.openHtmlOverlay(session.id, pane: .right, overlay: right, sizePercent: nil) == nil)
+        #expect(store.openHtmlOverlay(session.id, pane: .left, overlay: left, sizePercent: nil) == nil)
         store.setHtmlLoadState(right.id, state: .failed, error: "not found")
         store.setHtmlPage(wide.id, HtmlPageInfo(page: "/tmp/a/second.html", title: "Second", canGoBack: true, canGoForward: false))
 
         let node = store.controlTree().workspaces[0].sessions[0]
         #expect(node.overlay)
         #expect(node.overlaySizePercent == 70)
-        #expect(node.paneOverlays == ["right"])
+        #expect(node.paneOverlays == ["left", "right"])
         #expect(node.htmlOverlays == [
             ControlHtmlOverlayNode(pane: nil, file: "/tmp/a/wide.html", cwd: "/tmp/a", state: "loading", error: nil,
                                    page: "/tmp/a/second.html", title: "Second", canGoBack: true, canGoForward: false,
                                    navigation: true, javascript: true, id: wide.id.uuidString),
+            ControlHtmlOverlayNode(pane: "left", file: "/tmp/a/bare.html", state: "loading", error: nil, chromeless: true,
+                                   id: left.id.uuidString),
             ControlHtmlOverlayNode(pane: "right", url: "http://localhost:5173/", state: "failed", error: "not found",
-                                   javascript: false, id: right.id.uuidString),
+                                   javascript: false, id: right.id.uuidString, persistent: true),
         ])
         let decoded = try JSONDecoder().decode(ControlTree.self, from: JSONEncoder().encode(store.controlTree()))
         #expect(decoded.workspaces[0].sessions[0] == node)
         let json = String(decoding: try JSONEncoder().encode(node.htmlOverlays), as: UTF8.self)
         #expect(json.contains(#""javascript":false"#))
+        #expect(json.contains(#""chromeless":false"#))
+        #expect(json.contains(#""chromeless":true"#))
+        #expect(json.contains(#""persistent":false"#))
+        #expect(json.contains(#""persistent":true"#))
     }
 
     @Test func htmlOverlaysReportTheAppZoom() throws {

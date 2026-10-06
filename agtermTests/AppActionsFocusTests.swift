@@ -120,6 +120,24 @@ final class AppActionsFocusTests: XCTestCase {
         return session
     }
 
+    // with agterm inactive no didBecomeKey reconciles the sidebars, so the restored window stayed collapsed
+    func testReopeningShowsTheOwnerWindowsSidebarUnderAutoHide() throws {
+        let pair = try makePair()
+        let session = try XCTUnwrap(pair.backStore.addSession(toWorkspace: pair.backStore.workspaces[0].id,
+                                                              cwd: NSTemporaryDirectory()))
+        GhosttyApp.shared.setAutoHideSidebarInactiveWindows(true)
+        defer { GhosttyApp.shared.setAutoHideSidebarInactiveWindows(false) }
+        pair.library.applyInactiveWindowSidebarHiding()
+        XCTAssertFalse(pair.backStore.sidebarVisible)
+        XCTAssertTrue(pair.backStore.softCloseSession(session.id, grace: 60))
+
+        pair.actions.openLatestRecentClosed()
+
+        XCTAssertEqual(pair.library.frontmostWindowID, pair.back)
+        XCTAssertTrue(pair.backStore.sidebarVisible)
+        XCTAssertEqual(pair.library.store(for: pair.front)?.sidebarVisible, false)
+    }
+
     func testAttentionPickRaisesTheOwningWindowAndSelectsThere() throws {
         let pair = try makePair()
         let session = try addSession(to: pair.backStore, AgentIndicator(status: .blocked))

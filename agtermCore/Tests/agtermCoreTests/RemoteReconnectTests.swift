@@ -51,6 +51,43 @@ struct RemoteReconnectBookTests {
         #expect(book.due(now: t0.addingTimeInterval(3)) == [pane])
     }
 
+    @Test func aLinkLostSoonAfterAttachingCountsInTheStreakBeforeAnyProbeFails() throws {
+        let book = waiting()
+        _ = book.due(now: t0)
+        _ = book.finished(pane: pane, ok: false, now: t0)
+        _ = book.due(now: t0.addingTimeInterval(1))
+        _ = try #require(book.finished(pane: pane, ok: true, now: t0.addingTimeInterval(1)))
+
+        book.wait(pane: pane, session: session, host: "mini", cover: false, now: t0.addingTimeInterval(2))
+
+        #expect(book.readback(pane: pane) == ControlReconnect(failures: 2, reason: nil))
+    }
+
+    @Test func aFailedProbeKeepsWhatSshSaidLastAndAQuietOneClearsIt() {
+        let book = waiting()
+        #expect(book.readback(pane: pane) == ControlReconnect(failures: 0, reason: nil))
+        _ = book.due(now: t0)
+        let stderr = "Warning: Permanently added 'mini'\n\u{1b}[31mHost key verification failed.\r\n\n"
+        _ = book.finished(pane: pane, ok: false, stderr: stderr, now: t0)
+        #expect(book.readback(pane: pane) == ControlReconnect(failures: 1, reason: "[31mHost key verification failed."))
+
+        _ = book.due(now: t0.addingTimeInterval(1))
+        _ = book.finished(pane: pane, ok: false, stderr: " \n", now: t0.addingTimeInterval(1))
+        #expect(book.readback(pane: pane) == ControlReconnect(failures: 2, reason: nil))
+    }
+
+    @Test func theReasonIsCappedAndGoesWithTheWait() throws {
+        let book = waiting()
+        _ = book.due(now: t0)
+        _ = book.finished(pane: pane, ok: false, stderr: String(repeating: "x", count: 500), now: t0)
+        #expect(book.readback(pane: pane)?.reason?.count == RemoteReconnectBook.reasonLimit)
+
+        _ = book.due(now: t0.addingTimeInterval(1))
+        _ = try #require(book.finished(pane: pane, ok: true, now: t0.addingTimeInterval(1)))
+        #expect(book.readback(pane: pane) == nil)
+        #expect(book.readback(pane: nil) == nil)
+    }
+
     @Test func aProbeThatAnswersEndsTheWaitAndCarriesTheCover() throws {
         let book = waiting(cover: true)
         _ = book.due(now: t0)
@@ -72,6 +109,47 @@ struct RemoteReconnectBookTests {
         #expect(book.due(now: later) == [pane])
         book.retryNow(pane: pane, now: later)
         #expect(book.due(now: later).isEmpty)
+    }
+
+    @Test func retryAllNowMakesEveryWaitingPaneDueAndStartsItsBackoffOver() {
+        let book = RemoteReconnectBook()
+        let other = UUID()
+        book.wait(pane: pane, session: session, host: "mini", cover: false, now: t0)
+        book.wait(pane: other, session: session, host: "mini", cover: false, now: t0)
+        var now = t0
+        for step in 0..<9 {
+            now = t0.addingTimeInterval(Double(step) * 400)
+            _ = book.due(now: now)
+            _ = book.finished(pane: pane, ok: false, now: now)
+            _ = book.finished(pane: other, ok: false, now: now)
+        }
+        let later = now.addingTimeInterval(200)
+        #expect(book.due(now: later).isEmpty, "nine failures in a row: minutes until the next probe")
+
+        book.retryAllNow(now: later)
+
+        #expect(Set(book.due(now: later)) == [pane, other])
+        _ = book.finished(pane: pane, ok: false, now: later)
+        #expect(book.due(now: later.addingTimeInterval(1)) == [pane], "a retry that failed ramps from one second again")
+    }
+
+    @Test func aRetryDuringAProbeStillStartsTheBackoffOverWhenThatProbeFails() {
+        let book = RemoteReconnectBook()
+        book.wait(pane: pane, session: session, host: "mini", cover: false, now: t0)
+        var now = t0
+        for step in 0..<5 {
+            now = t0.addingTimeInterval(Double(step) * 100)
+            _ = book.due(now: now)
+            _ = book.finished(pane: pane, ok: false, now: now)
+        }
+        let probing = now.addingTimeInterval(100)
+        #expect(book.due(now: probing) == [pane])
+
+        book.retryAllNow(now: probing)
+
+        #expect(book.due(now: probing).isEmpty, "the running probe is not started twice")
+        _ = book.finished(pane: pane, ok: false, now: probing)
+        #expect(book.due(now: probing.addingTimeInterval(1)) == [pane], "its failure ramps from one second again")
     }
 
     @Test func aCancelledPanesProbeResultIsDropped() {

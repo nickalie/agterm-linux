@@ -69,9 +69,9 @@ final class AppStoreEventTests {
         )))
 
         #expect(batch.run == anchor.run)
-        #expect(batch.items.map(\.seq) == [1, 2, 3, 4, 5])
+        #expect(batch.items.map(\.seq) == [1, 2, 3, 4, 5, 6])
         #expect(batch.items.map(\.kind) == [
-            .status, .sessionCreated, .sessionClosed, .sessionCreated, .sessionCreated,
+            .status, .sessionCreated, .sessionSelected, .sessionClosed, .sessionCreated, .sessionCreated,
         ])
     }
 
@@ -736,6 +736,101 @@ final class AppStoreEventTests {
         )))
         #expect(batch.items.isEmpty)
         #expect(store.session(withID: remote.id) != nil)
+    }
+
+    private func selections(_ library: WindowLibrary, after anchor: ControlEventBatch) throws -> [ControlEvent] {
+        try eventBatch(library.readEvents(ControlEventReadOptions(
+            cursor: ControlEventCursor(run: anchor.run, after: anchor.next),
+            kinds: [.sessionCreated, .sessionClosed, .sessionSelected], limit: 100
+        ))).items
+    }
+
+    @Test func selectingAnotherSessionEmitsItWithTheOneThatLostTheSelection() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let first = try #require(store.activeSession)
+        let second = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", name: "api", select: false))
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.selectSession(second.id)
+        store.selectSession(second.id)
+        store.selectSession(nil)
+
+        let events = try selections(library, after: anchor)
+        #expect(events.map(\.kind) == [.sessionSelected, .sessionSelected])
+        #expect(events[0].session == second.id.uuidString)
+        #expect(events[0].workspace == workspace.id.uuidString)
+        #expect(events[0].payload == ControlEventPayload(name: "api", previous: first.id.uuidString))
+        #expect(events[1].session == nil)
+        #expect(events[1].payload == ControlEventPayload(previous: second.id.uuidString))
+    }
+
+    @Test func aSelectedAddIsCreatedBeforeItIsSelectedAndABackgroundAddSelectsNothing() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let first = try #require(store.activeSession)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        let added = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        _ = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", select: false))
+
+        let events = try selections(library, after: anchor)
+        #expect(events.map(\.kind) == [.sessionCreated, .sessionSelected, .sessionCreated])
+        #expect(events[1].session == added.id.uuidString)
+        #expect(events[1].payload.previous == first.id.uuidString)
+    }
+
+    @Test func closingTheSelectedSessionEmitsTheReselection() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let first = try #require(store.activeSession)
+        let added = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.closeSession(added.id)
+
+        let events = try selections(library, after: anchor)
+        #expect(events.map(\.kind) == [.sessionClosed, .sessionSelected])
+        #expect(events[1].session == first.id.uuidString)
+        #expect(events[1].payload.previous == added.id.uuidString)
+    }
+
+    @Test func reloadingAStoreFromItsSnapshotSelectsNothing() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        _ = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        let snapshot = store.snapshot()
+        store.selectSession(workspace.sessions.first?.id)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.restore(from: snapshot)
+
+        #expect(try selections(library, after: anchor).filter { $0.kind == .sessionSelected }.isEmpty)
+        #expect(store.selectedSessionID == snapshot.selectedSessionID)
+    }
+
+    // restore's closing repair of a hidden selection went through selectSession after the suppression ended
+    @Test func reloadingAFlaggedViewRepairsAHiddenSelectionWithoutSelecting() throws {
+        let library = WindowLibrary(directory: directory, controlEventRing: ControlEventRing(runID: run))
+        let store = try #require(library.activeStore)
+        let workspace = try #require(store.workspaces.first)
+        let flagged = try #require(store.activeSession)
+        let plain = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", select: false))
+        store.setFlag(true, forSession: flagged.id)
+        store.setSidebarMode(.flagged)
+        store.selectSession(plain.id)
+        let snapshot = store.snapshot()
+        #expect(snapshot.selectedSessionID == plain.id)
+        let anchor = try eventBatch(library.readEvents(ControlEventReadOptions(cursor: nil, kinds: nil, limit: 100)))
+
+        store.restore(from: snapshot)
+
+        #expect(store.selectedSessionID == flagged.id)
+        #expect(try selections(library, after: anchor).filter { $0.kind == .sessionSelected }.isEmpty)
     }
 
     private func eventBatch(_ response: ControlResponse) throws -> ControlEventBatch {

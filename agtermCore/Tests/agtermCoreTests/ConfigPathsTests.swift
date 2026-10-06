@@ -58,8 +58,8 @@ struct ConfigPathsTests {
     @Test func starterKeymapConfIsCommentedAndListsActions() {
         let starter = ConfigPaths.starterKeymapConf()
         #expect(starter.contains("agterm keymap — a kitty-flavored config"))
-        #expect(starter.contains("map <chord> <action>"))
-        #expect(starter.contains("command \"<name>\" [chord] <shell...>"))
+        #expect(starter.contains("map <chord> [--repeat] <action>"))
+        #expect(starter.contains("command \"<name>\" [chord] [--repeat] <shell...>"))
         #expect(starter.contains("single chord OR a leader like `ctrl+a>g`"))
         #expect(starter.contains("command \"Open in Zed\"  cmd+shift+e  open -a Zed \"$AGT_SESSION_PWD\""))
         #expect(starter.contains("command \"Lazygit\"      ctrl+a>g     agtermctl session overlay open 'zsh -lc lazygit' --target \"$AGT_SESSION_ID\" --socket \"$AGT_SOCKET\""))

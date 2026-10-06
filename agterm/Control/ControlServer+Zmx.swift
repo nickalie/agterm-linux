@@ -89,6 +89,17 @@ extension ControlServer {
                                             liveReset: liveResetReadback(), outdatedBefore: zmxOutdatedBefore)
         return ControlResponse(ok: true, result: ControlResult(zmx: inventory))
     }
+
+    /// readZmxScreen answers `zmx.screen` at the daemon's last leader's grid; it attaches nothing.
+    func readZmxScreen(name: String, fullBuffer: Bool, lines: Int?) -> ControlResponse {
+        guard let client = zmxClient else {
+            return ControlResponse(ok: false, error: ControlZmxError.unavailable)
+        }
+        guard let screen = client.screen(name: name, all: fullBuffer) else {
+            return ControlResponse(ok: false, error: "could not read the zmx screen of \(name)")
+        }
+        return ControlResponse(ok: true, result: ControlResult(text: lines.map(screen.lastLines) ?? screen.text))
+    }
 }
 
 extension ControlServer {

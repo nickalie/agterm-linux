@@ -38,7 +38,9 @@ ZMX_STAMP_FILE=".zmx-build-stamp"
 # applied in name order over the plain pin; scripts/zmx-patches/README.md says what each one is for.
 # The stamp carries their digest, so editing a patch rebuilds zmx exactly as a ZMX_REV change does.
 ZMX_PATCH_DIR="scripts/zmx-patches"
-ZMX_PATCH_DIGEST="$(cat "$ZMX_PATCH_DIR"/*.patch | shasum -a 256 | cut -c1-16)"
+# patches for the ghostty revision zmx itself pins, applied to a private copy of it
+ZMX_GHOSTTY_PATCH_DIR="$ZMX_PATCH_DIR/ghostty"
+ZMX_PATCH_DIGEST="$(cat "$ZMX_PATCH_DIR"/*.patch "$ZMX_GHOSTTY_PATCH_DIR"/*.patch | shasum -a 256 | cut -c1-16)"
 ZMX_STAMP="$ZMX_REV $ZMX_TARGET $ZMX_PATCH_DIGEST"
 
 # stage agterm's own bundled theme(s) from the committed source into the (gitignored,
@@ -176,6 +178,22 @@ if $need_zmx; then
   git -C "$zmx_build" remote add origin "$ZMX_REPO"
   git -C "$zmx_build" fetch -q --depth 1 origin "$ZMX_REV"
   git -C "$zmx_build" -c advice.detachedHead=false checkout -q FETCH_HEAD
+
+  # zmx takes ghostty as a zig package. Its patches go on a private checkout of the revision zmx pins,
+  # read before the zmx patches repoint the dependency there, so the shared zig cache is never edited.
+  zmx_ghostty_rev="$(sed -n 's|.*ghostty-org/ghostty#\([0-9a-f]\{40\}\)".*|\1|p' "$zmx_build/build.zig.zon")"
+  [[ -n "$zmx_ghostty_rev" ]] || { echo "error: no ghostty revision in zmx build.zig.zon" >&2; exit 1; }
+  zmx_ghostty="$BUILD_DIR/zmx-ghostty"
+  echo "fetching zmx's ghostty $zmx_ghostty_rev..."
+  git init -q "$zmx_ghostty"
+  git -C "$zmx_ghostty" remote add origin "$GHOSTTY_REPO"
+  git -C "$zmx_ghostty" fetch -q --depth 1 origin "$zmx_ghostty_rev"
+  git -C "$zmx_ghostty" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  for ghostty_patch in "$ZMX_GHOSTTY_PATCH_DIR"/*.patch; do
+    echo "applying ghostty/$(basename "$ghostty_patch")..."
+    git -C "$zmx_ghostty" apply --whitespace=nowarn "$PWD/$ghostty_patch"
+  done
+
   for zmx_patch in "$ZMX_PATCH_DIR"/*.patch; do
     echo "applying $(basename "$zmx_patch")..."
     git -C "$zmx_build" apply --whitespace=nowarn "$PWD/$zmx_patch"
