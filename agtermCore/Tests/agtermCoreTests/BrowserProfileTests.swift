@@ -68,7 +68,8 @@ struct BrowserProfileTests {
     }
 
     // a lookup that fails for lack of search permission is not a missing profile
-    @Test func aProfileBehindAnUnsearchableDirectoryIsAnErrorNotAMissingProfile() throws {
+    @Test(.disabled(if: geteuid() == 0, "root bypasses search permission"))
+    func aProfileBehindAnUnsearchableDirectoryIsAnErrorNotAMissingProfile() throws {
         let dir = try Self.directory()
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
