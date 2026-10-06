@@ -269,14 +269,14 @@ final class GhosttySurface: PaneRoleMutableSurface {
 
     /// Inject text as keystrokes (the control channel's session.type): printable runs go
     /// as key-with-text, each newline as a Return keypress (keycode 36 = XKB Return). NOT
-    /// ghostty_surface_text, whose bracketed-paste wrapping suppresses Enter. The final Return after text
-    /// waits `KeystrokeSegments.submitGap`.
+    /// ghostty_surface_text, whose bracketed-paste wrapping suppresses Enter.
     func inject(text: String) {
         guard let surface else { return }
-        // Split into printable runs + Return keys via the shared segmenter (one typing policy for both
-        // platforms); send each run as text and each line break as a real Return key press.
+        // the shared segmenter's runs and Returns; the final Return after text waits `submitGap`, blocking,
+        // since a deferred one could be overtaken by another injection or a keystroke
         let paced = KeystrokeSegments.paced(text)
-        for segment in paced.head {
+        for (index, segment) in (paced.head + (paced.pacedReturn ? [.returnKey] : [])).enumerated() {
+            if index == paced.head.count { Thread.sleep(forTimeInterval: KeystrokeSegments.submitGap) }
             switch segment {
             case .text(let run):
                 run.withCString { ptr in
@@ -286,23 +286,14 @@ final class GhosttySurface: PaneRoleMutableSurface {
                     _ = ghostty_surface_key(surface, ke)
                 }
             case .returnKey:
-                Self.sendReturn(to: surface)
+                var ke = ghostty_input_key_s()
+                ke.keycode = 36   // Return (XKB)
+                ke.action = GHOSTTY_ACTION_PRESS
+                _ = ghostty_surface_key(surface, ke)
+                ke.action = GHOSTTY_ACTION_RELEASE
+                _ = ghostty_surface_key(surface, ke)
             }
         }
-        if paced.pacedReturn {
-            // blocking, not scheduled: a deferred Return could be overtaken by another injection or a keystroke
-            Thread.sleep(forTimeInterval: KeystrokeSegments.submitGap)
-            Self.sendReturn(to: surface)
-        }
-    }
-
-    private static func sendReturn(to surface: ghostty_surface_t) {
-        var ke = ghostty_input_key_s()
-        ke.keycode = 36   // Return (XKB)
-        ke.action = GHOSTTY_ACTION_PRESS
-        _ = ghostty_surface_key(surface, ke)
-        ke.action = GHOSTTY_ACTION_RELEASE
-        _ = ghostty_surface_key(surface, ke)
     }
 
     /// Feed raw bytes into the terminal as if read from the pty — used to push theme colors (OSC 11/10/4/…)
