@@ -347,20 +347,14 @@ private let onControlPickRow: @MainActor @convention(c)
     }
 
 private let onControlPickKey: @MainActor @convention(c)
-    (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, _, _ in
-        switch keyval {
-        case 0xFF1B:
+    (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, state, _ in
+        if keyval == 0xFF1B {
             MainActor.assumeIsolated { controllerForEventController(keys)?.cancelControlPick() }
             return 1
-        case 0xFF52:
-            MainActor.assumeIsolated { controllerForEventController(keys)?.moveControlPick(down: false) }
-            return 1
-        case 0xFF54:
-            MainActor.assumeIsolated { controllerForEventController(keys)?.moveControlPick(down: true) }
-            return 1
-        default:
-            return 0
         }
+        guard let step = paletteSelectionStep(keyval: keyval, state: state) else { return 0 }
+        MainActor.assumeIsolated { controllerForEventController(keys)?.moveControlPick(down: step > 0) }
+        return 1
     }
 
 private let onControlPickCloseRequest: @MainActor @convention(c)

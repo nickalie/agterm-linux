@@ -37,6 +37,22 @@ private let GDK_CONTROL: UInt32 = 1 << 2
 private let GDK_ALT: UInt32 = 1 << 3
 private let GDK_SUPER: UInt32 = 1 << 26
 
+/// The selection step a palette, theme picker or `pick` list takes for a key: the arrows, or ctrl+j and
+/// ctrl+k with control alone held. Nil passes the key on to the search entry.
+func paletteSelectionStep(keyval: UInt32, state: UInt32) -> Int? {
+    switch keyval {
+    case 0xFF52: return -1
+    case 0xFF54: return 1
+    default: break
+    }
+    guard state & (GDK_SHIFT | GDK_CONTROL | GDK_ALT | GDK_SUPER) == GDK_CONTROL else { return nil }
+    switch keyval {
+    case 0x006A, 0x004A: return 1    // j, J (caps lock)
+    case 0x006B, 0x004B: return -1   // k, K
+    default: return nil
+    }
+}
+
 /// Apply upstream agterm's per-layout shortcut policy to Linux XKB keycodes: ASCII-capable layouts
 /// keep their produced base character; every key on a non-ASCII layout resolves by physical position.
 func linuxShortcutKey(keycode: UInt32, produced: String?, layoutIsASCIICapable: Bool) -> String? {

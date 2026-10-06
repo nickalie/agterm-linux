@@ -204,3 +204,25 @@ struct PalettePresentationTests {
         rows.map { (row: $0, run: {}) }
     }
 }
+
+@Suite("Linux palette selection keys")
+struct PaletteSelectionStepTests {
+    private let control: UInt32 = 1 << 2
+    private let shift: UInt32 = 1 << 0
+    private let numLock: UInt32 = 1 << 4
+
+    @Test("the arrows and control alone with j or k move the selection")
+    func steps() {
+        #expect(paletteSelectionStep(keyval: 0xFF52, state: 0) == -1)
+        #expect(paletteSelectionStep(keyval: 0xFF54, state: 0) == 1)
+        #expect(paletteSelectionStep(keyval: 0x6A, state: control) == 1)
+        #expect(paletteSelectionStep(keyval: 0x6B, state: control | numLock) == -1)
+        #expect(paletteSelectionStep(keyval: 0x4A, state: control) == 1)
+    }
+
+    @Test("j and k without control alone stay query text")
+    func typing() {
+        #expect(paletteSelectionStep(keyval: 0x6A, state: 0) == nil)
+        #expect(paletteSelectionStep(keyval: 0x4B, state: control | shift) == nil)
+    }
+}

@@ -355,13 +355,11 @@ private let onPaletteActivate: @MainActor @convention(c) (OpaquePointer?, gpoint
 private let onPaletteRow: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { list, row, _ in
     MainActor.assumeIsolated { controllerForWidget(list)?.runPaletteRow(row) }
 }
-private let onPaletteKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, _, _ in
-    switch keyval {
-    case 0xFF1B: MainActor.assumeIsolated { controllerForEventController(keys)?.closePalette() }; return 1
-    case 0xFF52: MainActor.assumeIsolated { controllerForEventController(keys)?.paletteMove(down: false) }; return 1
-    case 0xFF54: MainActor.assumeIsolated { controllerForEventController(keys)?.paletteMove(down: true) }; return 1
-    default: return 0
-    }
+private let onPaletteKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, state, _ in
+    if keyval == 0xFF1B { MainActor.assumeIsolated { controllerForEventController(keys)?.closePalette() }; return 1 }
+    guard let step = paletteSelectionStep(keyval: keyval, state: state) else { return 0 }
+    MainActor.assumeIsolated { controllerForEventController(keys)?.paletteMove(down: step > 0) }
+    return 1
 }
 private let onPaletteDestroyed: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, data in
     guard let data else { return }
