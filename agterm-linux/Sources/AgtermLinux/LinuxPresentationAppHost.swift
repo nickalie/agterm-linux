@@ -149,6 +149,7 @@ extension GhosttySurface {
         if let session = controller?.store.session(withID: sessionID), session.surface === self || session.splitSurface === self,
            let pane = leadPaneIdentity {
             RemoteReconnectBook.shared.cancel(pane: pane)
+            LinuxPaneLeadCover.syncAll()
         }
         leadExitHeld()
         guard let controller, let session = controller.store.session(withID: sessionID) else { return }

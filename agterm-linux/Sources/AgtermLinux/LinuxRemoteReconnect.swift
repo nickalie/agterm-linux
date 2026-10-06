@@ -23,15 +23,18 @@ extension LinuxPresentationService {
             guard let entry = book.entries[pane], waitingSurface(pane, in: entry.session) != nil,
                   let argv = try? RemoteSession.probeCommand(host: entry.host) else {
                 book.cancel(pane: pane)
+                LinuxPaneLeadCover.syncAll()
                 continue
             }
-            probe(argv) { [weak self] answered in self?.probeFinished(pane, answered: answered) }
+            probe(argv) { [weak self] answered, stderr in self?.probeFinished(pane, answered: answered, stderr: stderr) }
         }
     }
 
-    private func probeFinished(_ pane: UUID, answered: Bool) {
+    private func probeFinished(_ pane: UUID, answered: Bool, stderr: String) {
         let book = RemoteReconnectBook.shared
-        guard let entry = book.finished(pane: pane, ok: answered, now: clock()),
+        let entry = book.finished(pane: pane, ok: answered, stderr: stderr, now: clock())
+        LinuxPaneLeadCover.syncAll()   // the reconnect note names the failed probe's reason
+        guard let entry,
               let surface = waitingSurface(pane, in: entry.session) else { return }
         // a row hidden for undo keeps waiting; finalizing its close lets the next due probe drop it
         guard let store = store(forSession: entry.session), reattach(surface, entry.cover) else {
@@ -41,13 +44,26 @@ extension LinuxPresentationService {
         store.remotePaneResumed(pane, forSession: entry.session)
     }
 
-    /// runProbe is the default `probe`: one ssh round trip on a worker thread, answered on the GTK thread.
-    static func runProbe(_ argv: [String], done: @escaping @MainActor (Bool) -> Void) {
+    /// Every waiting pane and dropped stream retries now, not on its backoff.
+    func retryRemoteLinksNow() {
+        RemoteReconnectBook.shared.retryAllNow(now: clock())
+        for client in remoteClients.values {
+            client.retryNow()
+            client.tick()
+        }
+        tickReconnects()
+    }
+
+    /// runProbe is the default `probe`: one ssh round trip on a worker thread, answered on the GTK thread
+    /// with whether the host answered and what ssh said.
+    static func runProbe(_ argv: [String], done: @escaping @MainActor (Bool, String) -> Void) {
         let box = ProbeCompletion(done)
         let deadline = reconnectProbeDeadline
         Thread.detachNewThread {
-            let answered = LinuxRemoteCommandRunner.run(argv, deadline: deadline).status == 0
-            runOnMain { MainActor.assumeIsolated { box.done(answered) } }
+            let result = LinuxRemoteCommandRunner.run(argv, deadline: deadline)
+            let answered = result.status == 0
+            let stderr = result.stderr
+            runOnMain { MainActor.assumeIsolated { box.done(answered, stderr) } }
         }
     }
 
@@ -68,8 +84,8 @@ extension LinuxPresentationService {
 
 /// Carries a probe's completion across its worker thread; only the GTK thread calls it.
 final class ProbeCompletion: @unchecked Sendable {
-    let done: @MainActor (Bool) -> Void
-    init(_ done: @escaping @MainActor (Bool) -> Void) { self.done = done }
+    let done: @MainActor (Bool, String) -> Void
+    init(_ done: @escaping @MainActor (Bool, String) -> Void) { self.done = done }
 }
 
 @MainActor

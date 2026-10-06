@@ -16,6 +16,8 @@ final class LinuxPaneLeadCover {
     }
 
     let widget: OpaquePointer
+    /// What ssh said on the last failed reconnect probe, along the pane's bottom edge; drawn uncovered too.
+    private let note: OpaquePointer
     private let title: OpaquePointer
     private let hint: OpaquePointer
     private let windowID: UUID
@@ -32,6 +34,7 @@ final class LinuxPaneLeadCover {
         connect(cover.widget, "destroy", unsafeBitCast(onCoverDestroy as @convention(c) (OpaquePointer?, gpointer?) -> Void,
                                                         to: GCallback.self))
         gtk_overlay_add_overlay(overlay, W(cover.widget))
+        gtk_overlay_add_overlay(overlay, W(cover.note))
         cover.sync()
     }
 
@@ -42,6 +45,13 @@ final class LinuxPaneLeadCover {
         self.sessionID = sessionID
         self.placement = placement
         widget = OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 8))
+        note = OpaquePointer(gtk_label_new(nil))
+        gtk_widget_add_css_class(W(note), "agterm-reconnect-note")
+        gtk_label_set_ellipsize(note, PANGO_ELLIPSIZE_END)
+        gtk_label_set_xalign(note, 0)
+        gtk_widget_set_valign(W(note), GTK_ALIGN_END)
+        gtk_widget_set_can_target(W(note), 0)
+        gtk_widget_set_visible(W(note), 0)
         gtk_widget_add_css_class(W(widget), "agterm-lead-cover")
         gtk_widget_set_hexpand(W(widget), 1)
         gtk_widget_set_vexpand(W(widget), 1)
@@ -89,12 +99,21 @@ final class LinuxPaneLeadCover {
     private func sync() {
         guard let session = controller?.store.session(withID: sessionID), let pane else {
             gtk_widget_set_visible(W(widget), 0)
+            gtk_widget_set_visible(W(note), 0)
             return
         }
         let book = ZmxLeadBook.shared
         let identity = session.paneIdentity(for: pane == .left ? StatusPane.left : .right)
-        // a pane overlay above the deck's cover is another program's and stays visible on its own backing
-        let hidden = if case .deck = placement { session.paneOverlay(pane) != nil } else { false }
+        // a pane overlay above the deck's cover is another program's and stays visible on its own backing,
+        // and a dashboard cell stands in for an overlay over its pane with a cover of its own
+        let hidden = switch placement {
+        case .deck: session.paneOverlay(pane) != nil
+        case .dashboard: session.dashboardCover(for: pane) != nil
+        case .zoom: false
+        }
+        let reason = hidden ? nil : RemoteReconnectBook.shared.readback(pane: identity)?.reason
+        ("ssh: " + (reason ?? "")).withCString { gtk_label_set_text(note, $0) }
+        gtk_widget_set_visible(W(note), reason == nil ? 0 : 1)
         guard book.covered(pane: identity), !hidden else {
             gtk_widget_set_visible(W(widget), 0)
             return

@@ -59,11 +59,12 @@ final class LinuxPresentationService {
     var remoteClients: [UUID: RemotePresentationClient] = [:]
     var transport: RemotePresentationTransport = LinuxRemotePresentationProcess()
     var remoteTick: LinuxRepeatingTimer?
+    let linkObserver = LinuxRemoteLinkObserver()
     /// The clock HUD deadlines and the clients' backoff read.
     var clock: () -> Date = Date.init
     /// One reconnect probe, answered on the GTK thread; and the fresh attach of a pane whose host answered.
     /// Injected by a test, so neither needs ssh nor a realized surface.
-    var probe: @MainActor ([String], @escaping @MainActor (Bool) -> Void) -> Void = LinuxPresentationService.runProbe
+    var probe: @MainActor ([String], @escaping @MainActor (Bool, String) -> Void) -> Void = LinuxPresentationService.runProbe
     var reattach: @MainActor (GhosttySurface, Bool) -> Bool = { surface, cover in
         surface.controller?.reattachPane(surface, claim: false, cover: cover) ?? false
     }
@@ -143,6 +144,7 @@ final class LinuxPresentationService {
     /// role follows, and ends streams whose session left. Stores are created by the window library, so this
     /// runs wherever the open windows are walked: every control request, and both timers.
     func attach() {
+        linkObserver.start { [weak self] in self?.retryRemoteLinksNow() }
         hub.onPresenterLost = { [weak self] session in
             self?.takeBackRemoteAsk(forSession: session)
             self?.library?.store(forSession: session)?.remoteOverlayPresenterLost(forSession: session)
