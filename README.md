@@ -85,6 +85,12 @@ because WebKitGTK's helper processes cannot be relocated into it. A page's file 
 URI scheme that serves only files under `--cwd`, and Show in Finder is Show in Files.
 WebKitGTK names no frame on a script message, so a page's bridge handler exists only in agterm's isolated
 world; a `--js` page's `agterm.request` reaches it through a relay that accepts messages from the top window only.
+A `--persistent` URL page keeps its logins in one WebKitGTK network session saved under
+`${XDG_DATA_HOME:-~/.local/share}/agterm/browser/<id>`, keyed by `<state dir>/browser-profile` as on macOS.
+Panes waiting to reconnect, and dropped presentation streams, retry at once when logind reports a resume
+(`PrepareForSleep`) or `GNetworkMonitor` reports the network back; without a system bus only the network applies.
+The Integrations page installs OpenCode 2's status plugin when `opencode --version` reports 2 and keeps OpenCode 1's
+when the version cannot be read, where macOS asks: the plan-based installer has no dialog to ask from.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces

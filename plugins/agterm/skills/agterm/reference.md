@@ -899,6 +899,8 @@ error keeps those names for compatibility.
   runs. A login that leaves the origin (OAuth, SSO, a popup)
   still fails, cookies are shared across ports of one host, and a cookie without an expiry is not promised
   to outlive the app. Reload loads the URL again; read back `url` and `persistent` in `htmlOverlays`.
+  On the GTK Linux frontend the store is a WebKitGTK network session under
+  `${XDG_DATA_HOME:-~/.local/share}/agterm/browser/<id>`, the id file being the same `browser-profile`.
 - `session overlay reload [--current] [--pane left|right] [--target] [--window W]` — reload an HTML
   overlay: the file or URL it was opened with (after you rewrote the artifact), or with `--current` the
   page it shows now. Errors `no overlay`, and `the overlay is not an html page` for a program.
@@ -1064,8 +1066,7 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 ## Linux integration management
 
 These Linux-only commands inspect or install local files and never connect to the agterm control
-socket. They work when the app is stopped, ignore `--socket`, and are not counted among the 60 runtime
-control commands above.
+socket. They work when the app is stopped, ignore `--socket`, and are not control commands.
 
 - `integration status [--json]` — inspect the command-line tool, Claude Code hooks, Codex hooks, and
   agent skill in that stable order. JSON is `{"items":[...]}`; each item has `kind`, `state`, `path`,
@@ -1073,7 +1074,10 @@ control commands above.
   `partial`, `conflict`, or `unavailable`.
 - `integration install hooks [--dry-run] [--json]` — preview or safely apply the shared Claude/Codex
   hook plan. It preserves settings, symlinks, file modes, and backups; malformed files or unrelated
-  custom hooks are conflicts.
+  custom hooks are conflicts. The plan also covers Pi and OpenCode when their configuration exists: the
+  OpenCode 2 plugin when `opencode --version` reports 2, under `$OPENCODE_CONFIG_DIR` or
+  `${XDG_CONFIG_HOME:-~/.config}/opencode`, removing agterm's OpenCode 1 plugin there; the OpenCode 1
+  plugin otherwise, including when the version cannot be read, since the plan offers no chooser.
 - `integration install skill [--dry-run] [--json]` — preview or safely install/update the bundled
   skill in detected Claude Code and Codex destinations. It replaces only agterm-managed content.
 
