@@ -189,9 +189,27 @@ rm -rf build/stage-deploy
   inodes; when the user restarts is the user's call. Report the installed VERSION and COMMIT and say that a
   restart is what picks them up.
 
+Then refresh the installed agent skill from that payload, also without asking.
+The bundled `plugins/agterm/skills/agterm/` is only the source; the copies agents actually load live in
+`~/.claude/skills/agterm` and `~/.codex/skills/agterm` and go stale across catch-ups otherwise.
+
+```sh
+~/.local/bin/agtermctl integration install skill --dry-run
+~/.local/bin/agtermctl integration install skill
+~/.local/bin/agtermctl integration status | grep -i skill
+```
+
+- Use the INSTALLED `~/.local/bin/agtermctl`, never a repo or container build: the installer copies from the
+  payload's `share/agterm/agent-skill`, so it must run after the rsync above.
+- Never copy or edit the skill directories by hand. The installer replaces only agterm-managed content and
+  refuses an unmarked `SKILL.md`; report such a conflict instead of forcing it.
+- Report the destinations it updated and the final status line, which should read installed and current.
+- The skill is the only integration refreshed here. Hooks touch `~/.claude/settings.json` and `~/.codex/`,
+  so mention an `Update available` for them and leave it to the user.
+
 ## Finish with an Evidence-Based Handoff
 
 Lead with the outcome.
 Include the upstream range, parity status, platform exemptions, commits, pushed refs, the version and commit
-now installed locally, validation evidence, and remaining work.
+now installed locally, the refreshed agent-skill destinations, validation evidence, and remaining work.
 Mention protected or unrelated files that were intentionally left untouched when relevant.
