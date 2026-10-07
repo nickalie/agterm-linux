@@ -189,27 +189,32 @@ rm -rf build/stage-deploy
   inodes; when the user restarts is the user's call. Report the installed VERSION and COMMIT and say that a
   restart is what picks them up.
 
-Then refresh the installed agent skill from that payload, also without asking.
-The bundled `plugins/agterm/skills/agterm/` is only the source; the copies agents actually load live in
-`~/.claude/skills/agterm` and `~/.codex/skills/agterm` and go stale across catch-ups otherwise.
+Then refresh the installed integrations from that payload, also without asking: the agent skill and the
+agent-status hooks (lifecycle scripts, Claude Code and Codex hooks, Pi and OpenCode plugins).
+`plugins/agterm/skills/agterm/` and `agterm/Resources/agent-status/` are only sources; the copies agents
+load live under `~/.claude`, `~/.codex` and `~/.config/agterm/agent-status` and go stale otherwise.
 
 ```sh
 ~/.local/bin/agtermctl integration install skill --dry-run
 ~/.local/bin/agtermctl integration install skill
-~/.local/bin/agtermctl integration status | grep -i skill
+~/.local/bin/agtermctl integration install hooks --dry-run
+~/.local/bin/agtermctl integration install hooks
+~/.local/bin/agtermctl integration status
 ```
 
 - Use the INSTALLED `~/.local/bin/agtermctl`, never a repo or container build: the installer copies from the
-  payload's `share/agterm/agent-skill`, so it must run after the rsync above.
-- Never copy or edit the skill directories by hand. The installer replaces only agterm-managed content and
-  refuses an unmarked `SKILL.md`; report such a conflict instead of forcing it.
-- Report the destinations it updated and the final status line, which should read installed and current.
-- The skill is the only integration refreshed here. Hooks touch `~/.claude/settings.json` and `~/.codex/`,
-  so mention an `Update available` for them and leave it to the user.
+  payload's `share/agterm` and bakes that payload's `agtermctl` into the hook scripts, so it must run after
+  the rsync above. A repo or container path baked into the hooks breaks them once that build goes away.
+- Never copy, edit or merge the skill, hook scripts, `settings.json` or `config.toml` by hand. The installer
+  changes only agterm-managed content and backs up what it merges.
+- A dry run exits `2` on a protected conflict, such as user-defined Codex hooks or an unmarked `SKILL.md` or
+  plugin. Apply anyway: the safe targets are written and the protected one is skipped. Never force or work
+  around a conflict; report it with the path and the installer's reason.
+- Report every target the apply changed, every conflict it skipped, and the final status lines.
 
 ## Finish with an Evidence-Based Handoff
 
 Lead with the outcome.
 Include the upstream range, parity status, platform exemptions, commits, pushed refs, the version and commit
-now installed locally, the refreshed agent-skill destinations, validation evidence, and remaining work.
+now installed locally, the refreshed integrations and any skipped conflicts, validation evidence, and remaining work.
 Mention protected or unrelated files that were intentionally left untouched when relevant.
