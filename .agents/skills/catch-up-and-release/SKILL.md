@@ -171,10 +171,14 @@ The local install is how the user runs agterm day to day, so parity that never r
 ```sh
 rm -rf build/stage-deploy
 docker run --rm -v "$PWD:/w" -w /w -e AGTERM_PACKAGE_VERSION=X.Y.Z localhost/agterm-build:6.3.2 \
-  bash -lc 'scripts/stage-linux.sh /w/build/stage-deploy'
+  bash -lc '(cd agterm-linux && swift build -c release) && scripts/stage-linux.sh /w/build/stage-deploy'
 rsync -a --delete build/stage-deploy/ ~/.local/share/agterm-linux/
 rm -rf build/stage-deploy
 ```
+
+- `stage-linux.sh` builds nothing: it packages whatever `.build/release` holds yet stamps `COMMIT` from `HEAD`,
+  so without the `swift build -c release` first a commit made after the last release build ships stale
+  binaries under a current commit.
 
 - Stage INSIDE the build container: `stage-linux.sh` bundles the Swift runtime through `ldd`, which the
   host cannot resolve.
