@@ -449,6 +449,34 @@ struct AgentHooksInstallTests {
         #expect(AgentHooksInstall.mergeCodexConfig(existing: existing, scriptDir: scriptDir) == .hooksExist)
     }
 
+    @Test func mergeCodexConfigAppendsBesideCodexTrustState() {
+        let existing = """
+        [features]
+        hooks = true
+
+        [hooks.state]
+
+        [hooks.state."/home/me/.codex/hooks.json:session_start:0:0"]
+        trusted_hash = "sha256:abc"
+
+        """
+        let contents = mergedContents(AgentHooksInstall.mergeCodexConfig(existing: existing, scriptDir: scriptDir))
+        #expect(contents.hasPrefix(existing))
+        #expect(contents.contains("[[hooks.Stop]]"))
+    }
+
+    @Test func mergeCodexConfigSkipsOwnHooksBesideTrustState() {
+        let existing = """
+        [hooks.state]
+
+        [[hooks.Stop]]
+        [[hooks.Stop.hooks]]
+        type = "command"
+        command = "echo done"
+        """
+        #expect(AgentHooksInstall.mergeCodexConfig(existing: existing, scriptDir: scriptDir) == .hooksExist)
+    }
+
     @Test func mergeCodexConfigReportsUnparseable() {
         #expect(AgentHooksInstall.mergeCodexConfig(existing: "this = is = not = toml\n", scriptDir: scriptDir) == .unparseable)
     }

@@ -305,9 +305,22 @@ public enum AgentHooksInstall {
 
         private enum CodingKeys: String, CodingKey { case hooks, notify }
 
+        private struct AnyKey: CodingKey {
+            let stringValue: String
+            var intValue: Int? { nil }
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue _: Int) { nil }
+        }
+
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            hooksPresent = container.contains(.hooks)
+            // `hooks.state` holds the trust records Codex writes itself, hooks.json's included, so a table with
+            // only that key defines no hooks
+            if let hooks = try? container.nestedContainer(keyedBy: AnyKey.self, forKey: .hooks) {
+                hooksPresent = hooks.allKeys.contains { $0.stringValue != "state" }
+            } else {
+                hooksPresent = container.contains(.hooks)
+            }
             if let array = try? container.decodeIfPresent([String].self, forKey: .notify) {
                 notify = array
             } else if let single = try? container.decodeIfPresent(String.self, forKey: .notify) {
