@@ -13,17 +13,20 @@ enum MarkdownInline {
         /// mark stands for the non-style attributes (code, HTML, link target) that split Foundation's runs.
         let mark: String
         let kind: Kind
+        /// link is the destination of the link the text sits in, as Foundation's link attribute carries it.
+        var link: URL?
     }
 
     static func segments(_ text: String, definitions: [String: String]) -> [Segment] {
         var parser = InlineParser(chars: Array(text), definitions: definitions)
         parser.run()
         var out: [Segment] = []
-        flatten(emphasized(parser.items), style: [], mark: "", into: &out)
+        flatten(emphasized(parser.items), style: [], mark: "", link: nil, into: &out)
         return out
     }
 
-    /// rows maps segments onto runs over `base` and splits at hard breaks; a soft break is a space.
+    /// rows maps segments onto runs over `base` and splits at hard breaks; a soft break is a space. A link is
+    /// its label, underlined when a click can open it.
     static func rows(_ segments: [Segment], base: HudMarkdown.Style) -> [[HudMarkdown.Run]] {
         var rows: [[HudMarkdown.Run]] = [[]]
         for segment in segments {
@@ -32,22 +35,31 @@ enum MarkdownInline {
                 continue
             }
             let text = segment.kind == .softBreak ? " " : HudMarkdown.sanitized(segment.text)
-            rows[rows.count - 1].append(HudMarkdown.Run(text: text, style: base.union(segment.style)))
+            let target = segment.link.flatMap(HudMarkdown.linkTarget)
+            let style = base.union(segment.style).union(target == nil ? [] : .underline)
+            rows[rows.count - 1].append(HudMarkdown.Run(text: text, style: style, link: target))
         }
         return rows
     }
 
     /// flatten merges adjacent text with equal style and mark, as Foundation merges runs with equal attributes.
-    private static func flatten(_ nodes: [InlineNode], style: HudMarkdown.Style, mark: String, into out: inout [Segment]) {
+    private static func flatten(_ nodes: [InlineNode], style: HudMarkdown.Style, mark: String, link: URL?,
+                                into out: inout [Segment]) {
         for node in nodes {
             switch node {
-            case .text(let text): append(Segment(text: text, style: style, mark: mark, kind: .text), to: &out)
-            case .code(let text): append(Segment(text: text, style: style, mark: mark + "|code", kind: .text), to: &out)
-            case .html(let text): append(Segment(text: text, style: style, mark: mark + "|html", kind: .text), to: &out)
-            case .softBreak: out.append(Segment(text: "", style: style, mark: mark, kind: .softBreak))
-            case .lineBreak: out.append(Segment(text: "", style: style, mark: mark, kind: .lineBreak))
-            case let .span(added, children): flatten(children, style: style.union(added), mark: mark, into: &out)
-            case let .link(target, children): flatten(children, style: style, mark: mark + "|" + target, into: &out)
+            case .text(let text): append(Segment(text: text, style: style, mark: mark, kind: .text, link: link), to: &out)
+            case .code(let text):
+                append(Segment(text: text, style: style, mark: mark + "|code", kind: .text, link: link), to: &out)
+            case .html(let text):
+                append(Segment(text: text, style: style, mark: mark + "|html", kind: .text, link: link), to: &out)
+            case .softBreak: out.append(Segment(text: "", style: style, mark: mark, kind: .softBreak, link: link))
+            case .lineBreak: out.append(Segment(text: "", style: style, mark: mark, kind: .lineBreak, link: link))
+            case let .span(added, children):
+                flatten(children, style: style.union(added), mark: mark, link: link, into: &out)
+            case let .link(target, children):
+                // an image is not a link: Foundation gives it an image URL, never the link attribute
+                let destination = target.hasPrefix("link:") ? URL(string: String(target.dropFirst(5))) : link
+                flatten(children, style: style, mark: mark + "|" + target, link: destination, into: &out)
             }
         }
     }
@@ -567,7 +579,7 @@ private struct InlineParser {
 
     private mutating func angle() {
         if let (target, end) = autolink() {
-            push(.link("link:" + target, [.text(target)]))
+            push(.link("link:" + (Self.isEmail(target) ? "mailto:" + target : target), [.text(target)]))
             pos = end
         } else if let end = MarkdownHTML.tagEnd(chars, from: pos) {
             push(.html(String(chars[pos..<end])))
