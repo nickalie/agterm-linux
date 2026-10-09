@@ -5,8 +5,8 @@ public enum StatusReset: String, Codable, Sendable, CaseIterable {
     case enter
     case never
 
-    /// Whether a keystroke may move an attention glyph at all. `enter` admits the submit alone, so an
-    /// interrupt leaves `blocked`/`completed` where it is and only `active`, which ignores this gate, drops.
+    /// Whether a keystroke may move an attention glyph. `enter` admits the submit alone; `blocked` and
+    /// `active` also drop on an interrupt outside this gate (`AgentStatus.afterKeystroke`).
     func moves(_ keystroke: StatusKeystroke) -> Bool {
         switch self {
         case .firstKey: return true
@@ -38,10 +38,10 @@ public enum AgentStatus: String, Codable, Sendable, CaseIterable {
     /// The state a keystroke in the session's terminal moves this one to, or nil to leave it alone.
     /// `blocked` and `completed` move as `reset` says: on any key (you've engaged with the prompt / the
     /// finished result), on a submit only (a reply you started and walked away from keeps the glyph until you
-    /// send it), or never. `active` clears ONLY on an interrupt (Escape or Ctrl-C) in every mode, so typing
-    /// while the agent works keeps the "working" glyph. That covers the quick-cancel case: a pending question
-    /// can still read `active` when you cancel it (Claude Code's `blocked` notification lands seconds later)
-    /// and the interrupt fires no hook, so nothing else drops the stale value.
+    /// send it), or never. Under submit-only an interrupt (Escape or Ctrl-C) also drops `blocked`: cancelling a
+    /// prompt fires no hook, so nothing else drops it. `active` clears ONLY on an interrupt in every mode, so
+    /// typing while the agent works keeps the "working" glyph, and a prompt cancelled before any `blocked`
+    /// arrived does not stay `active`.
     ///
     /// Where upstream clears `blocked` outright, this fork ANSWERS it into `active`. The key is you answering
     /// the prompt, and the agent then works with NO hook announcing it — Claude Code's next event is
@@ -53,8 +53,8 @@ public enum AgentStatus: String, Codable, Sendable, CaseIterable {
     func afterKeystroke(keystroke: StatusKeystroke, reset: StatusReset) -> AgentStatus? {
         switch self {
         case .blocked:
-            guard reset.moves(keystroke) else { return nil }
-            return keystroke == .interrupt ? .idle : .active
+            if keystroke == .interrupt { return reset == .never ? nil : .idle }
+            return reset.moves(keystroke) ? .active : nil
         case .completed: return reset.moves(keystroke) ? .idle : nil
         case .active: return keystroke == .interrupt ? .idle : nil
         case .idle: return nil

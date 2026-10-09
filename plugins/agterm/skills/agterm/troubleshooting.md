@@ -302,6 +302,22 @@ then restart the affected panes/processes (a respawn is enough; existing process
 inherited copy). Prevent it: start daemons and session managers with the variables scrubbed
 (`env -u AGTERM_SESSION_ID … <cmd>`, full list in SKILL.md), or from a shell outside agterm.
 
+By default, Codex 0.160.1 CLI sessions share a background app-server daemon, started by the first
+`codex` that needs it, and the same leak follows. The server launches hooks using its inherited
+environment, so every daemon-backed session reports to the session that started the server, or to none
+when the server started outside agterm or that session has closed. Diagnose: run
+`ps eww <pid> | tr ' ' '\n' | grep AGTERM_SESSION_ID` on the app-server process carrying
+`--managed-daemon`. Scrubbing prevents wrong-session updates but does not restore status reporting, and
+agterm has no automatic mapping from the hook payload's Codex session id to the pane displaying it.
+Fix: run `codex --no-daemon`, which keeps the session and its hooks in its own process; that running
+session is unavailable for control through the shared server from the Codex desktop or mobile app.
+To make that the default for plain `codex`, run `codex features disable daemon_auto_start` once, then
+`codex app-server daemon stop`; later plain launches start no shared daemon and report to their own
+session. Disabling auto-start alone still joins a daemon that is already running, and stopping it
+disconnects the CLI sessions attached to it. A daemon-backed conversation can stay locked after its TUI
+exits: if `codex --no-daemon resume <id>` shows "This conversation is open in another app", stop the
+shared daemon and press R to retry.
+
 ### "Claude Code's question/permission prompt is unresponsive after switching apps"
 
 Known upstream Claude Code bug, NOT agterm. Do not file an agterm issue for it. While Claude Code shows

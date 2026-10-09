@@ -168,4 +168,59 @@ struct LinkPolicyTests {
         }
         #expect(url.absoluteString == "file:///tmp/x.md")
     }
+
+    // MARK: route (browser / overlay / reveal / ignore)
+
+    static let session = UUID()
+    static let origins: [LinkPolicy.ClickOrigin] = [.pane(session), .scratch(session), .hud, .programOverlay, .quick]
+
+    @Test(arguments: ["http://example.com/a", "https://example.com/a?q=1"], origins)
+    func browserModeSendsWebLinksToTheBrowser(_ raw: String, _ origin: LinkPolicy.ClickOrigin) throws {
+        let url = try #require(URL(string: raw))
+        #expect(LinkPolicy.route(for: raw, mode: .browser, origin: origin, localHosts: Self.localHosts) == .browser(url))
+    }
+
+    @Test(arguments: ["http://localhost:5173/a", "HTTPS://example.com/a"],
+          [LinkPolicy.ClickOrigin.pane(session), .scratch(session)])
+    func overlayModeOpensPaneAndScratchWebLinksOnTheOwningSession(_ raw: String, _ origin: LinkPolicy.ClickOrigin) throws {
+        let url = try #require(URL(string: raw))
+        #expect(LinkPolicy.route(for: raw, mode: .overlay, origin: origin, localHosts: Self.localHosts)
+            == .overlay(url, session: Self.session))
+    }
+
+    // regression: a plain-http page the app's web views cannot load was routed to the overlay
+    @Test(arguments: [
+        ("http://localhost/", true), ("http://LOCALHOST:8080/x", true), ("http://devbox/", true),
+        ("http://mac.local:3000/", true), ("http://127.0.0.1:5173/", true), ("http://93.184.216.34/", true),
+        ("http://[::1]:8080/", true), ("http://[2001:db8::1]/", true),
+        ("http://example.com/", false), ("http://www.example.com:8080/a", false), ("http://local/", true),
+        ("http://notlocal.localx/", false), ("http://1.2.3.example/", false), ("http://999.1.1.1/", false),
+        ("https://example.com/", true),
+    ])
+    func overlayModeTakesPlainHttpOnlyFromHostsAWebViewMayLoad(_ raw: String, _ overlay: Bool) throws {
+        let url = try #require(URL(string: raw))
+        let route = LinkPolicy.route(for: raw, mode: .overlay, origin: .pane(Self.session), localHosts: Self.localHosts)
+        #expect(route == (overlay ? .overlay(url, session: Self.session) : .browser(url)))
+    }
+
+    @Test(arguments: [LinkPolicy.ClickOrigin.hud, .programOverlay, .quick])
+    func overlayModeKeepsSessionlessOriginsInTheBrowser(_ origin: LinkPolicy.ClickOrigin) throws {
+        let url = try #require(URL(string: "https://example.com"))
+        #expect(LinkPolicy.route(for: "https://example.com", mode: .overlay, origin: origin, localHosts: Self.localHosts)
+            == .browser(url))
+    }
+
+    @Test(arguments: ["mailto:someone@example.com", "ftp://host/file.txt"], LinkOpenMode.allCases)
+    func nonWebSchemesAlwaysGoToTheSystemHandler(_ raw: String, _ mode: LinkOpenMode) throws {
+        let url = try #require(URL(string: raw))
+        #expect(LinkPolicy.route(for: raw, mode: mode, origin: .pane(Self.session), localHosts: Self.localHosts) == .browser(url))
+    }
+
+    @Test(arguments: LinkOpenMode.allCases, origins)
+    func fileLinksRevealAndOtherSchemesStayIgnoredInEveryMode(_ mode: LinkOpenMode, _ origin: LinkPolicy.ClickOrigin) {
+        #expect(LinkPolicy.route(for: "file:///tmp/x.md", mode: mode, origin: origin, localHosts: Self.localHosts)
+            == .reveal(URL(fileURLWithPath: "/tmp/x.md", isDirectory: false)))
+        #expect(LinkPolicy.route(for: "x-custom://run", mode: mode, origin: origin, localHosts: Self.localHosts) == .ignore)
+        #expect(LinkPolicy.route(for: "file://elsewhere/tmp/x.md", mode: mode, origin: origin, localHosts: Self.localHosts) == .ignore)
+    }
 }

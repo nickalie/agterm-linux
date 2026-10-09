@@ -72,10 +72,10 @@ private struct SettingHint: View {
     }
 }
 
-/// General tab: Mouse (scroll speed, right-click-pastes, workspace-row click), Sessions (new-session
-/// directory, restore mode, and the flagged view layout, here because the Interface tab is full) and the
-/// inherit-global-ghostty-config toggle; visual and
-/// notification settings have their own tabs.
+/// General tab: Mouse (scroll speed, right-click-pastes, link opening, workspace-row click) and Sessions
+/// (new-session directory, restore mode, the flagged view layout, here because the Interface tab is full,
+/// and the inherit-global-ghostty-config toggle, here because a section of its own made the tab scroll);
+/// visual and notification settings have their own tabs.
 private struct GeneralSettingsView: View {
     let model: SettingsModel
 
@@ -92,6 +92,11 @@ private struct GeneralSettingsView: View {
                 }
                 Toggle("Right-click pastes", isOn: rightClickPaste)
                     .accessibilityIdentifier("settings-right-click-paste")
+                Picker("Open links in", selection: linkOpenMode) {
+                    Text("Browser").tag(LinkOpenMode.browser)
+                    Text("Session overlay").tag(LinkOpenMode.overlay)
+                }
+                .accessibilityIdentifier("settings-link-open-mode")
                 Toggle("Click a workspace row to expand or collapse", isOn: workspaceRowClickExpands)
                     .accessibilityIdentifier("settings-workspace-row-click-expands")
             }
@@ -143,15 +148,13 @@ private struct GeneralSettingsView: View {
                     .accessibilityIdentifier("settings-close-grace-undo")
                 Picker("Flagged view layout", selection: flaggedViewLayout) {
                     Text("Flat list").tag(FlaggedViewLayout.flat)
+                    Text("Flat list, names only").tag(FlaggedViewLayout.plain)
                     Text("Workspace tree").tag(FlaggedViewLayout.tree)
                 }
                 .accessibilityIdentifier("settings-flagged-view-layout")
-            }
-
-            Section("Ghostty Config") {
                 Toggle("Use my global Ghostty config", isOn: inheritGlobalGhosttyConfig)
                     .accessibilityIdentifier("settings-inherit-global-ghostty")
-                SettingHint("Also loads ~/.config/ghostty/config on top of agterm's own. Edit ~/.config/agterm/ghostty.conf to customize.")
+                SettingHint("Also loads ~/.config/ghostty/config.")
             }
         }
         .formStyle(.grouped)
@@ -187,6 +190,11 @@ private struct GeneralSettingsView: View {
     private var rightClickPaste: Binding<Bool> {
         Binding(get: { model.settings.rightClickPaste ?? true },
                 set: { model.setRightClickPaste($0 ? nil : false) })
+    }
+
+    private var linkOpenMode: Binding<LinkOpenMode> {
+        Binding(get: { model.settings.effectiveLinkOpenMode },
+                set: { model.setLinkOpenMode($0) })
     }
 
     private var flaggedViewLayout: Binding<FlaggedViewLayout> {

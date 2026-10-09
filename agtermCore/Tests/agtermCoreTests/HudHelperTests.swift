@@ -135,6 +135,13 @@ struct HudHelperTests {
         #expect(run.paints(frame))
     }
 
+    @Test func aGridAsTallAsTheTextPaintsFromTheFirstRow() throws {
+        let run = try Run("abc\ndef\n", cols: 41, rows: 2)
+        defer { run.stop() }
+        let e = Self.esc
+        #expect(run.paints("\(e)[H\(e)[J\(e)[19Cabc"))
+    }
+
     @Test func keepsAnOversizedLineAtTheLeftEdgeRatherThanOffScreen() throws {
         let run = try Run("a message wider than its box\n", cols: 10, rows: 3)
         defer { run.stop() }
@@ -214,6 +221,13 @@ struct HudHelperTests {
         defer { run.stop() }
         #expect(run.paints("a\(Self.esc)[E\(Self.esc)[E\(Self.esc)[19Cb"))
         #expect(!run.painted.contains("\(Self.esc)[2m"))
+    }
+
+    @Test func aMarkdownHyperlinkReachesTheTerminalWithItsTerminatorIntact() throws {
+        let link = "\(Self.esc)]8;;http://x\(Self.esc)\\go\(Self.esc)]8;;\(Self.esc)\\"
+        let run = try Run(link + "\n", cols: 40, rows: 7, blockWidth: 2)
+        defer { run.stop() }
+        #expect(run.paints("\(Self.esc)[19C" + link))
     }
 
     @Test func aMalformedBlockWidthPaintsInPlainMode() throws {

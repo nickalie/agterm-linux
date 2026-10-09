@@ -80,14 +80,23 @@ final class SettingsUITests: XCTestCase {
                       "the default 'On first key' should remove statusReset from settings.json")
     }
 
+    // a grouped Form scrolls, so an overflowing tab still reports every control as hittable, and its last
+    // text can sit inside the window while the section's bottom inset does not. Scrolling is the only
+    // direct measure: content that fits does not move.
+    private func assertGeneralTabFits(control: String, file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.containing(.any, identifier: control).firstMatch
+        let hint = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Also loads")).firstMatch
+        XCTAssertTrue(hint.waitForExistence(timeout: 5), "the General tab's closing hint should exist", file: file, line: line)
+        XCTAssertLessThanOrEqual(hint.frame.maxY, window.frame.maxY, "the closing hint should be on screen", file: file, line: line)
+        let before = hint.frame.minY
+        hint.scroll(byDeltaX: 0, deltaY: -80)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertEqual(hint.frame.minY, before, accuracy: 0.5, "the General tab should not scroll", file: file, line: line)
+    }
+
     func testFlaggedViewLayoutPickerPersists() throws {
         let picker = settingsControl(tab: "General", control: "settings-flagged-view-layout")
-        // the tab's last line must sit inside the fixed-size window: a grouped Form scrolls, so an
-        // overflowing tab still reports every control as hittable.
-        let window = app.windows.containing(.any, identifier: "settings-flagged-view-layout").firstMatch
-        let lastLine = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Also loads")).firstMatch
-        XCTAssertTrue(lastLine.waitForExistence(timeout: 5), "the General tab's closing hint should exist")
-        XCTAssertLessThanOrEqual(lastLine.frame.maxY, window.frame.maxY, "the General tab should fit without scrolling")
+        assertGeneralTabFits(control: "settings-flagged-view-layout")
 
         picker.click()
         let tree = app.menuItems["Workspace tree"]
@@ -97,11 +106,37 @@ final class SettingsUITests: XCTestCase {
                       "selecting 'Workspace tree' should persist flaggedViewLayout=tree to settings.json")
 
         picker.click()
+        let plain = app.menuItems["Flat list, names only"]
+        XCTAssertTrue(plain.waitForExistence(timeout: 5), "the layout picker should offer 'Flat list, names only'")
+        plain.click()
+        XCTAssertTrue(poll { self.settingsValue("flaggedViewLayout") == "plain" },
+                      "selecting 'Flat list, names only' should persist flaggedViewLayout=plain to settings.json")
+
+        picker.click()
         let flat = app.menuItems["Flat list"]
         XCTAssertTrue(flat.waitForExistence(timeout: 5), "the layout picker should offer 'Flat list'")
         flat.click()
         XCTAssertTrue(poll { self.settingsValue("flaggedViewLayout") == nil },
                       "the default 'Flat list' should remove flaggedViewLayout from settings.json")
+    }
+
+    func testLinkOpenModePickerPersists() throws {
+        let picker = settingsControl(tab: "General", control: "settings-link-open-mode")
+        assertGeneralTabFits(control: "settings-link-open-mode")
+
+        picker.click()
+        let overlay = app.menuItems["Session overlay"]
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5), "the link picker should offer 'Session overlay'")
+        overlay.click()
+        XCTAssertTrue(poll { self.settingsValue("linkOpenMode") == "overlay" },
+                      "selecting 'Session overlay' should persist linkOpenMode=overlay to settings.json")
+
+        picker.click()
+        let browser = app.menuItems["Browser"]
+        XCTAssertTrue(browser.waitForExistence(timeout: 5), "the link picker should offer 'Browser'")
+        browser.click()
+        XCTAssertTrue(poll { self.settingsValue("linkOpenMode") == nil },
+                      "the default 'Browser' should remove linkOpenMode from settings.json")
     }
 
     func testDockBouncePickerPersists() throws {

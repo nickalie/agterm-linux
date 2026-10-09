@@ -47,6 +47,16 @@ paths:
   button is replaced by dashboard chrome, which hides an open quick terminal before showing the grid.
 - Every new action must satisfy the control contract in [[control-api]]: protocol, dispatch, CLI, and
   protocol/end-to-end tests. Do not restate per-action audits here.
+- File ▸ Attach Remote… picks among `remotes.conf` entries (`destination [label]`, parsed by
+  `parseRemotesConf`) in the window picker, skipping the question for a single entry, and is disabled when
+  the file lists none (`PaletteContext.hasRemotes`). It is `BuiltinAction.attachRemote`, default
+  Command-Shift-R, with a palette row. `RemotesWatcher` re-reads on file and directory events
+  and banners once when an edit turns a clean file into one with bad lines or an unreadable one,
+  because SwiftUI rebuilds `Commands` on its own schedule and a read in the menu body would go stale.
+  `AppActions.attachRemote()` composes the existing `remoteTree`, window picker and `attachRemoteSession`
+  through `RemoteAttaching`, so it adds no control command: `zmx tree` + `pick` + `zmx attach` already
+  script it. A HUD over the starting session shows the two ssh waits and a failure, the latter hiding
+  itself after `remoteAttachErrorSeconds`; a window with no session falls back to `notifyCommandFailure`.
 
 ## Dock menu
 
@@ -246,6 +256,9 @@ paths:
 - Open attention through `show_attention` (Ctrl-Shift-I), Navigate > Go to Attention, or Show Attention
   in the action palette. The titlebar bell opens a popover, not this palette. Palette opening is
   keep-in-sync exempt.
+- Ctrl-J/Ctrl-K move the selection through `CommandPalette.selectionStep`, which resolves the key with
+  `chordKey` from `NSApp.currentEvent`; `KeyPress` carries only the typed character, which is not `j`/`k`
+  on a non-Latin layout. See [[keymap]] for the layout rule.
 - Keep the next-runloop `fieldFocused = true` retry: button-opened palettes otherwise lose first responder,
   even though no current titlebar button uses this path.
 - Rename actions post begin-edit notifications; the Coordinator edits the selected row asynchronously after

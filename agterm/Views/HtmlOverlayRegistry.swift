@@ -204,6 +204,12 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var loadPending = false
     // a document this web content process still shows, which an interrupted load leaves in place
     private var committed = false
+    // the address of the document a browsing page shows; nil until its first commit, when the page
+    // reports its source instead
+    private var shownURL: URL?
+    // stays set while the session sits in an undoable close, where no slot is found to close, so a
+    // restored page closes at its next mount
+    private var closeRequested = false
     private let storageFailure: String?
     /// usesSavedStore is true for a page built on the saved browser store.
     let usesSavedStore: Bool
@@ -270,7 +276,7 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         observations = [
             webView.observe(\.title) { [weak self] _, _ in Task { @MainActor in self?.reportPage() } },
-            webView.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.reportPage() } },
+            webView.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.urlChanged() } },
             webView.observe(\.canGoBack) { [weak self] _, _ in Task { @MainActor in self?.reportPage() } },
             webView.observe(\.canGoForward) { [weak self] _, _ in Task { @MainActor in self?.reportPage() } },
         ]
@@ -331,9 +337,11 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
         return false
     }
 
-    /// apply takes the model's latest value and reloads when its revision moved.
+    /// apply takes the model's latest value and reloads when its revision moved. It also finishes a close
+    /// the page asked for while its session was hidden.
     func apply(_ overlay: HtmlOverlay) {
         self.overlay = overlay
+        closeIfRequested()
         guard overlay.reloadRevision != appliedRevision else { return }
         appliedRevision = overlay.reloadRevision
         if overlay.reloadTarget == .current { reloadShown() } else { loadOriginal() }
@@ -416,13 +424,14 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     // a file page opens its own file, never one it navigated to; a URL page opens what it shows, which its
-    // policy keeps within the original origin
+    // policy keeps to HTTP(S)
     private var browserURL: URL {
         switch overlay.source {
         case .file(let path, _):
             return URL(fileURLWithPath: path)
         case .url(let original):
-            guard let url = webView.url, url.scheme == "http" || url.scheme == "https" else { return original }
+            let shown = overlay.browse ? shownURL : webView.url
+            guard let url = shown, url.scheme == "http" || url.scheme == "https" else { return original }
             return url
         }
     }
@@ -459,7 +468,18 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
         dismiss?()
     }
 
+    // `webView.url` names a pending load before its document replaces the one shown, so a browsing page
+    // takes its address at commit. A change on the shown origin is taken at once: it cannot change the
+    // site named, and a fragment or pushState change has no commit to wait for
+    private func urlChanged() {
+        if let url = webView.url, let shownURL, HtmlSource.origin(of: url) == HtmlSource.origin(of: shownURL) {
+            self.shownURL = url
+        }
+        reportPage()
+    }
+
     private var pageURL: URL {
+        if overlay.browse, case .url(let source) = overlay.source { return shownURL ?? source }
         if textLoaded, case .file(let path, _) = overlay.source { return URL(fileURLWithPath: path) }
         if let url = webView.url, url.scheme != "about" { return url }
         switch overlay.source {
@@ -496,6 +516,8 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_: WKWebView, didCommit _: WKNavigation!) {
         committed = true
+        shownURL = webView.url
+        reportPage()
     }
 
     func webView(_: WKWebView, didFinish _: WKNavigation!) {
@@ -514,6 +536,7 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_: WKWebView) {
         committed = false
+        shownURL = nil
         fail("web content process terminated")
     }
 
@@ -543,6 +566,22 @@ final class HtmlOverlayPage: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_: WKWebView, createWebViewWith _: WKWebViewConfiguration, for _: WKNavigationAction,
                  windowFeatures _: WKWindowFeatures) -> WKWebView? { nil }
+
+    /// webViewDidClose closes the overlay of a page whose `window.close()` WebKit accepted, as the panel's
+    /// close button does.
+    func webViewDidClose(_: WKWebView) {
+        closeRequested = true
+        closeIfRequested()
+    }
+
+    // deferred because the close releases this page, clearing the delegate WebKit is calling through
+    private func closeIfRequested() {
+        guard closeRequested else { return }
+        Task { [weak self] in
+            guard let self, closeRequested else { return }
+            store?.closeHtmlOverlay(id)
+        }
+    }
 
     func webView(_: WKWebView, runJavaScriptAlertPanelWithMessage _: String, initiatedByFrame _: WKFrameInfo) async {}
 

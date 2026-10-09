@@ -11,12 +11,20 @@ public enum ToolbarMode: String, Codable, Sendable, CaseIterable {
     case hidden
 }
 
-/// How the sidebar's flagged view arranges its sessions: `flat` is one list labelled `session : workspace`,
-/// `tree` nests them under their workspace rows. App-wide, not per window. Raw-stored, resolved by
-/// `effectiveFlaggedViewLayout`.
+/// FlaggedViewLayout arranges the sidebar's flagged view: `flat` is one list labelled `session : workspace`,
+/// `plain` the same list labelled by session name alone, `tree` nests them under their workspace rows.
+/// App-wide, not per window. Raw-stored, resolved by `effectiveFlaggedViewLayout`.
 public enum FlaggedViewLayout: String, Codable, Sendable, CaseIterable {
     case flat
+    case plain
     case tree
+}
+
+/// Where a clicked web link from terminal output opens: the system `browser`, or a session web `overlay`.
+/// App-wide. Raw-stored, resolved by `effectiveLinkOpenMode`.
+public enum LinkOpenMode: String, Codable, Sendable, CaseIterable {
+    case browser
+    case overlay
 }
 
 /// How a delivered notification bounces the Dock icon (`requestUserAttention`): `off`, `once` (one
@@ -335,6 +343,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Raw `FlaggedViewLayout` for the sidebar's flagged view; nil = flat. Resolved by
     /// `effectiveFlaggedViewLayout`.
     public var flaggedViewLayout: String?
+    /// Raw `LinkOpenMode`; nil = browser. Resolved by `effectiveLinkOpenMode`.
+    public var linkOpenMode: String?
     /// htmlOverlayZoom is the page zoom every HTML overlay shows at, nil for actual size; read it through
     /// `effectiveHtmlOverlayZoom`.
     public var htmlOverlayZoom: Double?
@@ -366,8 +376,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 interfaceFontSize: Double? = nil, quickTerminalSizePercent: Int? = nil,
                 hiddenInterfaceElements: [String]? = nil, shownInterfaceElements: [String]? = nil,
                 autoHideSidebarInactiveWindows: Bool? = nil, flaggedViewLayout: String? = nil,
-                sessionNameFromTerminalTitle: Bool? = nil, htmlOverlayZoom: Double? = nil,
-                welcomeShown: Bool? = nil) {
+                sessionNameFromTerminalTitle: Bool? = nil, linkOpenMode: String? = nil,
+                htmlOverlayZoom: Double? = nil, welcomeShown: Bool? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.theme = theme
@@ -416,6 +426,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoHideSidebarInactiveWindows = autoHideSidebarInactiveWindows
         self.sessionNameFromTerminalTitle = sessionNameFromTerminalTitle
         self.flaggedViewLayout = flaggedViewLayout
+        self.linkOpenMode = linkOpenMode
         self.htmlOverlayZoom = htmlOverlayZoom
         self.welcomeShown = welcomeShown
     }
@@ -452,6 +463,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The resolved flagged-view layout: the explicit `flaggedViewLayout` when a KNOWN raw value, else `flat`.
     public var effectiveFlaggedViewLayout: FlaggedViewLayout {
         flaggedViewLayout.flatMap(FlaggedViewLayout.init(rawValue:)) ?? .flat
+    }
+
+    /// The resolved link-open mode: the explicit `linkOpenMode` when a KNOWN raw value, else `browser`.
+    public var effectiveLinkOpenMode: LinkOpenMode {
+        linkOpenMode.flatMap(LinkOpenMode.init(rawValue:)) ?? .browser
     }
 
     /// effectiveHtmlOverlayZoom is `htmlOverlayZoom` bounded to `HtmlZoom`'s range, the only read of the setting.

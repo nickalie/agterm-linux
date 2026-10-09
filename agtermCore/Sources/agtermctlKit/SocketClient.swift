@@ -11,7 +11,12 @@ import agtermCore
 /// `{"ok":false}` response (which is a valid decoded `ControlResponse`).
 struct SocketClientError: Error, CustomStringConvertible {
     let description: String
-    init(_ description: String) { self.description = description }
+    /// The errno of a failed `connect`, nil for every other failure.
+    let connectErrno: Int32?
+    init(_ description: String, connectErrno: Int32? = nil) {
+        self.description = description
+        self.connectErrno = connectErrno
+    }
 }
 
 /// A server response beside the bytes it arrived as. `--json` prints `raw` unchanged, so a field this
@@ -106,7 +111,8 @@ struct SocketClient {
             let failure = errno
             let message = String(cString: strerror(failure))
             close(fd)
-            throw SocketClientError("connect(\(path)) failed: \(message) — \(Self.hint(forConnect: failure, path: path))")
+            throw SocketClientError("connect(\(path)) failed: \(message) — \(Self.hint(forConnect: failure, path: path))",
+                                    connectErrno: failure)
         }
         return fd
     }

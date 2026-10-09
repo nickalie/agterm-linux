@@ -33,7 +33,8 @@ struct AgentStatusTests {
         (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.firstKey, AgentStatus.idle),
         (AgentStatus.blocked, StatusKeystroke.other, StatusReset.enter, nil),
         (AgentStatus.blocked, StatusKeystroke.submit, StatusReset.enter, AgentStatus.active),
-        (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.enter, nil),
+        // cancelling a prompt fires no hook, so without this a cancelled blocked stayed up under enter
+        (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.enter, AgentStatus.idle),
         (AgentStatus.blocked, StatusKeystroke.other, StatusReset.never, nil),
         (AgentStatus.blocked, StatusKeystroke.interrupt, StatusReset.never, nil),
         (AgentStatus.completed, StatusKeystroke.other, StatusReset.firstKey, AgentStatus.idle),

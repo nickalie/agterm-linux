@@ -55,8 +55,9 @@ extension ControlServer {
         let want: FlaggedViewLayout
         switch mode {
         case .flat: want = .flat
+        case .plain: want = .plain
         case .tree: want = .tree
-        case .toggle: want = current == .flat ? .tree : .flat
+        case .toggle: want = current == .tree ? .flat : .tree
         }
         settingsModel.setFlaggedViewLayout(want)
         return ControlResponse(ok: true, result: ControlResult(text: want.rawValue))
@@ -136,6 +137,12 @@ extension ControlServer {
             return ControlResponse(ok: false, error: "browser.clear: \(failure)")
         }
         return ControlResponse(ok: true)
+    }
+
+    /// Writes through the `SettingsModel` setter the Settings picker uses; the text is the effective mode.
+    func linkOpenMode(_ mode: LinkOpenMode?) -> ControlResponse {
+        if let mode { settingsModel.setLinkOpenMode(mode) }
+        return ControlResponse(ok: true, result: ControlResult(text: settingsModel.settings.effectiveLinkOpenMode.rawValue))
     }
 
     func reloadHooks() -> ControlResponse {

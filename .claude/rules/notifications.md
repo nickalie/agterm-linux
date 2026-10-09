@@ -107,7 +107,8 @@ paths:
   `view.session`. `AgentIndicator.afterKeystroke` returns the next indicator or nil. It takes the key's kind
   (`InterruptKeystroke.classify`: interrupt, submit for a bare Return or keypad Enter, else other) and the
   `StatusReset` mode, which gates whether a `blocked` or `completed` glyph moves at all: any key under
-  `firstKey`, a submit alone under `enter`, never under `never`. Where the gate opens, `completed` clears and
+  `firstKey`, a submit alone under `enter`, never under `never`; under `enter` an interrupt also drops
+  `blocked`, since a cancelled prompt fires no hook. Where the gate opens, `completed` clears and
   an answered `blocked` is PROMOTED to blinking `active` rather than cleared — the approved tool runs with no
   hook until `PostToolUse`, so clearing there left the glyph dark for the whole run; an interrupt stays the
   decline and goes idle. `active` clears on an interrupt in every mode. It moves nothing unless the key's pane
@@ -138,9 +139,10 @@ paths:
 - On pane teardown, `closeSplit`, `closePrimaryPane`, and `closeScratch` clear status owned by the removed
   `.right`, `.left`/nil, or `.scratch` pane, respectively, as they do search state.
 - Input clearing covers the hookless Esc/Ctrl-C decline and completed re-engagement. It must also clear
-  active on quick interrupt: Claude's delayed `Notification[permission_prompt]` uses
-  `messageIdleNotifThresholdMs` (default 60000), and Esc/manual decline emits neither `Stop` nor
-  `PostToolUse`. `PostToolUse` reasserts `active --blink` after an answered prompt. cmux can observe its
+  active on quick interrupt: Esc/manual decline emits neither `Stop` nor `PostToolUse`, and a prompt
+  `PermissionRequest` does not cover turns blocked only through `Notification[permission_prompt]`,
+  about six seconds after the last keystroke.
+  `PostToolUse` reasserts `active --blink` after an answered prompt. cmux can observe its
   own permission UI and herdr scrapes PTY state; agterm does neither.
 - `AgentIndicator.statusPane` also directs GUI selections needing attention. Attention and ordinary
   navigation, palettes, sidebar and Dock rows, and idle auto-follow use

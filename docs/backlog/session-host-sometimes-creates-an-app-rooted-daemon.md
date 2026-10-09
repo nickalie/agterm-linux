@@ -68,7 +68,44 @@ exited or failed before readiness` at 11:48:27, inside the failing test, the sec
 retained `shc-7B86B412-...` `host.log` is empty. Afterwards the test passed 83 times alone, its class 60
 times, and 7 further full hosted runs showed no early stop.
 
-Since that sighting the host records why the attach client stopped. On recurrence, read the retained
+Fourth and fifth sightings, 2026-10-05, the same test: once in a full hosted run (1186 tests) and once
+in 5 isolated iterations of the method, where the 2026-10-01 count was 83 passes alone. Both retained
+`host.log` files, and a third from a full run 20 minutes earlier in which no test failed, hold the same
+stop reason:
+
+```
+attach client PID for agterm-aaaa... stopped before readiness: exited with wait status 256;
+output: session "agterm-aaaa..." created
+error: cannot connect to session "agterm-aaaa...": FileNotFound
+```
+
+So the second route is confirmed, and the attach client's own exit is now on record: `zmx attach`
+reports the session created, then fails to connect to it with `FileNotFound` and exits 1, after which
+the client's bare attach runs under the app. [Inference] the socket file is not published yet when
+the creating client connects; that is read from the message, not measured. The
+directories are `shc-41C6C839-...`, `shc-077BC984-...` and `shc-C5E60B42-...`.
+
+Since the third sighting the host records why the attach client stopped. On recurrence, read the retained
 `host.log` for `attach client PID for NAME stopped before readiness:`, which carries whichever
 stop details apply (wait status, pre-exec errno, poll error) and the tail of the client's terminal output. The fixture also keeps zmx's
 own logs in `zmx-logs` beside it.
+
+Sixth sighting, 2026-10-05, the same test, once in a full hosted run (1190 tests), with a different
+symptom: the test stopped after 10.2 seconds, the length of the fixture's `waitForLeaders` and `hostPID`
+deadlines. XCTest reported `No such process` at `SessionHostClientTests.swift:345`, which is the throw
+`cleanup()` swallows with `try?` and not the error that ended the test. The retained `zmx.log` in
+`shc-A35A9015-...` shows the UNMEDIATED client (`agterm-bbbb...`) logging `creating session` and
+`pty spawned` but never `attached`; its daemon log has no `client connected` and no `kill received`,
+while `zmx kill` was sent, so that daemon was unreachable through its socket. `host.log` is empty and
+unified logging has no `session-host` record in the window, so the host and the mediated client saw no
+error. The unmediated client is plain `zmx attach`, which puts the create-then-cannot-connect failure
+inside zmx, independent of the session host.
+
+[Unverified] one candidate: `createSocket` binds and then listens, and a concurrent `zmx list` that
+connects between the two gets `ConnectionRefused` and deletes the socket as stale (`util.zig`,
+`cleanupStaleSocket`). A probe creating 800 sessions against 4 to 8 concurrent `zmx list` loops
+reproduced nothing, and 60 isolated iterations of the test passed, so this is not established.
+
+The fixture now keeps what was missing: `terminal-INDEX.out` holds each terminal client's pty output,
+which is where a terminal client's `cannot connect` line goes, and `leaders-timeout.list` holds the
+last `zmx list` output when `waitForLeaders` gives up.

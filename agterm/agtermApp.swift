@@ -108,6 +108,11 @@ struct agtermApp: App {
                                           zmxClient: restored.zmxClient,
                                           zmxOutdatedBefore: restored.zmxOutdatedBefore)
         _controlServer = State(initialValue: controlServer)
+        actions.remoteAttacher = controlServer
+        LinkOpener.shared.mode = { settingsModel.settings.effectiveLinkOpenMode }
+        LinkOpener.shared.overlay = { [weak controlServer] url, session in
+            controlServer?.openLinkOverlay(url, session: session) ?? false
+        }
         let liveReset = LiveResetCoordinator(settingsModel: settingsModel,
                                              selection: { [weak controlServer] in controlServer?.liveResetSelection() })
         controlServer.liveReset = liveReset
@@ -276,6 +281,9 @@ struct agtermApp: App {
                         }
                         if !library.hasReopened, !settingsModel.hooksDiagnostics.isEmpty {
                             NotificationManager.shared.notifyHooksDiagnostics(count: settingsModel.hooksDiagnostics.count)
+                        }
+                        if !library.hasReopened, settingsModel.remotes.issueCount > 0 {
+                            NotificationManager.shared.notifyRemotesDiagnostics(count: settingsModel.remotes.issueCount)
                         }
                         // same for ghostty config diagnostics, recorded at boot by GhosttyApp.loadConfig
                         // (applicationDidFinishLaunching, before registration): same `hasReopened` gate.
@@ -756,6 +764,9 @@ struct agtermApp: App {
                                       env: context.localEnvironment(codeFile: codeFile, hudFile: hudFile))
         view.overlayCodeFile = codeFile
         view.hudBodyFile = hudFile
+        // the panel was sized from an estimated cell before this surface existed; once it has a grid, and
+        // whenever a config reload changes its cell, the refresh measures with the cell libghostty draws
+        if isHud { view.onGridChange = { [weak session] in session?.onHudGeometryChange?() } }
         // the overlay's own background color (`session.overlay.open --background-color`), applied in
         // createSurface — the overlay is sessionless, so it can't read it off the session there.
         view.overlayBackgroundColorHex = spec.backgroundColor

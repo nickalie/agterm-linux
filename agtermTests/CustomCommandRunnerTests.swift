@@ -824,7 +824,8 @@ final class CustomCommandRunnerTests: XCTestCase {
     func testSpawnFailurePostsOnlyWhenOptedIn() throws {
         let recorder = HudRecorder()
         let fix = try failureFixture(recorder)
-        fix.session.currentCwd = stateDir.appendingPathComponent("missing-directory").path
+        let missing = stateDir.appendingPathComponent("missing-directory").path
+        fix.session.currentCwd = missing
 
         fix.runner.run(CustomCommand(name: "quiet", command: "true", shortcut: ""))
         XCTAssertTrue(recorder.posts.isEmpty)
@@ -832,7 +833,7 @@ final class CustomCommandRunnerTests: XCTestCase {
                                      errorPosition: .topLeft, errorPane: .left))
 
         XCTAssertEqual(recorder.posts.count, 1)
-        XCTAssertTrue(recorder.posts.first?.message.hasPrefix("loud: ") == true)
+        XCTAssertEqual(recorder.posts.first?.message, "loud: session directory \(missing) no longer exists")
         XCTAssertNil(recorder.posts.first?.detail)
         XCTAssertEqual(recorder.posts.first?.spec.position, .topLeft)
         XCTAssertEqual(recorder.posts.first?.pane, .left)
@@ -1116,12 +1117,12 @@ final class CustomCommandRunnerTests: XCTestCase {
     func testKeymapRunReportsACommandThatDidNotStart() throws {
         let fix = try fixture(keymap: "command \"Mark\" true\n")
         let session = try XCTUnwrap(fix.store.activeSession)
-        session.currentCwd = stateDir.appendingPathComponent("missing-directory").path
+        let missing = stateDir.appendingPathComponent("missing-directory").path
+        session.currentCwd = missing
 
         let response = controlServer(fix).runCustomCommand(name: "Mark", target: nil, window: nil)
 
-        XCTAssertFalse(response.ok)
-        XCTAssertTrue(response.error?.hasPrefix("Mark did not start: ") == true, response.error ?? "no error")
+        XCTAssertEqual(response, ControlResponse(ok: false, error: "Mark did not start: session directory \(missing) no longer exists"))
     }
 
     func testScratchChordKeepsItsOwnerAfterSelectionChanges() throws {

@@ -317,29 +317,12 @@ final class CustomCommandRunner {
         commandEngine.isRepeating && chord(from: event).map(commandEngine.isRepeatTail) == true
     }
 
-    /// Map an `NSEvent` key-down to an agtermCore `Chord`, or nil when it carries no usable base key. The base
-    /// key is the named special key, else what `chordKey` resolves — the unmodified character on a layout that
-    /// can type ASCII, the physical position on one that cannot.
     private func chord(from event: NSEvent) -> Chord? {
-        var mods: Modifier = []
-        let flags = event.modifierFlags
-        if flags.contains(.control) { mods.insert(.control) }
-        if flags.contains(.command) { mods.insert(.command) }
-        if flags.contains(.option) { mods.insert(.option) }
-        if flags.contains(.shift) { mods.insert(.shift) }
-
-        if let named = namedKey(forKeyCode: event.keyCode) {
-            return Chord(mods: mods, key: named)
-        }
         // `characters(byApplyingModifiers: [])` gives the UNSHIFTED base key (shift+/ → "/"), matching how
         // the keymap spells `shift+<base>`. `charactersIgnoringModifiers` instead KEEPS shift (shift+/ → "?")
         // and `.lowercased()` undoes that only for letters, so punctuation would land on the shifted glyph
-        // and never match a `shift+/` binding. `chordKey` then applies the layout rule, so `cmd+o` still
-        // fires on a Cyrillic layout (the key types `щ`).
-        let produced = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers
-        guard let key = chordKey(forKeyCode: event.keyCode, produced: produced,
-                                 layoutIsASCIICapable: KeyboardLayout.isASCIICapable) else { return nil }
-        return Chord(mods: mods, key: key)
+        // and never match a `shift+/` binding.
+        event.keymapChord(produced: event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers)
     }
 
     private func startLeaderTimer(_ interval: TimeInterval = CustomCommandRunner.leaderTimeout) {
@@ -531,6 +514,13 @@ final class CustomCommandRunner {
     /// exit 127. Only commands opting into failure panels capture stderr; a clean exit reports nothing.
     @discardableResult
     private func spawn(_ command: CustomCommand, context: CommandContext, cwd: String?) -> String? {
+        if let cwd, !cwd.isEmpty, !FileManager.default.fileExists(atPath: cwd) {
+            // `Process.run` would refuse it too, naming only the last path component.
+            let reason = "session directory \(TerminalText.sanitized(cwd)) no longer exists"
+            logger.error("custom command \"\(command.name, privacy: .public)\" not started: \(reason, privacy: .public)")
+            report(command: command, reason: reason, detail: nil, sessionID: context.sessionID)
+            return reason
+        }
         let line = context.expand(command.command)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")

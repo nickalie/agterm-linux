@@ -257,11 +257,16 @@ struct CommandPalette: View {
                     .onKeyPress(.downArrow) { move(1); return .handled }
                     .onKeyPress(.upArrow) { move(-1); return .handled }
                     // taken from the field editor: ctrl+k is its kill-to-end-of-line.
-                    .onKeyPress(keys: ["j", "k", "J", "K"], phases: [.down, .repeat]) { press in
-                        guard press.modifiers.intersection([.control, .command, .option, .shift]) == .control else {
-                            return .ignored
-                        }
-                        move(press.key == "j" || press.key == "J" ? 1 : -1)
+                    // `KeyPress` carries the typed character only, which is `о`/`л` on a Cyrillic layout, so the
+                    // physical key comes from the event being dispatched.
+                    .onKeyPress(phases: [.down, .repeat]) { press in
+                        guard press.modifiers.intersection([.control, .command, .option, .shift]) == .control,
+                              let event = NSApp.currentEvent, event.type == .keyDown,
+                              let step = Self.selectionStep(keyCode: event.keyCode,
+                                                            produced: event.charactersIgnoringModifiers,
+                                                            layoutIsASCIICapable: KeyboardLayout.isASCIICapable)
+                        else { return .ignored }
+                        move(step)
                         return .handled
                     }
                     .onKeyPress(.escape) { dismiss(); return .handled }
@@ -321,6 +326,16 @@ struct CommandPalette: View {
                 // layout/compositing and made the material-backed palette flash.
                 proxy.scrollTo(filtered[sel].id)
             }
+        }
+    }
+
+    /// The selection move a control chord asks for: +1 for `j`, -1 for `k`, nil for any other key. The key
+    /// resolves as keymap chords do, so a non-Latin layout answers from the physical J/K positions.
+    static func selectionStep(keyCode: UInt16, produced: String?, layoutIsASCIICapable: Bool) -> Int? {
+        switch chordKey(forKeyCode: keyCode, produced: produced, layoutIsASCIICapable: layoutIsASCIICapable) {
+        case "j": 1
+        case "k": -1
+        default: nil
         }
     }
 

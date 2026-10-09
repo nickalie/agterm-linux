@@ -293,7 +293,8 @@ public final class AppStore {
                             dashboardFontSize: () -> Double? = { nil },
                             dashboardFontMode: () -> String? = { nil }, app: AppIdentity? = nil,
                             liveReset: ControlLiveResetReadback? = nil, indexUnsaved: Bool = false,
-                            flaggedLayout: FlaggedViewLayout? = nil, htmlZoom: Double? = nil) -> ControlTree {
+                            flaggedLayout: FlaggedViewLayout? = nil, htmlZoom: Double? = nil,
+                            linkOpenMode: LinkOpenMode? = nil) -> ControlTree {
         let activeID = selectedSessionID
         // `currentWorkspaceID`, not the selected session's owner: an EMPTY destination selects nothing, so
         // deriving this from the selection alone made `tree` name the workspace `workspace.go` just left.
@@ -389,7 +390,7 @@ public final class AppStore {
                            dashboardFontSize: dashboardFontSize(),
                            dashboardFontMode: dashboardFontMode(),
                            pickPending: pickPending(), askPending: askPending(), app: app, liveReset: liveReset,
-                           indexUnsaved: indexUnsaved ? true : nil)
+                           indexUnsaved: indexUnsaved ? true : nil, linkOpenMode: linkOpenMode?.rawValue)
     }
 
     /// The tree's `paneOverlays`: the panes covered by their own overlay, omitted when neither is.
@@ -408,7 +409,8 @@ public final class AppStore {
                               sizePercent: session.overlaySizePercent,
                               heightPercent: session.hudHeightPercent, position: spec.position.rawValue,
                               pane: session.hudTargetPane?.rawValue, hideAfter: spec.effectiveHideAfter,
-                              markdown: spec.markdown, fontSize: spec.fontSize)
+                              markdown: spec.markdown, fontSize: spec.fontSize,
+                              sticky: spec.sticky, frame: spec.frame)
     }
 
     /// Creates a workspace and appends it. With `revealNewWorkspace` (the default) and the filter ON, the new

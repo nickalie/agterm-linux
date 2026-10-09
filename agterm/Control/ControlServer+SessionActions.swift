@@ -66,6 +66,19 @@ extension ControlServer: ControlActions {
         }
     }
 
+    /// openLinkOverlay shows a clicked link as a browsing page over its session and says whether it did.
+    /// A HUD on the session and a zoomed terminal in its window both refuse it up front: the store would
+    /// accept the page, closing the HUD for good in one case and showing nothing in the other.
+    func openLinkOverlay(_ url: URL, session id: UUID) -> Bool {
+        guard let session = library.store(forSession: id)?.session(withID: id), !session.hudActive else { return false }
+        if let windowID = library.windowID(forSession: id),
+           TerminalZoomRegistry.shared.controller(for: windowID)?.target != nil { return false }
+        let options = ControlSessionOverlayOpenOptions(command: "", cwd: nil, wait: false, sizePercent: nil,
+                                                       backgroundColor: nil, page: .url(url), navigation: true,
+                                                       javascript: true, persistent: true, browse: true)
+        return openSessionOverlay(id.uuidString, window: nil, options: options).ok
+    }
+
     // a page never takes the remote program-job path: the store refuses it while a presenter owns the session
     private func openHtmlOverlay(in store: AppStore, sessionID id: UUID, page: HtmlSource,
                                  options: ControlSessionOverlayOpenOptions) -> ControlResponse {
@@ -76,7 +89,7 @@ extension ControlServer: ControlActions {
             return ControlResponse(ok: false, error: "session.overlay.open: \(failure)")
         }
         let overlay = HtmlOverlay(source: page, navigation: options.navigation, javascript: options.javascript,
-                                  chromeless: options.chromeless, persistent: options.persistent)
+                                  chromeless: options.chromeless, persistent: options.persistent, browse: options.browse)
         if let failure = store.openHtmlOverlay(id, pane: options.pane, overlay: overlay,
                                                sizePercent: options.sizePercent, backgroundColor: options.backgroundColor) {
             return ControlResponse(ok: false, error: failure.message(pane: options.pane))
@@ -148,12 +161,9 @@ extension ControlServer: ControlActions {
     }
 
     /// A HUD resizes through the same slot and field as any floating panel, but never to FULL, which would
-    /// make the message cover the session it is about. The percent reaches its WIDTH only — its height stays
-    /// measured from the message, and the text wraps at `HudLayout.maxColumns` rather than at the panel, so
-    /// a resize cannot change how many rows it needs. A resized HUD also gets its body rewritten: the helper
-    /// centers on the grid in that file's header, so a new panel with the old header would paint the message
-    /// off-center until the next `session.hud.update`. A refused rewrite puts the size back rather than
-    /// leave the two disagreeing.
+    /// make the message cover the session it is about. The percent sets its WIDTH; `refreshHud` then
+    /// measures the height that width needs and rewrites the body, since the helper centers on the grid in
+    /// that file's header. A refused rewrite puts the size back rather than leave the two disagreeing.
     func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
             if let resized = store.resizeRemoteOverlay(id, sizePercent: sizePercent) {
@@ -165,14 +175,15 @@ extension ControlServer: ControlActions {
             if sizePercent == nil, hud {
                 return ControlResponse(ok: false, error: OverlayHudError.fullResize)
             }
-            let previousSize = session?.overlaySizePercent
+            let previousSize = session?.hudPanelSize
+            let previousForcedWidth = session?.hudResizedWidthPercent
             guard store.resizeOverlay(id, sizePercent: sizePercent) else {
                 return ControlResponse(ok: false, error: "no overlay")
             }
-            if hud, let session,
-               !self.writeHudBody(session, pane: self.paneMetrics(for: session, pane: session.hudTargetPane,
-                                                                  fontSize: self.liveHudFontSize(session))) {
-                store.resizeOverlay(id, sizePercent: previousSize)
+            if hud, let session, !self.refreshHud(session) {
+                if let previousSize {
+                    store.setHudSize(id, size: previousSize, forcedWidthPercent: previousForcedWidth)
+                }
                 return ControlResponse(ok: false, error: OverlayHudError.writeFailed)
             }
             if hud { store.publishHudResize(forSession: id, now: self.hudClock()) }

@@ -302,7 +302,9 @@ final class ControlServer {
 
         chmod(socketPath, 0o600)
 
-        guard listen(fd, 8) == 0 else {
+        // the accept loop is serial, so a main-thread stall queues every client here; a short backlog
+        // would refuse them, status hooks included.
+        guard listen(fd, SOMAXCONN) == 0 else {
             log("control listen() failed: \(String(cString: strerror(errno)))")
             close(fd)
             unlink(socketPath)
@@ -329,9 +331,9 @@ final class ControlServer {
     /// until `stop()`, and set `refused` when another live instance holds it.
     ///
     /// `connect` cannot answer the ownership question on Darwin. A live listener whose backlog is full
-    /// refuses with the same `ECONNREFUSED` a socket nobody listens on returns (measured: the app's
-    /// backlog is 8 and one stalled client parks the serial accept loop for up to `readDeadlineSeconds`,
-    /// so saturation is reachable), and a blocking `connect` against it returns immediately rather than
+    /// refuses with the same `ECONNREFUSED` a socket nobody listens on returns (one stalled client parks
+    /// the serial accept loop for up to `readDeadlineSeconds`, so enough clients saturate even a
+    /// `SOMAXCONN` backlog), and a blocking `connect` against it returns immediately rather than
     /// stalling. `flock` carries no such ambiguity, is atomic against a second instance launching in the
     /// same moment, and the kernel releases it when a force-quit kills the holder — which is the case the
     /// `unlink` in `start()` exists for.
@@ -582,6 +584,7 @@ final class ControlServer {
                 .surfaceCursor,
                 .sessionStatus, .sessionFlag, .sessionContext, .sessionSeen, .sessionRestore, .notify,
                 .fontInc, .fontDec, .fontReset, .keymapReload, .keymapList, .keymapRun, .hooksReload, .hooksList, .browserClear,
+                .browserLinks,
                 .configReload, .themeSet, .themeList,
                 .sidebar, .sidebarMode, .sidebarFlaggedLayout, .sidebarExpand, .sidebarCollapse, .sidebarWidth,
                 .sessionType, .sessionCopy,
@@ -871,7 +874,8 @@ final class ControlServer {
             liveReset: liveResetReadback(), indexUnsaved: library.indexUnsaved,
             // the mirror the sidebars render from, so the read-back names what is on screen.
             flaggedLayout: GhosttyApp.shared.flaggedViewLayout,
-            htmlZoom: HtmlOverlayRegistry.shared.zoom
+            htmlZoom: HtmlOverlayRegistry.shared.zoom,
+            linkOpenMode: settingsModel.settings.effectiveLinkOpenMode
         )
     }
 

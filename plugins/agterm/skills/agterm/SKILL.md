@@ -1,23 +1,23 @@
 ---
 name: agterm
 description: >
-  Drive agterm, a macOS or GTK Linux terminal, via agtermctl. Use inside an agterm session when
+  Drive agterm, a macOS or GTK Linux terminal, via agtermctl. Use in an agterm session when
   asked to control it: create, rename, close, select or
   reorder sessions and workspaces; split panes; toggle the scratch terminal; run overlay programs
   and read their exit status; create and show HTML pages, interactive too, URLs or dev servers in an overlay with saved logins;
-  post a HUD or notification; show a picker or question dialog; display an image inline; type
-  into or restart a pane by its stable id, copy its selection or search its scrollback; manage windows; set font size and
+  post a HUD/caption or notification; show a picker or question dialog; show an image inline; type
+  into or restart a pane by id, copy its selection, set the clipboard, search its scrollback; manage windows; set font size and
   theme; reload or edit the keymap, event hooks and agterm-scoped ghostty config; run a custom command; read
   a closed window's session screen; subscribe to status, notification, lifecycle, selection,
   pane-visibility and tree-change events.
   Covers window/workspace/session addressing, AGTERM_* variables,
-  attaching a session from another machine, cookbook recipes, running version, diagnosing
+  attaching a remote session, cookbook recipes, running version, diagnosing
   problems and filing a bug or feature request.
 when_to_use: >
   Trigger on: agterm, agtermctl, AGTERM_SESSION_ID, and, from inside a session, plain requests such as
   split the pane, close the overlay, show a message over the session, show a question dialog, agtermctl ask,
   show an image inline, show this HTML page or artifact, make an HTML page or explainer for this and show
-  it, make a page that switches sessions or returns a choice, preview the report you generated, show this URL or the running dev server, keep me logged in to a page shown in an overlay, search the scrollback, run my custom command, tell me when the selected session changes, attach a session from another Mac, what recipes are there,
+  it, make a page that switches sessions or returns a choice, preview the report you generated, show this URL or the running dev server, keep me logged in to a page shown in an overlay, search the scrollback, run my custom command, tell me when the selected session changes, attach a session from another Mac, copy this to the clipboard, what recipes are there,
   the keymap editor will not open.
 allowed-tools: Bash(agtermctl *)
 ---
@@ -62,7 +62,7 @@ passes it to every child it ever creates, so status hooks running in those child
 Before starting such a process from inside agterm, scrub the variables
 (`env -u AGTERM_ENABLED -u AGTERM_PANE -u AGTERM_PANE_ID -u AGTERM_SESSION_ID -u AGTERM_SOCKET -u AGTERM_WINDOW_ID -u AGTERM_WORKSPACE_ID <cmd>`);
 see troubleshooting.md ("agent-status glyph updates the wrong session") for diagnosing and fixing an
-already-poisoned tmux server.
+already-poisoned tmux server, and for the Codex shared-daemon limitation, which scrubbing does not fix.
 
 ## Running agtermctl
 
@@ -109,7 +109,8 @@ control address for `surface zoom` and `surface cursor` (`left`, `right`, `scrat
 read-only top-level fields — `idleMs` (ms since the last user input in the window), `autoFollowMs`
 (the Auto-follow timeout in ms, omitted when Disabled), `sidebarVisible` (whether the window's
 sidebar is currently shown — the read side of the write-only `sidebar` command), `sidebarMode`
-(`tree` or `flagged` — the read side of `sidebar mode`), `sidebarFlaggedLayout` (`flat` or `tree`, app-wide —
+(`tree` or `flagged` — the read side of `sidebar mode`), `linkOpenMode` (`browser` or `overlay`, app-wide —
+the read side of `browser links`), `sidebarFlaggedLayout` (`flat`, `plain` or `tree`, app-wide —
 the read side of `sidebar flagged-layout`), `sidebarWidth` (the sidebar divider position in
 points — the read side of `sidebar width`, on `tree` only), `workspaceFilter`, `quickVisible` (whether the
 quick terminal is shown — the read side of the write-only `quick` command; app-level, so every window
@@ -230,7 +231,7 @@ overlay resize` for a record-then-restore zoom), `paneOverlays` (the panes cover
 `["left"]`, `["right"]` or `["left","right"]`, omitted when neither is; the read side of `session overlay
 open --pane`, independent of the session-wide `overlay` flag),
 `hud` (the message panel occupying the session-wide slot — `{message, detail?, spinner, backgroundColor?,
-textColor?, sizePercent?, heightPercent?, position, pane?, hideAfter, markdown, fontSize?}`, the two percents being the panel's width and height
+textColor?, sizePercent?, heightPercent?, position, pane?, hideAfter, markdown, fontSize?, sticky, frame}`, the two percents being the panel's width and height
 shares and `hideAfter` the configured auto-hide in seconds, 0 for a panel that stays — omitted when none is
 up; the read side of `session hud`. `position` and `spinner`
 always report the EFFECTIVE value, `center` and a static panel's `none` included, so a caller who omitted
@@ -282,7 +283,9 @@ given. Use `--json` for one bare event object per line; filter with repeatable o
 selection moved; carries the session that lost it as `previous`), `tree.changed`, `pane.split`,
 `pane.scratch`, `remote.opened` and `remote.closed`; resume with paired `--run RUN --after SEQ`; and set
 page size with `--limit 1...1000`. The app retains 4,096 events for one process run. Cursor run changes,
-expiry, and ahead-of-tail errors are fatal and are never silently rebaselined. There is no
+expiry, and ahead-of-tail errors are fatal and are never silently rebaselined. Once the stream holds a
+cursor, a refused connection is retried with that cursor for about 30 s before the stream exits.
+Without a cursor, a refused connection exits at once. There is no
 terminal-output event stream.
 
 **workspace** — `workspace new [name] [--collapsed]` (`--collapsed` creates it closed in the sidebar so you can fill
@@ -383,10 +386,12 @@ omitted when expanded).
 - `session lead [--pane left|right]`: for a session shared with another Mac, take the lead of a pane here
   (what a key press on its "in use" cover does). `tree`'s `surfaces[].lead` reads `leader`/`follower`/
   `unowned`. On the Mac the session runs on, a covered pane still takes `session type`/`text`.
-- `session restart --pane-id ID --command LINE`: end one pane's shell and its foreground program, and start a
-  new login shell there running LINE. Same pane, same stable id, blank screen, nothing typed. Use it to start
-  a program over in its pane instead of typing into it; the reply carries the old and new shell pids. Live
-  sessions mode only.
+- `session restart --pane-id ID [--command LINE]`: end one pane's shell and its foreground program, and start a
+  new login shell there running LINE. Same pane, same stable id, blank screen, nothing typed. Without
+  `--command` it runs the program the pane is running now again, with the same arguments, and refuses when
+  a shell holds the pane or the program cannot be read. Use it to start a program over in its pane instead
+  of typing into it; the reply carries the old and new shell pids, and `restart.replayedArgv` on a replay.
+  Live sessions mode only.
 - `session swap`: exchange the two terminals' physical positions and primary/split roles without restarting
   them. Focus follows the terminal; axis and divider ratio stay fixed. Works on shown or hidden splits and
   under zoom/dashboard; errors when there is no split or either surface is not ready. Read the new primary
@@ -480,11 +485,13 @@ omitted when expanded).
   `--background-color` gives the overlay pane its own solid color, independent of the session's. An
   overlay is a real terminal (pty), which is also how you **display an image inline** — via the bundled
   `scripts/show-image.sh` (see below).
-- `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS] [--pane P] [--pane-id ID]` ·
-  `session hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--text-color #rrggbb] [--size-percent N] [--hide-after SECONDS] [--pane P] [--pane-id ID]` ·
+- `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--sticky] [--no-frame] [--hide-after SECONDS] [--pane P] [--pane-id ID]` ·
+  `session hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--text-color #rrggbb] [--size-percent N] [--sticky] [--no-frame] [--hide-after SECONDS] [--pane P] [--pane-id ID]` ·
   `session hud close` — post a small **passive** panel over the session saying what you are doing
   ("gathering options…"). Unlike an overlay it takes no input and steals nothing: the session keeps first
-  responder, the user keeps typing, and the terminal behind it is neither dimmed nor click-blocked. Use it
+  responder, the user keeps typing, and the terminal behind it is neither dimmed nor click-blocked. With
+  `--markdown` a `[label](url)` link is underlined and opens on ⌘-click, so the panel can link the PR or
+  ticket it is about. Use it
   for the seconds an agent needs before it can show something (computing picker items, waiting on a slow
   command), then take it down. `open` is the default subcommand, so `session hud "…"` posts; a message that is
   literally `update` or `close` needs the explicit `session hud open` verb. `--detail` adds a dim second line,
@@ -503,10 +510,12 @@ omitted when expanded).
   the HUD. The panel is sized from the message on both axes:
   width from the longest line, height from the number of them — so a title and a subtitle give a wide, short
   panel, not a square one. `--size-percent N` (1-100) overrides the WIDTH only, bounded to 10-80% of the
-  pane, since a message must never cover the session it is about, so a requested 100 reads back as 80. The
-  height always follows the message. `--text-color` colors the panel's TEXT and `--background-color` its
+  pane, or up to 100% with `--sticky` off center, since a message must never cover the session it is about.
+  The height always follows the message. `--sticky` (no margin at the edge or corner `--position` names)
+  and `--no-frame` (no border, rounding or blank rows) pin a caption to an edge; reference.md has the
+  example. `--text-color` colors the panel's TEXT and `--background-color` its
   backing, independently. `session hud update` repaints in place with no re-spawn and no blink,
-  and REPLACES the whole spec. Repeat `--detail`/`--spinner`/`--text-color`/`--pane`/`--pane-id` to keep them, since an omitted
+  and REPLACES the whole spec. Repeat `--detail`/`--spinner`/`--text-color`/`--sticky`/`--no-frame`/`--pane`/`--pane-id` to keep them, since an omitted
   one drops. It takes no `--background-color`: the surface reads that once at creation, so only a fresh
   `session hud` changes it and `tree` keeps reporting the creation color across updates, while the text color rides
   the panel's body file and an update recolors it in place. Message and detail are capped at 256 characters and reject control characters, newline included.
@@ -536,8 +545,8 @@ window; read back as `minimized` on `window list`).
 **surface** — `surface zoom [show|hide|toggle] [--target surface:<session-id>:left|right|scratch|overlay|overlay-left|overlay-right|quick] [--window W]`
 — zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
 button remains). Omit `--target` to use the active surface;
-copy an explicit surface id from `tree --json` to address a hidden split/scratch or a background
-session. `quick` is the one target that is not a window surface: it grows the quick-terminal panel to
+copy an explicit surface id from `tree --json` to address a hidden split/scratch, a pane under a
+running overlay, or a background session. `quick` is the one target that is not a window surface: it grows the quick-terminal panel to
 fill its screen, takes no `--window`, is refused while the panel is hidden, and is never what an omitted
 `--target` resolves to. `hide` exits zoom; `toggle`
 enters/exits only this zoom mode, not macOS window zoom.
@@ -610,8 +619,8 @@ per app, so none of them take `--target`/`--window`/`--pane`; all three still ne
 
 **sidebar** — `sidebar [show|hide|toggle]` (visibility; read back from the tree's `sidebarVisible`) ·
 `sidebar mode [tree|flagged|toggle]` (flip between the workspace tree and the flagged working set; read
-back from the tree's top-level `sidebarMode`) · `sidebar flagged-layout [flat|tree|toggle]` (arrange the flagged
-view as one flat list or nested under workspace rows; app-wide, no `--window`, echoes the resulting layout; read
+back from the tree's top-level `sidebarMode`) · `sidebar flagged-layout [flat|plain|tree|toggle]` (arrange the flagged
+view as one flat list, `plain` for the same list without workspace names, or nested under workspace rows; app-wide, no `--window`, echoes the resulting layout; read
 back from `sidebarFlaggedLayout`) · `sidebar expand [--window W]` (expand every workspace) ·
 `sidebar collapse [--window W]` (collapse all workspaces except the active one, which stays expanded) ·
 `sidebar width <points> [--window W]` (move the divider, clamped to 160...560pt; prints the stored width
@@ -631,7 +640,7 @@ with `--error-position POS` and `--error-pane left|right`; see
 
 **hooks** — `hooks reload` — re-read `hooks.conf` (prints the parse-diagnostic count); `hooks list` — every `on <kind> <shell...>` line with its running pid and elapsed seconds, pending and dropped counts, last failure, and a retired marker for a removed line whose script still runs. A hook gets the event JSON on stdin plus `AGT_EVENT_KIND`, `AGT_EVENT_STATUS`, `AGT_EVENT_HOST`, `AGT_SESSION_ID`, `AGT_WORKSPACE_ID`, `AGT_WINDOW_ID` and `AGT_SOCKET`; one process per line at a time with a 256-deep queue behind it. Both commands are app-global and refuse a target or `--window`.
 
-**browser** - `browser clear` - remove every cookie and all site data that `--persistent` URL overlays saved; refused while one is open. App-global, no target or `--window`.
+**browser** - `browser clear` - remove every cookie and all site data that `--persistent` URL overlays saved; refused while one is open. `browser links [browser|overlay]` - set or print where a clicked web link in a terminal opens: the system browser (default) or a full session web overlay with saved logins; read back from `linkOpenMode` in `tree`. Both app-global, no target or `--window`.
 
 **config** - `config reload` - re-read the agterm-scoped `ghostty.conf` (prints the diagnostic count).
 
@@ -688,6 +697,18 @@ open stays where it is when the lead changes. The overlay's program still runs o
 ([details](reference.md#restore)). Both run ssh non-interactively, so key-based auth must already work, and
 the far side needs `agtermctl` installed by the cask or the Help action: a machine merely running agterm
 has no CLI an ssh command can find. Every zmx command needs a running agterm.
+
+**clipboard** — `clipboard set [TEXT]` — copy text to the clipboard of every terminal showing the pane
+the command runs in; the text is the argument, or stdin when omitted (`git diff | agtermctl clipboard set`).
+Text that starts with `-` (a flag, a list item, a diff line) is read as an option: pipe it on stdin, or put
+`--` before it.
+Use it whenever the user asks to copy something to the clipboard: `pbcopy` fills the clipboard of the Mac
+the agent runs on, which is the wrong one when the session is attached from another Mac, while this
+reaches the Mac the user is looking at. It needs no terminal, so it works from a shell tool. Local-only:
+no socket, no `--target`, no `--json`. It works in a main or split pane started under Live sessions and is
+refused elsewhere with `this pane has no zmx daemon`; fall back to `pbcopy` there only when the clipboard
+wanted is this Mac's own. Exit 0 does not confirm receipt, and a terminal set to ask or deny clipboard writes may not take it
+([details](reference.md#clipboard)).
 
 **terminfo** — `terminfo install DESTINATION [-p PORT] [-i FILE ...] [-J HOST] [-F FILE]` — install the
 bundled `xterm-ghostty` terminfo entry into a remote account's `~/.terminfo` over one interactive ssh
@@ -786,6 +807,9 @@ agtermctl session overlay open --url http://localhost:5173/ --js --target "$AGTE
   page. `agtermctl browser clear` empties the store, and is refused while a `--persistent` page is open.
   A login that sends the page to another site (OAuth, SSO, a popup) still fails: the page stays on its
   origin. Apps on `localhost` with different ports share cookies in the store.
+- Pass `--browse` to let the page leave its first site: links, redirects and scripts can then take it to
+  any `http` or `https` address, a redirect login included, and the strip names the site shown. A popup
+  login still fails. `tree` reports `browse` for each page.
 
 Every page gets the terminal theme as CSS variables: `--agterm-background`, `--agterm-foreground` and
 `--agterm-color-0` to `--agterm-color-15`, the theme's ANSI palette by slot (1 red, 2 green, 3 yellow, 4 blue,

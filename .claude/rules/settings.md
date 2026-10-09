@@ -94,8 +94,9 @@ paths:
 - `.agtermAppearanceChanged` is required because terminal color is not observable; it updates
   `terminalColor`, quick-terminal backing, title/window appearance, and non-observable chrome mirrors.
 - Settings is a 540x680 six-tab SwiftUI scene with explicit selection defaulting General, preventing
-  `com_apple_SwiftUI_Settings_selectedTabIndex` persistence. General holds Mouse, Sessions, and Ghostty
-  Config. Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row, plus
+  `com_apple_SwiftUI_Settings_selectedTabIndex` persistence. General holds Mouse and Sessions; the
+  global-Ghostty-config toggle and its hint close Sessions, since a third section made the tab scroll.
+  Appearance holds Terminal and Window. Interface groups `InterfaceElement`s two per row, plus
   Multiple Windows and the quick terminal's panel size, which sits there rather than under Appearance's
   Window because the panel belongs to no window.
   Notifications holds banner/badge/attention/bounce/sound. Agent Status holds colors/shapes, sound,
@@ -276,14 +277,19 @@ paths:
   settings predate the flag never sees it. Decide it in `agtermApp.init()`: the first launch saves its own
   window within a second of the scene appearing, which would read back as prior state.
   `WelcomeAlert` suppresses itself under XCUITest unless `AGTERM_UITEST_SHOW_WELCOME` is set.
-- `flaggedViewLayout` is a raw `FlaggedViewLayout` (`flat`|`tree`), nil for the default `flat`, resolved by
+- `flaggedViewLayout` is a raw `FlaggedViewLayout` (`flat`|`plain`|`tree`), nil for the default `flat`, resolved by
   `effectiveFlaggedViewLayout` and mirrored to `GhosttyApp.flaggedViewLayout`. App-wide, never per window.
   Every sidebar Coordinator picks it up on `.agtermAppearanceChanged`, and only one showing the flagged view
   rebuilds. The picker sits at the bottom of the General tab's Sessions section: the Interface tab is exactly full at
   540x680, and one more row pushes the quick-terminal Size off the bottom. A grouped Form scrolls, so an
-  overflowing tab still reports every control hittable; `testFlaggedViewLayoutPickerPersists` compares the
-  tab's last line against the window frame instead.
+  overflowing tab still reports every control hittable, and its last text can sit inside the window while
+  the section's bottom inset does not; `assertGeneralTabFits` in `SettingsUITests` scrolls the tab and
+  requires the closing hint not to move.
   The control catalog carries it as `sidebar.flagged-layout` ([[control-api]]).
+- `linkOpenMode` is raw `LinkOpenMode`, nil = `browser`, read through `effectiveLinkOpenMode` at each link
+  click; nothing renders from it. Its picker sits in the General tab's Mouse section, and
+  `testLinkOpenModePickerPersists` runs the same fit check. The control catalog carries it as
+  `browser.links` ([[control-api]]).
 - `htmlOverlayZoom` is the one page zoom every HTML overlay shows at, nil = 1, stepped only by the font
   commands through `SettingsModel.stepHtmlOverlayZoom`, which saves and mirrors to `HtmlOverlayRegistry`
   without `persistAndApply`: nothing else renders it, so a keypress must not broadcast an appearance change.
