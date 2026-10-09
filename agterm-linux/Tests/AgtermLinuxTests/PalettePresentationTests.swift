@@ -213,16 +213,24 @@ struct PaletteSelectionStepTests {
 
     @Test("the arrows and control alone with j or k move the selection")
     func steps() {
-        #expect(paletteSelectionStep(keyval: 0xFF52, state: 0) == -1)
-        #expect(paletteSelectionStep(keyval: 0xFF54, state: 0) == 1)
-        #expect(paletteSelectionStep(keyval: 0x6A, state: control) == 1)
-        #expect(paletteSelectionStep(keyval: 0x6B, state: control | numLock) == -1)
-        #expect(paletteSelectionStep(keyval: 0x4A, state: control) == 1)
+        #expect(paletteSelectionStep(keyval: 0xFF52, keycode: 0, state: 0, context: nil) == -1)
+        #expect(paletteSelectionStep(keyval: 0xFF54, keycode: 0, state: 0, context: nil) == 1)
+        #expect(paletteSelectionStep(keyval: 0x6A, keycode: 44, state: control, context: nil) == 1)
+        #expect(paletteSelectionStep(keyval: 0x6B, keycode: 45, state: control | numLock, context: nil) == -1)
+        #expect(paletteSelectionStep(keyval: 0x4A, keycode: 44, state: control, context: nil) == 1)
+    }
+
+    @Test("a non-Latin layout moves the selection from the physical J and K keys")
+    func nonLatinLayout() {
+        let cyrillic = ShortcutKeyContext(activeGroup: 0, layoutIsASCIICapable: false, entries: [])
+        #expect(paletteSelectionStep(keyval: 0x6CF, keycode: 44, state: control, context: cyrillic) == 1)
+        #expect(paletteSelectionStep(keyval: 0x6CC, keycode: 45, state: control, context: cyrillic) == -1)
+        #expect(paletteSelectionStep(keyval: 0x6CF, keycode: 44, state: 0, context: cyrillic) == nil)
     }
 
     @Test("j and k without control alone stay query text")
     func typing() {
-        #expect(paletteSelectionStep(keyval: 0x6A, state: 0) == nil)
-        #expect(paletteSelectionStep(keyval: 0x4B, state: control | shift) == nil)
+        #expect(paletteSelectionStep(keyval: 0x6A, keycode: 44, state: 0, context: nil) == nil)
+        #expect(paletteSelectionStep(keyval: 0x4B, keycode: 45, state: control | shift, context: nil) == nil)
     }
 }

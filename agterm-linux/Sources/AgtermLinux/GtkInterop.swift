@@ -38,17 +38,20 @@ private let GDK_ALT: UInt32 = 1 << 3
 private let GDK_SUPER: UInt32 = 1 << 26
 
 /// The selection step a palette, theme picker or `pick` list takes for a key: the arrows, or ctrl+j and
-/// ctrl+k with control alone held. Nil passes the key on to the search entry.
-func paletteSelectionStep(keyval: UInt32, state: UInt32) -> Int? {
+/// ctrl+k with control alone held. J and K resolve as keymap chords do, so a non-Latin layout answers from
+/// their physical positions (upstream #705). Nil passes the key on to the search entry.
+func paletteSelectionStep(
+    keyval: UInt32, keycode: UInt32, state: UInt32, context: @autoclosure () -> ShortcutKeyContext?
+) -> Int? {
     switch keyval {
     case 0xFF52: return -1
     case 0xFF54: return 1
     default: break
     }
     guard state & (GDK_SHIFT | GDK_CONTROL | GDK_ALT | GDK_SUPER) == GDK_CONTROL else { return nil }
-    switch keyval {
-    case 0x006A, 0x004A: return 1    // j, J (caps lock)
-    case 0x006B, 0x004B: return -1   // k, K
+    switch shortcutChord(fromKeyval: keyval, keycode: keycode, state: state, context: context())?.key {
+    case "j": return 1
+    case "k": return -1
     default: return nil
     }
 }

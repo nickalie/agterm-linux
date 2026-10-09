@@ -355,9 +355,11 @@ private let onPaletteActivate: @MainActor @convention(c) (OpaquePointer?, gpoint
 private let onPaletteRow: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { list, row, _ in
     MainActor.assumeIsolated { controllerForWidget(list)?.runPaletteRow(row) }
 }
-private let onPaletteKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, state, _ in
+private let onPaletteKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, keycode, state, _ in
     if keyval == 0xFF1B { MainActor.assumeIsolated { controllerForEventController(keys)?.closePalette() }; return 1 }
-    guard let step = paletteSelectionStep(keyval: keyval, state: state) else { return 0 }
+    guard let step = paletteSelectionStep(
+        keyval: keyval, keycode: keycode, state: state,
+        context: shortcutKeyContext(event: keys.flatMap { gtk_event_controller_get_current_event($0) }, keycode: keycode)) else { return 0 }
     MainActor.assumeIsolated { controllerForEventController(keys)?.paletteMove(down: step > 0) }
     return 1
 }

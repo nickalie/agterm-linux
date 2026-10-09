@@ -180,13 +180,15 @@ private let onThemeActivated: @MainActor @convention(c) (OpaquePointer?, OpaqueP
 private let onThemeActivateEnter: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { entry, _ in
     MainActor.assumeIsolated { controllerForWidget(entry)?.commitTheme() }
 }
-private let onThemeKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, _, state, _ in
+private let onThemeKey: @MainActor @convention(c) (OpaquePointer?, UInt32, UInt32, UInt32, gpointer?) -> gboolean = { keys, keyval, keycode, state, _ in
     let controller = MainActor.assumeIsolated { controllerForEventController(keys) }
     switch keyval {
     case 0xFF1B: MainActor.assumeIsolated { controller?.cancelTheme() }; return 1
     case 0xFF0D, 0xFF8D: MainActor.assumeIsolated { controller?.commitTheme() }; return 1
     default:
-        guard let step = paletteSelectionStep(keyval: keyval, state: state) else { return 0 }
+        guard let step = paletteSelectionStep(
+            keyval: keyval, keycode: keycode, state: state,
+            context: shortcutKeyContext(event: keys.flatMap { gtk_event_controller_get_current_event($0) }, keycode: keycode)) else { return 0 }
         MainActor.assumeIsolated { controller?.moveThemeSelection(step) }
         return 1
     }
