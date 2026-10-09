@@ -55,18 +55,18 @@ done; } 2>/dev/null
 # every OTHER byte starts a code point, so subtracting these is the count the app measured.
 cont=$(printf '\200-\277')
 
-# Sets `count` to the code points in $1. `${#}` already answers that where the probe succeeded; the loop is
+# Sets `cells` to the code points in $1. `${#}` already answers that where the probe succeeded; the loop is
 # the fallback, and it is builtins only, so a tick still costs no fork. Handing off to a shell that can count
 # was the other option and is not available: `exec` leaves the app's `Process` waiting on a child that never
 # reports, so the panel would outlive every teardown.
 cellcount() {
-    if [ -n "$multibyte" ]; then count=${#1}; return; fi
+    if [ -n "$multibyte" ]; then cells=${#1}; return; fi
     _rest=$1
-    count=0
+    cells=0
     while [ -n "$_rest" ]; do
         case $_rest in
             [$cont]*) ;;
-            *) count=$(( count + 1 )) ;;
+            *) cells=$(( cells + 1 )) ;;
         esac
         _rest=${_rest#?}
     done
@@ -160,8 +160,8 @@ while [ -f "$file" ]; do
             pre="$glyph "
         fi
         first=0
-        cellcount "$line"; linecells=$count
-        cellcount "$pre"; precells=$count
+        cellcount "$line"; linecells=$cells
+        cellcount "$pre"; precells=$cells
         left=$(( (cols - linecells - precells) / 2 ))
         if [ "$left" -gt 0 ]; then
             block="$block${csi}${left}C"
