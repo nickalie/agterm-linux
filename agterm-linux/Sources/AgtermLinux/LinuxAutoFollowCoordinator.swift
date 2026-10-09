@@ -168,10 +168,14 @@ extension AppController {
     /// an omission is silent, which is how `sidebarWidth`, `workspaceFilter`, `pickPending`, `askPending`
     /// and `app` were once erased from every Linux tree read. `LinuxTreeProjectionTests` pins the set.
     func projectingLinuxAutoFollow(_ tree: ControlTree) -> ControlTree {
+        Self.projecting(tree, autoFollowMs: autoFollowCoordinator.timeoutMs)
+    }
+
+    nonisolated static func projecting(_ tree: ControlTree, autoFollowMs: Int?) -> ControlTree {
         ControlTree(
             workspaces: tree.workspaces,
             idleMs: tree.idleMs,
-            autoFollowMs: autoFollowCoordinator.timeoutMs,
+            autoFollowMs: autoFollowMs,
             sidebarVisible: tree.sidebarVisible,
             sidebarMode: tree.sidebarMode,
             sidebarFlaggedLayout: tree.sidebarFlaggedLayout,
@@ -186,7 +190,9 @@ extension AppController {
             pickPending: tree.pickPending,
             askPending: tree.askPending,
             app: tree.app,
-            liveReset: tree.liveReset
+            liveReset: tree.liveReset,
+            indexUnsaved: tree.indexUnsaved,
+            linkOpenMode: tree.linkOpenMode
         )
     }
 

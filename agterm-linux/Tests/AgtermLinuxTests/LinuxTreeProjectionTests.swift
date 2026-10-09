@@ -24,17 +24,9 @@ struct LinuxTreeProjectionTests {
             dashboardHighlighted: "a", dashboardFontSize: 13, dashboardFontMode: "auto",
             pickPending: "pick-id", askPending: "ask-id",
             app: AppIdentity(version: "0.27.1", commit: "abcdef"),
-            liveReset: ControlLiveResetReadback(pending: 1, last: nil))
-        let projected = ControlTree(
-            workspaces: tree.workspaces, idleMs: tree.idleMs, autoFollowMs: tree.autoFollowMs,
-            sidebarVisible: tree.sidebarVisible, sidebarMode: tree.sidebarMode,
-            sidebarFlaggedLayout: tree.sidebarFlaggedLayout,
-            sidebarWidth: tree.sidebarWidth, workspaceFilter: tree.workspaceFilter,
-            quickVisible: tree.quickVisible, zoomedSurface: tree.zoomedSurface,
-            dashboardMembers: tree.dashboardMembers, dashboardHighlighted: tree.dashboardHighlighted,
-            dashboardFontSize: tree.dashboardFontSize, dashboardFontMode: tree.dashboardFontMode,
-            pickPending: tree.pickPending, askPending: tree.askPending, app: tree.app,
-            liveReset: tree.liveReset)
+            liveReset: ControlLiveResetReadback(pending: 1, last: nil), indexUnsaved: true,
+            linkOpenMode: "overlay")
+        let projected = AppController.projecting(tree, autoFollowMs: tree.autoFollowMs)
         #expect(try canonical(projected) == canonical(tree))
     }
 
