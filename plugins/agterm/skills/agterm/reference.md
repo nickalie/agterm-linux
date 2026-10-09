@@ -1035,7 +1035,9 @@ error keeps those names for compatibility.
   strikethrough, nested lists, code blocks, block quotes, rules and tables; an image shows its
   alt text and raw HTML stays literal. A link shows its label, underlined when a ⌘-click opens it:
   `http`, `https`, `mailto` and `ftp` open, a local `file://` link is revealed in Finder, and a link to
-  anything else is its plain label. That ⌘-click is the one click the panel takes, and it moves no focus. It raises the message cap to 4096 characters and allows newlines and tabs
+  anything else is its plain label. That ⌘-click is the one click the panel takes, and it moves no focus.
+  On the GTK Linux frontend it is a Ctrl-click, a local file opens its folder, and the pointer stays an arrow
+  over the link because the panel takes no input. It raises the message cap to 4096 characters and allows newlines and tabs
   in it; every other control character is still refused and the detail keeps the plain rules. Markdown
   semantics apply: a single newline inside a paragraph is a space, so end a line with two spaces or a
   backslash, or use list items, to keep rows apart; lists always render tight. Text wraps as the sizing
@@ -1750,6 +1752,7 @@ only for a host the page could load: an unqualified name such as `localhost`, a 
 address; `http` to any other host name opens in the browser. `mailto`, `ftp` and `file` links are
 unaffected. The setting is the one in Settings > General > Open links in. App-global; refuses a target or
 `--window`. Read back `linkOpenMode` at the top of `tree --json`. No event reports a change.
+On the GTK Linux frontend a link opens on Ctrl-click and the plain-`http` rule is the same.
 
 ## config
 
@@ -1960,7 +1963,8 @@ File ▸ Attach Remote… is the same flow in the GUI and has no command of its 
 `<config dir>/remotes.conf` (one `destination [label]` per line, `#` comments), asks which in the picker
 when there are several, then lists that machine's sessions and attaches the picked one. It is the
 `attach_remote` keymap action, on Cmd-Shift-R unless `keymap.conf` maps another chord. A script composes
-`zmx tree`, `pick` and `zmx attach` instead.
+`zmx tree`, `pick` and `zmx attach` instead. The GTK Linux frontend has no File menu: Attach Remote… is an
+action-palette row and Ctrl-Shift-R, and a `keymap.conf` that already binds that chord keeps it.
 
 A program in an attached session runs on the origin and talks to the origin's agterm, so what it asks
 agterm to draw would show there only. Every attach therefore also opens a presentation stream, and this
@@ -2091,7 +2095,8 @@ text on the Mac showing it, and on the Mac it runs on as well.
 - Exit 0 means `zmx print` exited zero. It reads no reply, so that confirms neither that the session
   received the text nor that a terminal applied it. Other failures exit 1:
   `no zmx next to this agtermctl` for a CLI running outside the app bundle, and `zmx print exited N` with
-  zmx's own message.
+  zmx's own message. The GTK Linux payload keeps zmx in `libexec`, beside the CLI's `bin`, and `wl-copy` or
+  `xclip` stand where `pbcopy` does above.
 - A copy made while the pane's program is in the middle of heavy output can land inside one of its escape
   sequences and garble that one sequence. Copy while the program is idle when it matters.
 

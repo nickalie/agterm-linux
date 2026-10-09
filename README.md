@@ -41,7 +41,7 @@ Code layout:
 
 ### Linux feature parity and platform differences
 
-The `linux-port` branch carries the upstream v0.26.0 terminal model and control protocol, including
+The `linux-port` branch carries the upstream v0.36.0 terminal model and control protocol, including
 live and remote sessions on the bundled zmx multiplexer, per-session context lines in the title bar,
 pane swapping, sidebar-width control, on-demand restore capture, foreground-shell reporting, cursor shape
 and blink, a sizable quick-terminal panel,
@@ -91,6 +91,13 @@ Panes waiting to reconnect, and dropped presentation streams, retry at once when
 (`PrepareForSleep`) or `GNetworkMonitor` reports the network back; without a system bus only the network applies.
 The Integrations page installs OpenCode 2's status plugin when `opencode --version` reports 2 and keeps OpenCode 1's
 when the version cannot be read, where macOS asks: the plan-based installer has no dialog to ask from.
+A clicked link is a Ctrl-click, as in any Linux terminal; with Settings ▸ General ▸ Open links in set to
+Session overlay it opens over its session as upstream's ⌘-click does, plain http to a qualified public host
+still going to the browser as on macOS. A Ctrl-click on a link in a HUD panel opens it too, but the pointer
+does not turn into a hand over it: the panel takes no input, and GTK draws the cursor of the widget under it.
+Attach Remote… is a palette row and Ctrl+Shift+R, GTK having no File menu; a keymap that already binds that
+chord keeps it. `remotes.conf` is read whenever the palette opens rather than watched.
+`agtermctl clipboard set` uses the zmx in the payload's `libexec`, beside the `bin` holding the CLI.
 Hidden panes keep their GL renderers: upstream frees a hidden pane's Metal swap chain and bumps its
 libghostty pin for the upstream hidden-surface work, while this fork pins its own libghostty with three
 local patches and deliberately keeps a stable `GtkGLArea` per session so Dashboard can mirror live surfaces
