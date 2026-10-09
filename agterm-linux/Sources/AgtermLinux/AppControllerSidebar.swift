@@ -108,8 +108,10 @@ extension AppController {
         var plan: [(id: UUID, isWorkspace: Bool, text: String)] = []
         guard let projection = LinuxSidebarPolicy.workspaceProjection(
             store, flaggedLayout: GhosttyApp.shared.flaggedViewLayout) else {
+            let breadcrumb = LinuxSidebarPolicy.labelsSessionsWithWorkspace(
+                store, flaggedLayout: GhosttyApp.shared.flaggedViewLayout)
             return store.flaggedSessions.filter { renaming?.id != $0.id }
-                .map { ($0.id, false, LinuxSidebarPolicy.flaggedRowLabel(for: $0, in: store)) }
+                .map { ($0.id, false, breadcrumb ? LinuxSidebarPolicy.flaggedRowLabel(for: $0, in: store) : $0.displayName) }
         }
         for (ws, sessions) in projection {
             if renaming?.id != ws.id { plan.append((ws.id, true, ws.name)) }

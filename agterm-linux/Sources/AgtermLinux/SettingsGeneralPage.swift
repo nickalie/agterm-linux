@@ -11,6 +11,16 @@ extension AppSettings.NewSessionPlacement {
     }
 }
 
+extension FlaggedViewLayout {
+    var settingsTitle: String {
+        switch self {
+        case .flat: "Flat list"
+        case .plain: "Flat list, names only"
+        case .tree: "Workspace tree"
+        }
+    }
+}
+
 @MainActor
 extension AppController {
     func makeGeneralSettingsPage(_ settings: AppSettings) -> OpaquePointer? {
@@ -104,7 +114,7 @@ extension AppController {
         adw_preferences_group_add(
             cast(sessions),
             W(preferencesCombo(
-                "Flagged view layout", values: layouts.map { $0 == .flat ? "Flat list" : "Workspace tree" },
+                "Flagged view layout", values: layouts.map(\.settingsTitle),
                 selected: layouts.firstIndex(of: settings.effectiveFlaggedViewLayout) ?? 0,
                 handler: unsafeBitCast(onSettingsFlaggedViewLayout, to: GCallback.self))))
         adw_preferences_page_add(cast(page), cast(sessions))

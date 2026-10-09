@@ -55,6 +55,14 @@ struct LinuxFlaggedLayoutTests {
         #expect(LinuxSidebarPolicy.labelsSessionsWithWorkspace(fx.store, flaggedLayout: .flat))
     }
 
+    @Test("the plain flagged list has no workspace rows and names no workspace")
+    func plainFlaggedList() {
+        let fx = fixture()
+        fx.store.setSidebarMode(.flagged)
+        #expect(LinuxSidebarPolicy.workspaceProjection(fx.store, flaggedLayout: .plain) == nil)
+        #expect(!LinuxSidebarPolicy.labelsSessionsWithWorkspace(fx.store, flaggedLayout: .plain))
+    }
+
     @Test("the ordinary tree renders every session whatever the flagged layout")
     func ordinaryTreeIgnoresLayout() throws {
         let fx = fixture()
@@ -70,8 +78,10 @@ struct LinuxFlaggedLayoutTests {
     func controlModes() {
         #expect(LinuxSidebarPolicy.flaggedLayout(for: .toggle, current: .flat) == .tree)
         #expect(LinuxSidebarPolicy.flaggedLayout(for: .toggle, current: .tree) == .flat)
+        #expect(LinuxSidebarPolicy.flaggedLayout(for: .toggle, current: .plain) == .tree)
         for current in FlaggedViewLayout.allCases {
             #expect(LinuxSidebarPolicy.flaggedLayout(for: .flat, current: current) == .flat)
+            #expect(LinuxSidebarPolicy.flaggedLayout(for: .plain, current: current) == .plain)
             #expect(LinuxSidebarPolicy.flaggedLayout(for: .tree, current: current) == .tree)
         }
     }

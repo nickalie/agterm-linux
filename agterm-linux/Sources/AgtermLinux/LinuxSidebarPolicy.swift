@@ -17,7 +17,7 @@ enum LinuxSidebarPolicy {
             """
     }
 
-    /// The workspace rows and the session rows under each, in store order; nil under the flat flagged list,
+    /// The workspace rows and the session rows under each, in store order; nil under either flat flagged list,
     /// which has no workspace rows. The flagged tree reads every workspace, since flagged mode ignores the
     /// focus filter, and omits a workspace holding nothing flagged.
     @MainActor
@@ -35,12 +35,13 @@ enum LinuxSidebarPolicy {
     static func flaggedLayout(for mode: ControlFlaggedLayoutMode, current: FlaggedViewLayout) -> FlaggedViewLayout {
         switch mode {
         case .flat: return .flat
+        case .plain: return .plain
         case .tree: return .tree
-        case .toggle: return current == .flat ? .tree : .flat
+        case .toggle: return current == .tree ? .flat : .tree
         }
     }
 
-    /// Only the flat flagged list names each row's workspace; every other layout nests rows under it.
+    /// Only the `flat` flagged list names each row's workspace; `plain` drops it and `tree` nests rows under it.
     @MainActor
     static func labelsSessionsWithWorkspace(_ store: AppStore, flaggedLayout: FlaggedViewLayout) -> Bool {
         store.sidebarMode == .flagged && flaggedLayout == .flat
