@@ -65,6 +65,12 @@ struct TerminalClipboardTests {
         }
     }
 
+    @Test func theLinuxPayloadFindsZmxInLibexec() throws {
+        let zmx = try fixture.linuxPayload()
+
+        #expect(try TerminalClipboard.zmxPath(clientPath: zmx.client) == zmx.zmx)
+    }
+
     @Test func anUnresolvedClientPathFindsNoZmx() {
         #expect(throws: TerminalClipboard.Failure.zmxNotFound(path: nil)) { try TerminalClipboard.zmxPath(clientPath: nil) }
     }
@@ -132,6 +138,19 @@ private struct Fixture {
         try Data().write(to: client)
         let zmx = macOS.appendingPathComponent("zmx")
         if withZmx { try script(at: zmx, body: "exit 0") }
+        return (client.path, zmx.path)
+    }
+
+    func linuxPayload() throws -> (client: String, zmx: String) {
+        let payload = root.appendingPathComponent("agterm-linux")
+        let bin = payload.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let client = bin.appendingPathComponent("agtermctl.bin")
+        try Data().write(to: client)
+        try FileManager.default.createDirectory(at: payload.appendingPathComponent("libexec"),
+                                                withIntermediateDirectories: true)
+        let zmx = payload.appendingPathComponent("libexec/zmx")
+        try script(at: zmx, body: "exit 0")
         return (client.path, zmx.path)
     }
 

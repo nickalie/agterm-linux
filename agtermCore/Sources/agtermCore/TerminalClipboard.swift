@@ -34,12 +34,18 @@ public enum TerminalClipboard {
         return session
     }
 
-    /// zmxPath is the zmx beside the CLI in `Contents/MacOS`; `clientPath` is the CLI's resolved real
-    /// path. PATH is not searched: only the bundled zmx is known to match this build.
+    /// zmxPath is the zmx beside the CLI in `Contents/MacOS`, or in the Linux payload's `../libexec`;
+    /// `clientPath` is the CLI's resolved real path. PATH is not searched: only the bundled zmx is known to
+    /// match this build.
     static func zmxPath(clientPath: String?, fileManager: FileManager = .default) throws -> String {
         guard let clientPath else { throw Failure.zmxNotFound(path: nil) }
-        let path = ((clientPath as NSString).deletingLastPathComponent as NSString).appendingPathComponent("zmx")
-        guard fileManager.isExecutableFile(atPath: path) else { throw Failure.zmxNotFound(path: path) }
+        let directory = (clientPath as NSString).deletingLastPathComponent as NSString
+        let candidates = [directory.appendingPathComponent("zmx"),
+                          ((directory.deletingLastPathComponent as NSString).appendingPathComponent("libexec") as NSString)
+                              .appendingPathComponent("zmx")]
+        guard let path = candidates.first(where: fileManager.isExecutableFile(atPath:)) else {
+            throw Failure.zmxNotFound(path: candidates[0])
+        }
         return path
     }
 
@@ -64,7 +70,12 @@ public enum TerminalClipboard {
         process.standardError = stderr
         try process.run()
         // a zmx that exits before reading everything must surface as its status, not kill this process
+        #if canImport(Darwin)
         _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        #else
+        // Linux has no per-descriptor SIGPIPE switch; this runs in the one-shot CLI, which reports and exits
+        signal(SIGPIPE, SIG_IGN)
+        #endif
         try? stdin.fileHandleForWriting.write(contentsOf: sequence)
         try? stdin.fileHandleForWriting.close()
         let diagnostics = stderr.fileHandleForReading.readDataToEndOfFile()
