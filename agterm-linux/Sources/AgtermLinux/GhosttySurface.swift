@@ -821,9 +821,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// foreground. `$SHELL` widens recognition to a non-standard login shell, as the capture does.
     func paneForeground(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot? = nil)
         -> CommandRestore.PaneForeground? {
-        guard let argv = rawForegroundArgv(zmxSnapshot: zmxSnapshot) else { return nil }
-        let loginShell = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
-        return CommandRestore.paneForeground(argv: argv, extra: loginShell)
+        observedForeground(zmxSnapshot: zmxSnapshot)?.foreground
     }
 
     /// The daemon this pane attached to, for a live pane. Derived from the pane identity the attach was
@@ -833,15 +831,9 @@ final class GhosttySurface: PaneRoleMutableSurface {
         return ZmxSupport.daemonName(for: identity)
     }
 
-    private func rawForegroundArgv(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot?) -> [String]? {
-        guard let pid = foregroundPID(zmxSnapshot: zmxSnapshot),
-              let data = try? Data(contentsOf: URL(fileURLWithPath: "/proc/\(pid)/cmdline")) else { return nil }
-        return CommandRestore.parseProcCmdline(data)
-    }
-
     /// libghostty's own answer is the ATTACH CLIENT for a live pane, so a wrapped pane resolves its
     /// daemon's pty foreground group instead.
-    private func foregroundPID(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot?) -> Int32? {
+    func foregroundPID(zmxSnapshot: LinuxZmxForegroundResolver.Snapshot?) -> Int32? {
         if let name = zmxDaemonName {
             return zmxSnapshot?.foregroundPID(sessionName: name) ?? gZmx?.foreground.foregroundPID(sessionName: name)
         }

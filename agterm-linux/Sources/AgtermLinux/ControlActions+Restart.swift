@@ -4,7 +4,7 @@ import Glibc
 import agtermCore
 
 /// `session.restart`: ends a live pane's daemon and builds the pane a new surface whose daemon runs the
-/// caller's line, as upstream's `ControlServer+Restart` does. The GTK control path is synchronous, so each
+/// caller's line, or the pane's foreground program again, as upstream's `ControlServer+Restart` does. The GTK control path is synchronous, so each
 /// wait spins the main loop instead of suspending. `.claude/rules/control-api.md` owns the contract.
 @MainActor
 extension AppController {
@@ -41,6 +41,13 @@ extension AppController {
         guard paneSurface(of: session, resolved.pane) === old, store.session(withID: session.id) != nil else {
             return err("the pane changed before the restart; nothing was started")
         }
+        var replay: RestartReplay.Launch?
+        if options.command == nil {
+            switch replayLaunch(of: old, leader: oldPid) {
+            case .failure(let refusal): return err(refusal.message)
+            case .success(let launch): replay = launch
+            }
+        }
         // read before the kill: without it the restart could not tell when the old program is gone
         guard let program = client.foregroundJob(ofShell: oldPid) else {
             return err("the process table cannot be read, so the old program could not be tracked; nothing was changed")
@@ -70,9 +77,10 @@ extension AppController {
         store.clearPaneOwnedState(session.id, pane: pane)
         let cwd = session.cwd(for: pane == .right ? .right : .left)
         let launch = PaneReattach(
-            command: ZmxSupport.attachCommand(zmx, replaying: nil, creationCommand: options.command, denylist: []),
+            // the denylist was applied before the kill: a rejection here would start a plain shell instead
+            command: ZmxSupport.attachCommand(zmx, replaying: replay?.argv, creationCommand: options.command, denylist: []),
             wait: false, environment: zmx.environment,
-            workingDirectory: FileManager.default.fileExists(atPath: cwd) ? cwd : old.cwd)
+            workingDirectory: replay?.workingDirectory ?? (FileManager.default.fileExists(atPath: cwd) ? cwd : old.cwd))
         guard let fresh = replacePane(old, launch: launch, lead: lead, cover: false) else {
             closeEndedPane(old, session: session, identity: resolved.identity)
             return err("the old shell ended (pid \(oldPid)) and the pane could not be rebuilt; it was closed")
@@ -84,10 +92,32 @@ extension AppController {
         guard let newPid = shell(daemon: resolved.daemon, otherThan: oldPid, within: Self.restartWait) else {
             return err("the old shell ended (pid \(oldPid)) and no new one was observed")
         }
-        let receipt = ControlRestartReceipt(paneID: resolved.identity.uuidString, oldPid: oldPid, newPid: newPid)
+        let receipt = ControlRestartReceipt(paneID: resolved.identity.uuidString, oldPid: oldPid, newPid: newPid,
+                                            replayedArgv: replay?.argv)
+        let replayed = replay.map { "; replay requested: \(CommandRestore.shellQuotedLine($0.argv))" } ?? ""
         return ControlResponse(ok: true, result: ControlResult(
-            id: session.id.uuidString, text: "restarted \(pane.rawValue) pane: shell \(oldPid) -> \(newPid)",
+            id: session.id.uuidString, text: "restarted \(pane.rawValue) pane: shell \(oldPid) -> \(newPid)\(replayed)",
             pane: pane.rawValue, restart: receipt))
+    }
+
+    /// The pane's foreground program and the directory it runs in, read from a fresh leader listing.
+    private func replayLaunch(of surface: GhosttySurface, leader: pid_t) -> Result<RestartReplay.Launch, RestartReplay.Refusal> {
+        let observed = surface.observedForeground(zmxSnapshot: gZmx.foreground.freshSnapshot(timeout: 1))
+        let directory = observed.flatMap { Self.workingDirectory(of: $0.pid) }
+        let shell = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
+        return RestartReplay.resolve(
+            .init(foreground: observed?.foreground, isDaemonLeader: observed?.pid == leader, workingDirectory: directory),
+            shell: shell, denylist: restoreDenylist())
+    }
+
+    /// The process's working directory through `/proc/<pid>/cwd`, nil when unreadable or not a directory.
+    nonisolated static func workingDirectory(of pid: Int32) -> String? {
+        guard let path = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/cwd") else {
+            return nil
+        }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+            ? path : nil
     }
 
     private func resolveRestartTarget(_ target: String?, options: ControlSessionRestartOptions)
