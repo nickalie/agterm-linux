@@ -1869,6 +1869,94 @@ def verify_v035_controls(env, state):
         server.kill()
 
 
+def verify_v036_controls(env, state):
+    """Link-open mode, the plain flagged layout, sticky and frameless HUDs, browsing pages, window.close(),
+    the Attach Remote row and clipboard set's refusal outside Live sessions."""
+    config = os.path.join(state, "config")
+    os.makedirs(config)
+    with open(os.path.join(config, "remotes.conf"), "w", encoding="utf-8") as target:
+        target.write("# one machine\nbuildbox Build box\n")
+    pages_dir = os.path.join(state, "pages")
+    os.makedirs(pages_dir)
+    closing = os.path.join(pages_dir, "closing.html")
+    with open(closing, "w", encoding="utf-8") as target:
+        target.write("<html><body><script>setTimeout(() => window.close(), 300)</script>bye</body></html>")
+    with open(os.path.join(pages_dir, "start.html"), "w", encoding="utf-8") as target:
+        target.write("<html><head><title>Start</title></head><body>start</body></html>")
+    server = subprocess.Popen([sys.executable, "-u", "-m", "http.server", "0", "--bind", "127.0.0.1",
+                               "--directory", pages_dir],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    banner = server.stdout.readline()
+    match = re.search(r"port (\d+)", banner)
+    if not match:
+        server.kill()
+        raise AssertionError(f"the test http server did not start: {banner!r}")
+    port = int(match.group(1))
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        first = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        def node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        def request(cmd, target=None, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": target, "args": args})
+
+        assert control_json(env, "browser", "links", "--json")["result"]["text"] == "browser"
+        assert window_tree(env, window_id)["linkOpenMode"] == "browser"
+        assert control_json(env, "browser", "links", "overlay", "--json")["result"]["text"] == "overlay"
+        assert window_tree(env, window_id)["linkOpenMode"] == "overlay"
+        bad = request("browser.links", mode="tab")
+        assert not bad["ok"] and bad["error"] == "invalid link mode: tab", bad
+        assert control_json(env, "browser", "links", "browser", "--json")["ok"]
+
+        assert control_json(env, "sidebar", "flagged-layout", "plain", "--json")["result"]["text"] == "plain"
+        assert window_tree(env, window_id)["sidebarFlaggedLayout"] == "plain"
+        assert control_json(env, "sidebar", "flagged-layout", "--json")["result"]["text"] == "tree"
+        assert control_json(env, "sidebar", "flagged-layout", "flat", "--json")["ok"]
+
+        assert control_json(env, "session", "hud", "caption", "--sticky", "--no-frame", "--position", "top",
+                            "--size-percent", "100", "--target", first, "--json")["ok"]
+        hud = wait_for(lambda: node().get("hud"), "the HUD never read back")
+        assert hud["sticky"] and not hud["frame"] and hud["sizePercent"] == 100, hud
+        full = request("session.overlay.resize", first)
+        assert not full["ok"] and "--size-percent" in full["error"], full
+        assert control_json(env, "session", "hud", "update", "plain again", "--target", first, "--json")["ok"]
+        hud = node()["hud"]
+        assert not hud["sticky"] and hud["frame"] and hud["sizePercent"] <= 80, hud
+        assert control_json(env, "session", "hud", "close", "--target", first, "--json")["ok"]
+
+        refused = request("session.overlay.open", first, html=closing, browse=True)
+        assert not refused["ok"] and "--browse" in refused["error"], refused
+        assert request("session.overlay.open", first, url=f"http://127.0.0.1:{port}/start.html", browse=True)["ok"]
+        page = wait_for(lambda: (lambda pages: pages[0] if pages and pages[0].get("title") == "Start" else None)(
+            node().get("htmlOverlays") or []), "the browsing page never loaded", timeout=30)
+        assert page["browse"] and page["page"] == f"http://127.0.0.1:{port}/start.html", page
+        assert request("session.overlay.close", first)["ok"]
+
+        opened = request("session.overlay.open", first, html=closing, javascript=True)
+        assert opened["ok"], opened
+        wait_for(lambda: not node().get("htmlOverlays"), "window.close() left the overlay open", timeout=30)
+        outcome = request("session.overlay.result", page=opened["result"]["pageID"])
+        assert outcome["result"]["pageOutcome"]["outcome"] == "dismissed", outcome
+
+        focus_window(process.pid)
+        press_ctrl_shift_p(process.pid)
+        wait_for(lambda: named(find_app(process.pid), "Attach Remote…"), "the palette has no Attach Remote row")
+        press_escape(process.pid)
+
+        clipboard = subprocess.run([CTL, "clipboard", "set", "copied"], env=dict(env, ZMX_SESSION="", ZMX_DIR=""),
+                                   capture_output=True, text=True, timeout=10)
+        assert clipboard.returncode == 1 and "no zmx daemon" in clipboard.stderr, clipboard
+        print("OK: link mode, plain flagged layout, sticky/frameless HUD, browsing page, window.close(), "
+              "Attach Remote row, clipboard refusal")
+    finally:
+        stop(process)
+        server.kill()
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3120,7 +3208,8 @@ def main():
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
-            "v034-html-bridge", "v034-session-placement", "v035-controls", "dashboard-modal", "context-menu",
+            "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "dashboard-modal",
+            "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
             "custom-command-failures", "surface-lifetimes", "surface-env", "restore-spawn",
@@ -3187,6 +3276,8 @@ def main():
             verify_v034_session_placement(env, state)
         elif scenario == "v035-controls":
             verify_v035_controls(env, state)
+        elif scenario == "v036-controls":
+            verify_v036_controls(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":
