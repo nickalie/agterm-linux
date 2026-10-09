@@ -305,6 +305,7 @@ final class AppController {
         gtk_overlay_set_child(windowOverlay, W(split))
         // An AdwToastOverlay wraps the content so the app can surface transient banners (keymap/config
         // parse diagnostics, command failures) without a modal — the GTK analogue of the macOS banner.
+        installHudLinkClick()
         let toast = OpaquePointer(adw_toast_overlay_new())
         self.toastOverlay = toast
         adw_toast_overlay_set_child(toast, W(windowOverlay))
