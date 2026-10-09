@@ -127,7 +127,7 @@ final class GhosttyApp: @unchecked Sendable {
     /// Build a ghostty config (bundled defaults + the user's ~/.config/ghostty + the given
     /// extra lines, e.g. `theme = <name>`), finalized and ready for ghostty_surface_update_config.
     /// Caller owns it and must ghostty_config_free it after applying.
-    func buildConfig(extraLines: [String]) -> ghostty_config_t? {
+    func buildConfig(extraLines: [String], overlayLines: [String] = []) -> ghostty_config_t? {
         let cfg = ghostty_config_new()
         if let path = Self.writeDefaultsConf() { path.withCString { ghostty_config_load_file(cfg, $0) } }
         if linuxSettingsStore().load().inheritGlobalGhosttyConfig == true {
@@ -152,6 +152,10 @@ final class GhosttyApp: @unchecked Sendable {
         // recursive resolution after all load_file calls, before finalize). Without this a user's
         // `config-file` directives are silently ignored on Linux.
         ghostty_config_load_recursive_files(cfg)
+        // a per-surface overlay loads after the includes too, or one of them restating a key outranks it
+        if !overlayLines.isEmpty, let overlay = Self.writeTempConf(overlayLines) {
+            overlay.withCString { ghostty_config_load_file(cfg, $0) }
+        }
         Self.forceUnsupportedShellFeaturesOff(cfg)
         clearStaticTitle(cfg)
         ghostty_config_finalize(cfg)
@@ -206,7 +210,7 @@ final class GhosttyApp: @unchecked Sendable {
             for: settings ?? AppController.resolvedThemeSettings(persisted: linuxSettingsStore().load()),
             isDark: appliedAppearanceSide?.isDark ?? AppController.systemIsDark)
         let overlay = overlayText.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
-        return buildConfig(extraLines: base + overlay)
+        return buildConfig(extraLines: base, overlayLines: overlay)
     }
 
     /// `<configDir>/ghostty.conf` — the agterm-scoped ghostty config layer, resolved via the shared
@@ -294,7 +298,12 @@ final class GhosttyApp: @unchecked Sendable {
             case GHOSTTY_ACTION_CELL_SIZE:
                 // fires when the cell pixel size changes (font-size via Ctrl+/-, or a DPI change):
                 // a trigger to read + persist the live font size.
-                Self.wrapper(fromTarget: target)?.reportFontSize()
+                let surface = Self.wrapper(fromTarget: target)
+                surface?.reportFontSize()
+                // a HUD panel is measured with its own cell
+                if surface?.role == .overlay {
+                    surface?.controller?.store.session(withID: surface?.sessionID ?? UUID())?.onHudGeometryChange?()
+                }
                 return true
             case GHOSTTY_ACTION_MOUSE_VISIBILITY:
                 // hide the pointer over the terminal while typing; restore it on movement.

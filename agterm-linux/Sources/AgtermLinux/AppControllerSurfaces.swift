@@ -595,17 +595,27 @@ extension AppController {
                                         max(Int32(160), dh * Int32(pct) / 100))
             return
         }
-        gtk_widget_set_size_request(W(frame), dw * Int32(pct) / 100, dh * Int32(heightPercent) / 100)
-        let position = s.hudSpec?.position ?? HudPosition.defaultPosition
-        let vertical = Self.floatingOverlayAnchor(extent: dh, sizePercent: heightPercent,
+        let spec = s.hudSpec
+        // a frameless HUD keeps the opaque backing and only loses the border and the rounding
+        if spec?.frame == false {
+            gtk_widget_add_css_class(W(frame), "agterm-frameless")
+        } else {
+            gtk_widget_remove_css_class(W(frame), "agterm-frameless")
+        }
+        // the height is held in points when measured: a share of the pane would grow the panel with the window
+        let panelHeight = s.hudHeightPoints.map { Int32($0.rounded()) } ?? dh * Int32(heightPercent) / 100
+        gtk_widget_set_size_request(W(frame), dw * Int32(pct) / 100, panelHeight)
+        let position = spec?.position ?? HudPosition.defaultPosition
+        let margin = spec?.sticky == true ? 0 : HudPosition.edgeMarginPercent
+        let vertical = Self.floatingOverlayAnchor(extent: dh, panel: panelHeight, marginPercent: margin,
                                                   band: position.verticalBand)
-        let horizontal = Self.floatingOverlayAnchor(extent: dw, sizePercent: pct,
+        let horizontal = Self.floatingOverlayAnchor(extent: dw, panel: dw * Int32(pct) / 100, marginPercent: margin,
                                                     band: position.horizontalBand)
         // GtkOverlay measures a child's margins from the DECK's edges, so a pane-scoped panel carries the
         // pane's own offset in the margin. Aligning to one edge on each axis is what makes both offsets
         // expressible: the leading margin then reads as an absolute position rather than a gap.
         let inset = bounds.map { (x: Int32($0.x), y: Int32($0.y)) } ?? (x: 0, y: 0)
-        let panelWidth = dw * Int32(pct) / 100, panelHeight = dh * Int32(heightPercent) / 100
+        let panelWidth = dw * Int32(pct) / 100
         gtk_widget_set_valign(W(frame), GTK_ALIGN_START)
         gtk_widget_set_margin_top(W(frame), inset.y + vertical.offset(extent: dh, panel: panelHeight))
         gtk_widget_set_margin_bottom(W(frame), 0)
@@ -631,13 +641,13 @@ extension AppController {
         }
     }
 
-    /// Resolves one axis, collapsing to center when the panel and its margin do not both fit. The clamp on
-    /// either share caps it at `HudLayout.maxSizePercent`, where two margins exactly fill the rest, so the
-    /// collapse is defensive — for a panel no supported path can produce.
-    static func floatingOverlayAnchor(extent: Int32, sizePercent: Int,
+    /// Resolves one axis, collapsing to center when the panel and its margin do not both fit. Every height
+    /// and width a HUD can reach fits its margin, `marginPercent` of the extent and 0 for a sticky panel, so
+    /// the collapse is defensive — for a panel no supported path can produce.
+    static func floatingOverlayAnchor(extent: Int32, panel: Int32, marginPercent: Int = HudPosition.edgeMarginPercent,
                                       band: HudPosition.Band) -> FloatingOverlayAnchor {
-        let margin = Double(extent) * Double(HudPosition.edgeMarginPercent) / 100
-        let free = Double(extent) * Double(100 - sizePercent) / 200 - margin
+        let margin = Double(extent) * Double(marginPercent) / 100
+        let free = Double(extent - panel) / 2 - margin
         return FloatingOverlayAnchor(band: free > 0 ? band : .middle, margin: Int32(margin))
     }
 

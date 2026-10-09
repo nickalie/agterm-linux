@@ -65,13 +65,23 @@ extension AppController {
             if let resized = store.resizeRemoteOverlay(id, sizePercent: sizePercent) {
                 return resized ? ok(id) : err(OverlayResultError.viewerGone)
             }
+            let session = store.session(withID: id)
+            let hud = session?.hudActive == true
+            let previousSize = session?.hudPanelSize
+            let previousForcedWidth = session?.hudResizedWidthPercent
+            // full would make the message cover the session it is about
+            if sizePercent == nil, hud { return err(OverlayHudError.fullResize) }
             guard store.resizeOverlay(id, sizePercent: sizePercent) else { return err("no overlay") }
             reconcile()
             // the surface stays mounted, so only the frame re-flows: a program never re-spawns and the HUD
-            // helper repaints in place off the body file `writeHudBody` rewrote.
+            // helper repaints in place off the body file `refreshHud` rewrote, at the height the width needs.
             resizeFloatingOverlayFrame(for: id)
-            store.session(withID: id)?.onHudGeometryChange?()
-            if store.session(withID: id)?.hudActive == true { store.publishHudResize(forSession: id, now: gHudAutoHide.now()) }
+            if hud, let session, !refreshHud(session) {
+                if let previousSize { store.setHudSize(id, size: previousSize, forcedWidthPercent: previousForcedWidth) }
+                resizeFloatingOverlayFrame(for: id)
+                return err(OverlayHudError.writeFailed)
+            }
+            if hud { store.publishHudResize(forSession: id, now: gHudAutoHide.now()) }
             return ok(id)
         }
     }

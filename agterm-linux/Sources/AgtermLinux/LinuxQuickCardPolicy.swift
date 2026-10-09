@@ -42,4 +42,10 @@ enum LinuxQuickCardPolicy {
     static let cardCSS = """
         .agterm-quick { background-color: #1e2228; border: 1px solid alpha(#ffffff, 0.18); border-radius: 12px; box-shadow: 0 8px 32px alpha(#000000, 0.8); }
         """
+
+    /// A `--no-frame` HUD keeps the opaque backing and loses the stroke, rounding and halo. The border turns
+    /// transparent rather than going away, so the 1px chrome the sizing subtracts stays measured.
+    static let framelessCSS = """
+        .agterm-quick.agterm-frameless { border-color: transparent; border-radius: 0; box-shadow: none; }
+        """
 }

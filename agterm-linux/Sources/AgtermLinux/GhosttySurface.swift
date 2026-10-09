@@ -235,7 +235,8 @@ final class GhosttySurface: PaneRoleMutableSurface {
         ghostty_surface_set_focus(surface, true)
         applyColorScheme(appearanceSide)   // report the system light/dark scheme (OSC color-scheme queries)
         feed(GhosttyApp.shared.currentThemeOSC)   // push theme colors the embedded GL renderer won't adopt from config
-        if controller?.store.session(withID: sessionID)?.linuxBackground(for: role.statusPane) != nil {
+        if controller?.store.session(withID: sessionID)?.linuxBackground(for: role.statusPane) != nil
+            || controller?.hudCreationFontSize(of: self) != nil {
             applyWatermarkFromSession()
         }
     }
@@ -309,9 +310,14 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// Apply a rebuilt ghostty config to this live surface (theme change). The caller owns `config`.
     func applyConfig(_ config: ghostty_config_t) {
         guard let surface else { return }
+        if let size = controller?.hudCreationFontSize(of: self) {
+            // a HUD's own overlay carries the padding it is sized with, which the shared config would drop
+            reapplyBackgroundOverlay(force: true)
+            // and it keeps its creation size: libghostty holds a size across an update only when set this way
+            performBindingAction("set_font_size:\(size)")
+            return
+        }
         ghostty_surface_update_config(surface, config)
-        // a HUD keeps its creation size: an included config's font-size can outrank one restated here
-        if let size = controller?.hudCreationFontSize(of: self) { performBindingAction("set_font_size:\(size)") }
         guard let clone = ghostty_config_clone(config) else { return }
         ownedConfigs.forEach { ghostty_config_free($0) }
         ownedConfigs = [clone]
@@ -355,6 +361,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
                                                   resolvedImagePath: resolvedImagePath,
                                                   fontSize: hudFont ?? dashboardFontOverride ?? session?.fontSize ?? fontSize,
                                                   windowOpacity: effectiveWindowOpacity)
+            + (hudFont != nil ? AppController.hudPaddingConfig : "")
         guard let config = GhosttyApp.shared.configWithOverlay(overlay, settings: settings) else { return }
         ghostty_surface_update_config(surface, config)
         ownedConfigs.forEach { ghostty_config_free($0) }

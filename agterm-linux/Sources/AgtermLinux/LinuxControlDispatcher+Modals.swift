@@ -199,7 +199,8 @@ extension LinuxControlDispatcher {
         return .spec(HudSpec(message: message, detail: args?.detail, spinner: spinner,
                              backgroundColor: args?.color, textColor: args?.textColor,
                              sizePercent: args?.sizePercent, position: position,
-                             hideAfter: args?.hideAfter, markdown: markdown, fontSize: args?.fontSize))
+                             hideAfter: args?.hideAfter, markdown: markdown, fontSize: args?.fontSize,
+                             sticky: args?.sticky ?? false, frame: args?.frame ?? true))
     }
 
     /// The helper prints these bytes into a live terminal, so any C0 control or DEL is refused, less the LF

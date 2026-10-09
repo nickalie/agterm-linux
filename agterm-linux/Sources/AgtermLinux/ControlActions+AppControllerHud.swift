@@ -79,10 +79,10 @@ extension AppController {
         case .failure(let response): return response
         case .success(let id):
             guard let session = store.session(withID: id), session.hudActive,
-                  let previous = session.hudSpec, let previousSize = session.overlaySizePercent,
-                  let previousHeight = session.hudHeightPercent else {
+                  let previous = session.hudSpec, let previousSize = session.hudPanelSize else {
                 return err(OverlayHudError.noHud)
             }
+            let previousForcedWidth = session.hudResizedWidthPercent
             let paneIdentity: UUID?
             let pane: OverlayPane?
             switch LinuxPanePlacement.resolve(placement.pane, paneID: placement.paneID, in: session,
@@ -97,9 +97,8 @@ extension AppController {
                             paneIdentity: paneIdentity)
             guard writeHudBody(session, pane: metrics) else {
                 // the panel still paints the old message, so it keeps the deadline that came with it
-                store.updateHud(id, spec: previous,
-                                size: HudPanelSize(widthPercent: previousSize, heightPercent: previousHeight),
-                                paneIdentity: previousPaneIdentity)
+                store.updateHud(id, spec: previous, size: previousSize, paneIdentity: previousPaneIdentity)
+                store.setHudSize(id, size: previousSize, forcedWidthPercent: previousForcedWidth)
                 return err(OverlayHudError.writeFailed)
             }
             armHudAutoHide(session, spec: spec)
@@ -130,9 +129,9 @@ extension AppController {
         store.publishHud(forSession: session.id, expiresAt: deadline, now: gHudAutoHide.now())
     }
 
-    /// Coalesces the panel's size changes into one body rewrite per main-loop turn, so the header's grid
-    /// follows the frame: upstream's `watchHudGeometry`. `GhosttySurface.resize` of a pane in the session and
-    /// `session.overlay.resize` call it; `discardHudBody` clears it with the rest of the HUD state.
+    /// Coalesces geometry changes into one remeasure per main-loop turn: upstream's `watchHudGeometry`.
+    /// `GhosttySurface.resize` of a pane in the session and the panel surface's own cell change call it;
+    /// `discardHudBody` clears it with the rest of the HUD state.
     func watchHudGeometry(_ session: Session) {
         let id = session.id
         session.onHudGeometryChange = { [weak self] in
@@ -143,11 +142,26 @@ extension AppController {
                 // the window may have closed in between; its GTK tree is gone even while the controller lives
                 guard gWindows[self.windowID] === self, let session = self.store.session(withID: id),
                       session.hudActive else { return }
-                self.resizeFloatingOverlayFrame(for: id)
-                _ = self.writeHudBody(session, pane: self.hudPaneMetrics(for: session, pane: session.hudTargetPane,
-                                                                         fontSize: self.liveHudFontSize(session)))
+                self.refreshHud(session)
             }
         }
+    }
+
+    /// Measures the live HUD against the bounds it is laid out in now and rewrites its body to match, for a
+    /// geometry change and for `overlay.resize`. Not an update: the spec, the pane scope, the surface and the
+    /// auto-hide deadline all stay. A refused write puts the size back, so the panel and the header the helper
+    /// centers in keep describing the same grid.
+    @discardableResult func refreshHud(_ session: Session) -> Bool {
+        guard let previous = session.hudPanelSize else { return false }
+        let forcedWidth = session.hudResizedWidthPercent
+        let metrics = hudPaneMetrics(for: session, pane: session.hudTargetPane, fontSize: liveHudFontSize(session))
+        store.remeasureHud(session.id, pane: metrics)
+        defer { resizeFloatingOverlayFrame(for: session.id) }
+        guard writeHudBody(session, pane: metrics) else {
+            store.setHudSize(session.id, size: previous, forcedWidthPercent: forcedWidth)
+            return false
+        }
+        return true
     }
 
     /// The size the live HUD's surface was created at, which every later measurement uses.
@@ -157,15 +171,12 @@ extension AppController {
 
     /// The area the panel is laid out over: one pane's live bounds when the caller scoped the HUD, else the
     /// deck overlay, which is also what sizes the floating frame, so the percentage the store resolved and
-    /// the widget's own size cannot disagree. The cell is measured at `fontSize`, the HUD surface's own.
-    ///
-    /// Padding is reported as ZERO rather than guessed. macOS reads its bundled `window-padding-x/y`;
-    /// Linux ships neither, so the value is libghostty's own default and this layer does not know it.
-    /// `PaneMetrics` documents zero as the honest answer, and the grid it yields is a column or two wide —
-    /// inside the divergence the estimated cell already carries.
+    /// the widget's own size cannot disagree. The cell is measured at `fontSize`, the HUD surface's own; the
+    /// padding is the one `hudPaddingConfig` gives the panel's surface.
     func hudPaneMetrics(for session: Session? = nil, pane: OverlayPane? = nil, fontSize: Double) -> PaneMetrics {
-        let cell = Self.hudCellSize(family: linuxSettingsStore().load().fontFamily, size: fontSize,
-                                    context: gtk_widget_get_pango_context(W(window)))
+        let cell = session.flatMap { liveHudCellSize(of: $0, fontSize: fontSize) }
+            ?? Self.hudCellSize(family: linuxSettingsStore().load().fontFamily, size: fontSize,
+                                context: gtk_widget_get_pango_context(W(window)))
         var area = (width: 0.0, height: 0.0)
         if let session, let pane, let bounds = paneBoundsInDeck(session: session.id, pane: pane) {
             area = (bounds.width, bounds.height)
@@ -173,7 +184,39 @@ extension AppController {
             area = (Double(gtk_widget_get_width(W(overlay))), Double(gtk_widget_get_height(W(overlay))))
         }
         return PaneMetrics(cellWidth: cell.width, cellHeight: cell.height,
-                           paneWidth: area.width, paneHeight: area.height)
+                           paneWidth: area.width, paneHeight: area.height,
+                           paddingWidth: Self.hudWindowPadding.horizontal,
+                           paddingHeight: Self.hudWindowPadding.vertical)
+    }
+
+    /// The terminal's padding inside the panel, per side. It holds no cells, so the grid the helper centers
+    /// in owes it two columns and two rows.
+    static let hudWindowPadding = (horizontal: 8.0, vertical: 6.0)
+
+    /// Pins a HUD surface's padding to `hudWindowPadding`: it would otherwise inherit the user's
+    /// `window-padding-*`, and a panel sized to exactly its rows then loses its last line.
+    /// `window-padding-balance` is what makes libghostty derive padding again from an updated config.
+    static let hudPaddingConfig = """
+        window-padding-x = \(Int(hudWindowPadding.horizontal))
+        window-padding-y = \(Int(hudWindowPadding.vertical))
+        window-padding-balance = true
+
+        """
+
+    /// The cell libghostty really draws for this session, scaled to `fontSize`: the live panel's own when it
+    /// is drawn at that size, else a pane's. The Pango estimate measures the Settings font, which is not the
+    /// drawn one when a user `ghostty.conf` names another, and a short cell budgets rows the panel cannot hold.
+    func liveHudCellSize(of session: Session, fontSize: Double) -> (width: Double, height: Double)? {
+        if session.hudActive, abs(liveHudFontSize(session) - fontSize) < 0.01,
+           let cell = overlaySurfaces[session.id]?.cellSize() {
+            return cell
+        }
+        for surface in [surfaces[session.id], splitSurfaces[session.id]].compactMap({ $0 }) {
+            guard let cell = surface.cellSize(), let drawn = surface.currentFontSize() else { continue }
+            let scale = fontSize / drawn
+            return (width: cell.width * scale, height: cell.height * scale)
+        }
+        return nil
     }
 
     /// The HUD surface's creation size while `surface` is a live HUD's painter, else nil. Every config
@@ -260,12 +303,9 @@ extension AppController {
     /// partial write would paint half a message. Every state the header carries is read off the session, so
     /// the grid is the one the panel ACTUALLY took.
     func writeHudBody(_ session: Session, pane: PaneMetrics) -> Bool {
-        guard let path = session.hudFile, let spec = session.hudSpec,
-              let size = session.overlaySizePercent,
-              let height = session.hudHeightPercent else { return false }
-        let grid = HudLayout.paintGrid(for: spec,
-                                       size: HudPanelSize(widthPercent: size, heightPercent: height),
-                                       pane: pane)
+        guard let path = session.hudFile, let spec = session.effectiveHudSpec,
+              let size = session.hudPanelSize else { return false }
+        let grid = HudLayout.paintGrid(for: spec, size: size, pane: pane)
         let rendered = HudLayout.renderedBody(for: spec, grid: grid,
                                               ownerPid: ProcessInfo.processInfo.processIdentifier)
         return (try? Data(rendered.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)) != nil
