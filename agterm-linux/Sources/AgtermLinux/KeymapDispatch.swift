@@ -92,6 +92,7 @@ private func resolveLinuxBuiltinOverrides(
 func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [KeymapDiagnostic]) {
     let (parsed, baseDiagnostics) = KeymapStore(configDirectory: configDirectory).load()
     var diagnostics = baseDiagnostics
+    let unbound = parsed.builtinUnbound.union(linuxCompatibilityUnbound(parsed))
     var overrides = parsed.builtinOverrides
     for (action, chord) in parsed.builtinOverrides.sorted(by: { $0.key.rawValue < $1.key.rawValue })
     where isLinuxReservedChord(chord) {
@@ -101,12 +102,12 @@ func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [Key
             message: "chord '\(chord.displayString)' is reserved by the Linux host; \(action.rawValue) map skipped"
         ))
     }
-    overrides = resolveLinuxBuiltinOverrides(overrides, unbound: parsed.builtinUnbound, diagnostics: &diagnostics)
+    overrides = resolveLinuxBuiltinOverrides(overrides, unbound: unbound, diagnostics: &diagnostics)
     // Dropping an override restores that action's Linux default. Re-check custom commands against the
     // resulting Linux chord set because the shared parser validated against the upstream macOS defaults.
     // An action left unbound by its own `map` line occupies nothing, so its default is not in the set.
     let activeBuiltinChords = Set(BuiltinAction.allCases.compactMap { action -> Chord? in
-        guard !parsed.builtinUnbound.contains(action) else { return nil }
+        guard !unbound.contains(action) else { return nil }
         return overrides[action] ?? action.linuxDefaultChord
     })
     var commands = parsed.commands
@@ -128,8 +129,26 @@ func loadLinuxKeymap(configDirectory: URL) -> (keymap: Keymap, diagnostics: [Key
     // `--repeat` survives only beside a leader sequence the Linux re-validation kept
     let repeating = parsed.builtinRepeating.filter { sequences[$0]?.contains { $0.count > 1 } == true }
     return (Keymap(builtinOverrides: overrides, commands: commands,
-                   builtinSequences: sequences, builtinUnbound: parsed.builtinUnbound,
+                   builtinSequences: sequences, builtinUnbound: unbound,
                    builtinRepeating: repeating), diagnostics)
+}
+
+/// The actions whose Linux default a valid existing keymap already spends, so a newer default does not
+/// break it: the file keeps the chord until it maps the action itself, as upstream's `parseKeymap` does
+/// with the macOS chord.
+func linuxCompatibilityUnbound(_ keymap: Keymap) -> Set<BuiltinAction> {
+    var vacated: Set<BuiltinAction> = []
+    for action in [BuiltinAction.attachRemote] {
+        guard let chord = action.linuxDefaultChord, keymap.builtinOverrides[action] == nil,
+              keymap.builtinSequences[action] == nil, !keymap.builtinUnbound.contains(action) else { continue }
+        let used = keymap.builtinOverrides.contains { $0.key != action && $0.value == chord }
+            || keymap.builtinSequences.contains { $0.key != action && $0.value.contains { $0.first == chord } }
+            || keymap.commands.contains { command in
+                command.shortcut.split(separator: "|").contains { parseKeybind(String($0))?.first == chord }
+            }
+        if used { vacated.insert(action) }
+    }
+    return vacated
 }
 
 /// The monitor-bound built-in alternatives, re-validated against the LINUX chord set for the same reason
@@ -490,6 +509,7 @@ extension AppController {
         case .commandPalette: showPalette()
         case .customCommandPalette: showPalette()   // the palette already lists custom commands
         case .showAttention: showAttentionPalette()
+        case .attachRemote: attachRemote()
         }
     }
 

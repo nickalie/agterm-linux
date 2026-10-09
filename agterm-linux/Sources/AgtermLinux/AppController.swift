@@ -68,6 +68,8 @@ final class AppController {
     var controlPickEntry: OpaquePointer?
     var controlPickRows: [LinuxControlPickRow] = []
     var controlPickSuppressesAutoFollow = false
+    /// A pick the app opened for itself, answered through `then` once the picker goes away.
+    var inAppPick: (id: String, then: @MainActor (ControlPickResult?) -> Void)?
 
     // In-terminal search bar (Ctrl+Shift+F)
     var searchBar: OpaquePointer?
@@ -303,9 +305,9 @@ final class AppController {
         let windowOverlay = OpaquePointer(gtk_overlay_new())
         self.deckOverlay = windowOverlay
         gtk_overlay_set_child(windowOverlay, W(split))
+        installHudLinkClick()
         // An AdwToastOverlay wraps the content so the app can surface transient banners (keymap/config
         // parse diagnostics, command failures) without a modal — the GTK analogue of the macOS banner.
-        installHudLinkClick()
         let toast = OpaquePointer(adw_toast_overlay_new())
         self.toastOverlay = toast
         adw_toast_overlay_set_child(toast, W(windowOverlay))

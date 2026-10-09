@@ -32,8 +32,14 @@ extension AppController {
                                             activeSplitAxis: activeSession?.hasSplit == true
                                                 ? activeSession?.splitAxis : nil,
                                             hasPendingClose: store.pendingCloseSummary != nil,
-                                            hasRecentClosed: !library.recentClosedItems.isEmpty)
-        var items: [LinuxPaletteItem] = PaletteCommand.allCases.filter { $0.isVisible(in: paletteContext) }.map { cmd in
+                                            hasRecentClosed: !library.recentClosedItems.isEmpty,
+                                            hasCurrentWorkspace: store.currentWorkspaceID != nil,
+                                            hasRemotes: !LinuxRemotes.shared.entries(reportingIn: self).isEmpty)
+        // a remote attach with no `remotes.conf` entry would be a row that does nothing
+        let commands = PaletteCommand.allCases.filter {
+            $0.isVisible(in: paletteContext) && ($0 != .attachRemote || $0.isEnabled(in: paletteContext))
+        }
+        var items: [LinuxPaletteItem] = commands.map { cmd in
             let row = LinuxPaletteRow.action(cmd, in: paletteContext, chord: cmd.builtinAction.flatMap(resolvedChord(for:)))
             return (row: row, run: run(for: cmd))
         }
@@ -132,6 +138,7 @@ extension AppController {
         case .decreaseFontSize: return { self.resizeFont(FontBindingAction.decrease) }
         case .resetFontSize: return { self.resizeFont(FontBindingAction.reset) }
         case .selectTheme: return { self.showThemePicker() }
+        case .attachRemote: return { self.attachRemote() }
         case .deleteWorkspace: return { if let id = self.store.currentWorkspaceID { self.store.removeWorkspace(id); self.reconcile() } }
         case .toggleFlaggedView: return { self.toggleFlaggedView() }
         case .focusLeftPane: return { self.focusPane(left: true) }

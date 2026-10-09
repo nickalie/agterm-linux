@@ -30,6 +30,7 @@ extension BuiltinAction {
         // restoring a reserved Open Directory override cannot create a default-vs-default collision.
         case .customCommandPalette: return nil
         case .showAttention: return Chord(mods: [.control, .shift], key: "i")
+        case .attachRemote: return Chord(mods: [.control, .shift], key: "r")
         default: return nil
         }
     }

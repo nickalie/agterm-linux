@@ -295,7 +295,19 @@ extension AppController {
         finishControlPickDismissal()
     }
 
+    /// Opens `pick` for a caller inside the app and calls `then` with its outcome once the picker goes away,
+    /// or at once with nil when the window's modal slot is taken. The GLib loop drains no Swift Concurrency
+    /// executor, so upstream's suspending `PickController.pick` cannot be awaited here.
+    func pickInApp(_ pick: PendingPick, then: @escaping @MainActor (ControlPickResult?) -> Void) {
+        guard openPick(pick, window: nil, follow: false).ok else { return then(nil) }
+        inAppPick = (pick.id, then)
+    }
+
     private func finishControlPickDismissal() {
+        if let waiter = inAppPick {
+            inAppPick = nil
+            waiter.then(pickController.result(for: waiter.id))
+        }
         if controlPickSuppressesAutoFollow {
             controlPickSuppressesAutoFollow = false
             resumeAutoFollow()

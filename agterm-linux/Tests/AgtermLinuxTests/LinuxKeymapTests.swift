@@ -145,6 +145,24 @@ struct LinuxKeymapTests {
         #expect(loaded.keymap.commands.first { $0.name == "dropped" }?.repeats == false)
     }
 
+    @Test("a keymap already spending Ctrl+Shift+R keeps it from Attach Remote's new default")
+    func attachRemoteVacatesAChordInUse() throws {
+        let chord = try #require(BuiltinAction.attachRemote.linuxDefaultChord)
+        #expect(chord == Chord(mods: [.control, .shift], key: "r"))
+
+        let command = try loadKeymap("command \"reload\" ctrl+shift+r make reload\n")
+        #expect(command.keymap.commands.first?.shortcut == "ctrl+shift+r")
+        #expect(command.keymap.builtinUnbound.contains(.attachRemote))
+
+        let map = try loadKeymap("map ctrl+shift+r toggle_sidebar\n")
+        #expect(map.keymap.builtinOverrides[.toggleSidebar] == chord)
+        #expect(map.keymap.builtinUnbound.contains(.attachRemote))
+
+        let own = try loadKeymap("map ctrl+shift+r attach_remote\n")
+        #expect(!own.keymap.builtinUnbound.contains(.attachRemote))
+        #expect(try loadKeymap("").keymap.builtinUnbound.isEmpty)
+    }
+
     private func loadKeymap(_ contents: String) throws -> (keymap: Keymap, diagnostics: [KeymapDiagnostic]) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
