@@ -8,7 +8,7 @@
 #include <gtk/gtk.h>
 #include <stdbool.h>
 
-#define AGTERM_WEBKIT_ABI 3
+#define AGTERM_WEBKIT_ABI 4
 #define AGTERM_WEBKIT_ENTRY "agterm_webkit_api_v1"
 
 // Where a navigation lands. WebKitGTK does not say whether a navigation targets the main frame or a
@@ -45,6 +45,8 @@ typedef struct {
     void (*focus)(void *context);
     // request is a page's control request as JSON; the app answers it once through `answer`, with `reply`
     void (*request)(void *context, const char *json, void *reply);
+    // closed is a `window.close()` WebKit accepted
+    void (*closed)(void *context);
 } agterm_web_callbacks;
 
 // The page bridge's scripts, NULL for a page without one. `adapter` and `relay` run in agterm's isolated

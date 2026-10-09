@@ -209,6 +209,12 @@ static void on_history(WebKitBackForwardList *list, WebKitBackForwardListItem *a
     emit_changed(data);
 }
 
+static void on_close(WebKitWebView *view, gpointer data) {
+    (void)view;
+    page *state = data;
+    if (state->active) state->callbacks.closed(state->callbacks.context);
+}
+
 static GtkWidget *on_create(WebKitWebView *view, WebKitNavigationAction *action, gpointer data) {
     (void)view;
     (void)action;
@@ -455,6 +461,7 @@ static GtkWidget *create(const agterm_web_callbacks *callbacks, bool javascript,
     g_signal_connect(view, "notify::title", G_CALLBACK(on_notify), state);
     g_signal_connect(webkit_web_view_get_back_forward_list(WEBKIT_WEB_VIEW(view)), "changed", G_CALLBACK(on_history), state);
     g_signal_connect(view, "create", G_CALLBACK(on_create), state);
+    g_signal_connect(view, "close", G_CALLBACK(on_close), state);
     g_signal_connect(view, "script-dialog", G_CALLBACK(on_script_dialog), state);
     g_signal_connect(view, "run-file-chooser", G_CALLBACK(on_file_chooser), state);
     g_signal_connect(view, "permission-request", G_CALLBACK(on_permission), state);

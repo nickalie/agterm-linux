@@ -39,6 +39,12 @@ final class LinuxHtmlOverlayPage {
     // a declined prompt silences the page until a native key or press reaches it: script can click links
     // in a loop, but it cannot make those events
     private var promptsSilenced = false
+    // the address of the document a browsing page shows; nil until its first commit, when the page reports
+    // its source instead
+    private var shownURL: URL?
+    // stays set while the session sits in an undoable close, where no slot is found to close, so a restored
+    // page closes at its next mount
+    private var closeRequested = false
     private let storageFailure: String?
     /// usesSavedStore is true for a page built on the saved browser store.
     let usesSavedStore: Bool
@@ -81,7 +87,7 @@ final class LinuxHtmlOverlayPage {
         self.handle = handle
         var callbacks = agterm_web_callbacks(context: Unmanaged.passUnretained(handle).toOpaque(), decide: onDecide,
                                              load: onLoad, changed: onChanged, input: onInput, focus: onFocus,
-                                             request: onRequest)
+                                             request: onRequest, closed: onClosed)
         guard let created = Self.withBridge(overlay, { bridge in
             theme.script(themed: Self.themed(overlay)).withCString { script in
                 Self.withOptionalCString(storageDirectory) {
@@ -269,9 +275,11 @@ final class LinuxHtmlOverlayPage {
 
     // MARK: - Model
 
-    /// apply takes the model's latest value and reloads when its revision moved.
+    /// apply takes the model's latest value and reloads when its revision moved. It also finishes a close
+    /// the page asked for while its session was hidden.
     func apply(_ latest: HtmlOverlay) {
         overlay = latest
+        closeIfRequested()
         refreshChrome()
         guard latest.reloadRevision != appliedRevision else { return }
         appliedRevision = latest.reloadRevision
@@ -330,8 +338,10 @@ final class LinuxHtmlOverlayPage {
         return String(cString: raw)
     }
 
-    /// pageURL is what the page shows: its file when loaded from text, else the view's address.
+    /// pageURL is what the page shows: its file when loaded from text, else the view's address. A browsing
+    /// page names the document it has committed, since the view's address already names a pending load.
     var pageURL: URL {
+        if overlay.browse, case .url(let source) = overlay.source { return shownURL ?? source }
         if textLoaded, case .file(let path, _) = overlay.source { return URL(fileURLWithPath: path) }
         if let text = currentURI, let url = URL(string: text), url.scheme != "about" { return url }
         switch overlay.source {
@@ -346,9 +356,8 @@ final class LinuxHtmlOverlayPage {
         case .file(let path, _):
             return URL(fileURLWithPath: path)
         case .url(let original):
-            guard let text = currentURI, let url = URL(string: text), url.scheme == "http" || url.scheme == "https" else {
-                return original
-            }
+            let shown = overlay.browse ? shownURL : currentURI.flatMap(URL.init(string:))
+            guard let url = shown, url.scheme == "http" || url.scheme == "https" else { return original }
             return url
         }
     }
@@ -388,7 +397,39 @@ final class LinuxHtmlOverlayPage {
     }
 
     fileprivate func receive(_ event: LinuxHtmlLoad.Event) {
+        switch event {
+        case .committed: shownURL = currentURI.flatMap(URL.init(string:))
+        case .terminated: shownURL = nil
+        default: break
+        }
         record(load.handle(event))
+        if event == .committed { reportPage() }
+    }
+
+    // a browsing page takes its address at commit; a change on the shown origin is taken at once, since it
+    // cannot change the site named and a fragment or pushState change has no commit to wait for
+    fileprivate func addressChanged() {
+        if let text = currentURI, let url = URL(string: text), let shownURL,
+           HtmlSource.origin(of: url) == HtmlSource.origin(of: shownURL) {
+            self.shownURL = url
+        }
+        reportPage()
+    }
+
+    /// pageClosed closes the overlay of a page whose `window.close()` WebKit accepted, as the strip's close
+    /// button does.
+    fileprivate func pageClosed() {
+        closeRequested = true
+        closeIfRequested()
+    }
+
+    // deferred because the close releases this page while the plugin is calling through it
+    private func closeIfRequested() {
+        guard closeRequested else { return }
+        _ = MainTimer.schedule(after: 0) { [weak self] in
+            guard let self, closeRequested else { return }
+            LinuxHtmlOverlays.shared.perform(.close, page: id)
+        }
     }
 
     private func setState(_ state: HtmlLoadState, _ error: String?) {
@@ -608,7 +649,12 @@ private let onPageKeyReleased: PageKeyReleaseCallback = { _, keyval, keycode, _,
 
 private let onChanged: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
     let key = UInt(bitPattern: context)
-    MainActor.assumeIsolated { page(key)?.reportPage() }
+    MainActor.assumeIsolated { page(key)?.addressChanged() }
+}
+
+private let onClosed: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
+    let key = UInt(bitPattern: context)
+    MainActor.assumeIsolated { page(key)?.pageClosed() }
 }
 
 private let onInput: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in

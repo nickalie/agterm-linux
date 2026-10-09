@@ -192,6 +192,12 @@ extension AppController {
         reloadConfig()
     }
 
+    /// Where a clicked web link opens; `browser` is the nil case. Each click reads the setting, so nothing
+    /// is reapplied.
+    func setLinkOpenMode(_ mode: LinkOpenMode) {
+        persist(\.linkOpenMode, mode == .browser ? nil : mode.rawValue)
+    }
+
     /// Sidebar-only, so it needs no `reloadConfig()`: nothing here reaches a ghostty config key, and the
     /// next row click reads the persisted value directly.
     func setWorkspaceRowClickExpands(_ enabled: Bool) {

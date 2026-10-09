@@ -224,7 +224,9 @@ final class ControlServer: @unchecked Sendable {
 
     @MainActor private static func route(for req: ControlRequest) -> ControllerRoute {
         // app-global: the dispatcher refuses `--window` itself, which an unknown window must not preempt
-        if req.cmd == .hooksReload || req.cmd == .hooksList || req.cmd == .browserClear { return .controller(gController) }
+        if req.cmd == .hooksReload || req.cmd == .hooksList || req.cmd == .browserClear || req.cmd == .browserLinks {
+            return .controller(gController)
+        }
         if let window = req.args?.window, !window.isEmpty {
             guard let library = gLibrary else {
                 return .failure("window not open")
@@ -270,7 +272,7 @@ final class ControlServer: @unchecked Sendable {
              .pickOpen, .pickResult, .pickCancel, .askOpen, .askResult, .askCancel,
              .restoreClear, .restoreCapture, .restoreMode,
              .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxPresent, .zmxScreen,
-             .browserClear, .version, .debugAppearance:
+             .browserClear, .browserLinks, .version, .debugAppearance:
             return .controller(gController)
         }
     }

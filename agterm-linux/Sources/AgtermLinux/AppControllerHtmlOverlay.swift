@@ -101,7 +101,7 @@ extension AppController {
             return err("session.overlay.open: \(failure)")
         }
         let overlay = HtmlOverlay(source: source, navigation: options.navigation, javascript: options.javascript,
-                                  chromeless: options.chromeless, persistent: options.persistent)
+                                  chromeless: options.chromeless, persistent: options.persistent, browse: options.browse)
         if let failure = store.openHtmlOverlay(id, pane: options.pane, overlay: overlay, sizePercent: options.sizePercent,
                                                backgroundColor: options.backgroundColor) {
             return err(failure.message(pane: options.pane))
@@ -114,6 +114,18 @@ extension AppController {
         if options.follow { selectSession(id, userInitiated: false) }
         reconcile()
         return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, pageID: overlay.id.uuidString))
+    }
+
+    /// `browser.links` writes through the Settings row's setter and answers the effective mode either way. An
+    /// open Settings dialog is rebuilt so its row shows the new value.
+    func linkOpenMode(_ mode: LinkOpenMode?) -> ControlResponse {
+        if let mode, mode != linuxSettingsStore().load().effectiveLinkOpenMode {
+            setLinkOpenMode(mode)
+            for controller in gWindows.values where controller.settingsDialog != nil {
+                controller.rebuildSettings(page: .general)
+            }
+        }
+        return ControlResponse(ok: true, result: ControlResult(text: linuxSettingsStore().load().effectiveLinkOpenMode.rawValue))
     }
 
     /// `browser.clear` empties the saved browser store; the reply waits for the removal to finish.

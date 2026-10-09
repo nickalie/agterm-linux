@@ -103,7 +103,8 @@ extension AppController: ControlActions {
             },
             app: LinuxAppMetadata.identity, indexUnsaved: library.indexUnsaved,
             flaggedLayout: GhosttyApp.shared.flaggedViewLayout,
-            htmlZoom: LinuxHtmlOverlays.shared.zoom
+            htmlZoom: LinuxHtmlOverlays.shared.zoom,
+            linkOpenMode: linuxSettingsStore().load().effectiveLinkOpenMode
         )
         let tree = projectingLinuxAutoFollow(baseTree)
         return ControlResponse(ok: true, result: ControlResult(tree: tree))

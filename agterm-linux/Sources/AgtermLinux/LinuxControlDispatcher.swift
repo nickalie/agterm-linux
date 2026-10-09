@@ -72,12 +72,17 @@ struct LinuxControlDispatcher {
             return dispatchAskCommand(request)
         case .dashboard:
             return dispatchDashboard(request)
-        case .browserClear:
-            // app-global: one saved store serves every window
+        case .browserClear, .browserLinks:
+            // app-global: one saved store and one link-open setting serve every window
             if request.target != nil || request.args?.window != nil {
                 return ControlResponse(ok: false, error: "\(request.cmd.rawValue) takes no target or --window")
             }
-            return actions.clearBrowserSync()
+            guard request.cmd == .browserLinks else { return actions.clearBrowserSync() }
+            guard let raw = request.args?.mode else { return actions.linkOpenMode(nil) }
+            guard let mode = LinkOpenMode(rawValue: raw) else {
+                return ControlResponse(ok: false, error: "invalid link mode: \(raw)")
+            }
+            return actions.linkOpenMode(mode)
         default:
             return nil
         }
@@ -108,8 +113,9 @@ struct LinuxControlDispatcher {
         return actions.setSessionContext(request.target, window: args?.window, context: context)
     }
 
-    /// `session.restart`: the line is a shell line and is never rewritten. A pane must be named, by token or
-    /// by role, because a default would restart a shell the caller never addressed.
+    /// `session.restart`: the line is a shell line and is never rewritten; an absent one asks the host to
+    /// replay the pane's foreground program. A pane must be named, by token or by role, because a default
+    /// would restart a shell the caller never addressed.
     private func dispatchSessionRestart(_ request: ControlRequest) -> ControlResponse {
         let args = request.args
         let command = args?.command

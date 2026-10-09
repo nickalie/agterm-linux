@@ -11,6 +11,15 @@ extension AppSettings.NewSessionPlacement {
     }
 }
 
+extension LinkOpenMode {
+    var settingsTitle: String {
+        switch self {
+        case .browser: "Browser"
+        case .overlay: "Session overlay"
+        }
+    }
+}
+
 extension FlaggedViewLayout {
     var settingsTitle: String {
         switch self {
@@ -38,6 +47,13 @@ extension AppController {
                 preferencesSwitch(
                     "Right-click pastes", active: settings.rightClickPaste ?? true,
                     handler: unsafeBitCast(onSettingsRightClickPaste, to: GCallback.self))))
+        let linkModes = LinkOpenMode.allCases
+        adw_preferences_group_add(
+            cast(mouse),
+            W(preferencesCombo(
+                "Open links in", values: linkModes.map(\.settingsTitle),
+                selected: linkModes.firstIndex(of: settings.effectiveLinkOpenMode) ?? 0,
+                handler: unsafeBitCast(onSettingsLinkOpenMode, to: GCallback.self))))
         adw_preferences_group_add(
             cast(mouse),
             W(
@@ -189,6 +205,14 @@ private let onSettingsConfirmClose: @MainActor @convention(c) (OpaquePointer?, O
 }
 private let onSettingsCloseUndo: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated { controllerForWidget(row)?.setCloseGraceUndo(adw_switch_row_get_active(row) != 0) }
+}
+private let onSettingsLinkOpenMode: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
+    MainActor.assumeIsolated {
+        let modes = LinkOpenMode.allCases
+        let index = Int(adw_combo_row_get_selected(cast(row)))
+        guard modes.indices.contains(index) else { return }
+        controllerForWidget(row)?.setLinkOpenMode(modes[index])
+    }
 }
 private let onSettingsFlaggedViewLayout: @MainActor @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = { row, _, _ in
     MainActor.assumeIsolated {

@@ -42,7 +42,8 @@ extension LinuxControlDispatcher {
                                             navigation: request.args?.navigation ?? false,
                                             javascript: request.args?.javascript ?? false,
                                             chromeless: request.args?.chromeless ?? false,
-                                            persistent: request.args?.persistent ?? false
+                                            persistent: request.args?.persistent ?? false,
+                                            browse: request.args?.browse ?? false
                                           ))
     }
 
@@ -71,6 +72,7 @@ extension LinuxControlDispatcher {
             if args?.javascript == true { return reject(OverlayHtmlError.javascriptWithoutPage) }
             if args?.chromeless == true { return reject(OverlayHtmlError.chromelessRequiresFile) }
             if args?.persistent == true { return reject(OverlayHtmlError.persistentRequiresURL) }
+            if args?.browse == true { return reject(OverlayHtmlError.browseRequiresURL) }
             return command.isEmpty ? reject("session.overlay.open requires a command") : .program
         case (.some, .some):
             return reject(OverlayHtmlError.htmlAndURL)
@@ -79,6 +81,7 @@ extension LinuxControlDispatcher {
             if args?.wait == true { return reject(OverlayHtmlError.waitWithHtml) }
             if args?.chromeless == true, args?.navigation == true { return reject(OverlayHtmlError.chromelessWithNavigation) }
             if args?.persistent == true { return reject(OverlayHtmlError.persistentRequiresURL) }
+            if args?.browse == true { return reject(OverlayHtmlError.browseRequiresURL) }
             if let error = HtmlOverlay.grantError(file: html, grantRoot: args?.cwd) {
                 return reject("session.overlay.open: \(error)")
             }
