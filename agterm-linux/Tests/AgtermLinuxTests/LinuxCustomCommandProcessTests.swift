@@ -143,6 +143,20 @@ struct LinuxCustomCommandProcessTests {
         #expect(reports.value.first?.1 == nil)
     }
 
+    @Test("a session directory that is gone is named and nothing is launched")
+    func missingSessionDirectory() {
+        let launcher = RecordingProcessLauncher()
+        let reports = LockedValue<[LinuxCustomCommandFailure]>([])
+        let gone = "/tmp/agterm-missing-\(UUID().uuidString)"
+        let command = CustomCommand(name: "build", command: "true", shortcut: "")
+        let reason = LinuxCustomCommandProcess.launch(
+            command: command, context: CommandContext(sessionPWD: gone), baseEnvironment: [:], launcher: launcher
+        ) { failure, _ in reports.withValue { $0.append(failure) } }
+        #expect(reason == "session directory \(gone) no longer exists")
+        #expect(reports.value.map(\.reason) == ["session directory \(gone) no longer exists"])
+        #expect(launcher.requests.isEmpty)
+    }
+
     @Test("the real launcher captures stderr into the opted-in panel's detail")
     func realStderrCapture() async {
         let command = CustomCommand(name: "loud", command: "echo boom >&2; exit 7", shortcut: "", errorHud: true)

@@ -127,6 +127,13 @@ enum LinuxCustomCommandProcess {
         launcher: any LinuxProcessLaunching,
         onFailure: @escaping @Sendable (LinuxCustomCommandFailure, String?) -> Void
     ) -> String? {
+        if let directory = cwd ?? Optional(context.sessionPWD), !directory.isEmpty,
+           !FileManager.default.fileExists(atPath: directory) {
+            // the launch would refuse it too, naming nothing useful (upstream 312987af)
+            let reason = "session directory \(TerminalText.sanitized(directory)) no longer exists"
+            onFailure(.launch(reason), nil)
+            return reason
+        }
         let capture = command.errorHud ? LinuxStderrCapture(directory: captureDirectory) : nil
         let request = request(command: command, context: context, baseEnvironment: baseEnvironment, cwd: cwd,
                               stderrPath: capture?.path)
