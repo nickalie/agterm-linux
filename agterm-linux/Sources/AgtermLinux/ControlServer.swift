@@ -69,7 +69,8 @@ final class ControlServer: @unchecked Sendable {
                 bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard bound == 0, listen(fd, 8) == 0 else { close(fd); return }
+        // the accept loop is serial, so a main-thread stall queues every client here (upstream #717)
+        guard bound == 0, listen(fd, SOMAXCONN) == 0 else { close(fd); return }
         // Restrict the socket to the owner (mirrors the macOS server's chmod 0600) so another local
         // user can't drive this terminal over the control channel.
         _ = path.withCString { chmod($0, 0o600) }
