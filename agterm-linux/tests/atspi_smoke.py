@@ -2766,14 +2766,17 @@ def verify_launch_surface_environment(env, state):
     try:
         session = control_json(env, "tree", "--json")["result"]["tree"]["workspaces"][0]["sessions"][0]
         control_json(
-            env, "session", "type", f'printf "%s" "$AGTERM_SESSION_ID" > {marker}\n',
+            env, "session", "type",
+            f'printf "%s:%s" "$AGTERM_SESSION_ID" "${{GDK_DEBUG-}}${{GDK_DISABLE-}}" > {marker}\n',
             "--target", session["id"], "--json",
         )
         reported = wait_for(
             lambda: os.path.exists(marker) and open(marker, encoding="utf-8").read().strip(),
             "the launch session's shell never reported AGTERM_SESSION_ID",
         )
-        assert reported == session["id"], f"launch shell saw {reported}, expected {session['id']}"
+        # the GDK GLES switch the app sets for itself must not reach the shells
+        expected = f"{session['id']}:{env.get('GDK_DEBUG', '')}{env.get('GDK_DISABLE', '')}"
+        assert reported == expected, f"launch shell saw {reported}, expected {expected}"
         print("OK: the session realized at launch inherits its AGTERM_* environment under a dark scheme")
     finally:
         stop(process)

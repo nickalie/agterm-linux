@@ -12,6 +12,7 @@ import agtermCore
 @main
 struct AgtermApp {
     static func main() {
+        MainActor.assumeIsolated { LinuxGLEnvironment.preferDesktopGL() }
         // AGTERM_APP_ID overrides the GApplication id so a dev/test instance registers separately on
         // the session bus and runs ALONGSIDE a deployed one (the Linux analogue of the macOS .debug
         // bundle id) instead of forwarding its launch to the running instance.
@@ -66,6 +67,7 @@ private let onOpen: @MainActor @convention(c) (OpaquePointer?, UnsafeMutablePoin
         return
     }
     gApp = app
+    LinuxGLEnvironment.restoreUserEnvironment()
     // Route every deferred main-actor job (MainTimer) through g_timeout_add BEFORE any store or
     // controller exists — see `agterm-linux/docs/main-loop.md`.
     installGLibMainTimer()
