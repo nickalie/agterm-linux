@@ -92,6 +92,7 @@ paths:
   direct consequence of a user action and is deliberately not gated.
   Both live with the GATE, not with either deferred job — `SoftCloseReconcileCoordinator` takes the cadence
   by injection so it stays independent of what its `deferWhile` reads.
+  `reconcile` itself skips its rebuild during a rename, since the rename's end rebuilds anyway.
 - **Every deck focus grab goes through `AppController.deckMayTakeFocus`**, upstream's
   `focusActiveSession` bail list: zoom, dashboard, rename, palette or theme picker, pick or GUI ask, and the
   quick terminal or search entry while either holds the window's focus.

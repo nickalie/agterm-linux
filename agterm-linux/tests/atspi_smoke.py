@@ -2226,7 +2226,18 @@ def verify_focus_gate(env, state):
         type_x11_text("pageback", process.pid)
         wait_for(lambda: "pageback" in pane_text(), "closing a focused page did not hand the keyboard back to its pane")
 
-        print("OK: control reconciles leave the keyboard with the quick terminal")
+        open_overlay(command="sleep 60")
+        title = wait_for(lambda: next(iter(collect(app, role="frame")), None), "the window frame is missing").get_name()
+        run_palette_action(app, process.pid, title, "Rename Session")
+        time.sleep(0.5)
+        type_x11_text("half", process.pid)
+        time.sleep(0.5)
+        close_overlay()
+        type_x11_text("way", process.pid)
+        press_return(process.pid)
+        wait_for(lambda: node().get("name") == "halfway",
+                 "closing an overlay over an inline rename ended the rename")
+        print("OK: control reconciles leave the keyboard with the quick terminal and an inline rename")
     finally:
         stop(process)
 

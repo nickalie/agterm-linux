@@ -34,7 +34,8 @@ extension AppController {
         for id in Array(surfaces.keys) where !live.contains(id) { removeSession(id) }
         reloadClosedEditorOverlays()
         LinuxPaneLeadCover.syncAll()   // a pane overlay opening or closing hides or shows the deck's cover
-        rebuildSidebar()
+        // a rebuild would destroy a live rename's entry and commit its half-typed name; ending it rebuilds
+        if !sidebarInteractionInProgress { rebuildSidebar() }
         showActive(focus: focusActive)
         updateTitle()
         updateAttentionButton()

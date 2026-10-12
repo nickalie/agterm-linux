@@ -61,7 +61,8 @@ extension AppController {
     /// would tear down the in-progress rename entry, whose disposal fires a focus-out that commits its
     /// half-typed text, from a timer the user never asked for. Both deferred rebuilds — the sidebar-metadata
     /// refresh and the trailing soft-close reconcile — gate on this ONE predicate so they cannot drift
-    /// apart. A SYNCHRONOUS rebuild is a direct consequence of a user action and is deliberately not gated.
+    /// apart, and `reconcile` skips its rebuild on it. A SYNCHRONOUS sidebar action's rebuild is deliberately
+    /// not gated.
     /// An open context menu needs no gate: it hangs off the scroller, not off a row (`anchorContextMenu`),
     /// so it survives any rebuild and only the user closes it.
     var sidebarInteractionInProgress: Bool { renaming != nil }
