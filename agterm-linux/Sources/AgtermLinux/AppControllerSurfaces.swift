@@ -15,7 +15,7 @@ extension AppController {
     /// ghostty surfaces (killing the shells) while `undoPendingClose` still offers to bring it back, and
     /// the undo would then silently spawn a brand-new login shell in place of the user's running one.
     func reconcile(focusActive: Bool = true) {
-        dropClosedSessionSearch()
+        dropDeadSearch()
         let dashboardRestore = prepareDashboardForReconcile()
         clearInvalidTerminalZoom()
         for ws in store.workspaces {

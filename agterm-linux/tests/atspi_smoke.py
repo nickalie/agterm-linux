@@ -2296,6 +2296,49 @@ def verify_focus_gate(env, state):
         type_x11_text("softgone", process.pid)
         wait_for(lambda: "softgone" in pane_text(), "soft-closing the searched session left its search with the keyboard")
 
+        def search_right_pane():
+            open_split()
+            assert request("session.focus", pane="right")["ok"]
+            time.sleep(0.5)
+            press_x11_key("ctrl+shift+f", process.pid)
+            time.sleep(0.5)
+            type_x11_text("rightneedle", process.pid)
+            time.sleep(0.5)
+            assert "rightneedle" not in request("session.text", pane="right")["result"]["text"], \
+                "the right pane's search entry never took the keyboard"
+
+        def close_split():
+            assert request("session.split.close")["ok"]
+            wait_for(lambda: not node().get("split"), "session.split.close left the split")
+
+        for marker, drop in (("splitgone", close_split), ("rightgone", lambda: exit_pane("right"))):
+            search_right_pane()
+            drop()
+            time.sleep(0.5)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in pane_text(), f"{marker}: the dead pane's search kept the keyboard")
+            press_x11_key("ctrl+shift+f", process.pid)
+            time.sleep(0.5)
+            type_x11_text(f"{marker}again", process.pid)
+            time.sleep(0.5)
+            assert f"{marker}again" not in pane_text(), f"{marker}: the dead pane's search blocked a new one"
+            press_escape(process.pid)
+            time.sleep(0.5)
+            type_x11_text(f"{marker}back", process.pid)
+            wait_for(lambda: f"{marker}back" in pane_text(), f"{marker}: Escape did not close the new search")
+
+        assert request("session.type", text="\n", pane="left")["ok"]  # the markers above would prefix its exit
+        search_right_pane()
+        exit_pane("left")
+        time.sleep(0.5)
+        type_x11_text("keptsearch", process.pid)
+        time.sleep(0.5)
+        assert "keptsearch" not in pane_text(), "a primary exit dropped the promoted pane's search"
+        press_escape(process.pid)
+        time.sleep(0.5)
+        type_x11_text("promotedback", process.pid)
+        wait_for(lambda: "promotedback" in pane_text(), "Escape did not end the promoted pane's search")
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)
