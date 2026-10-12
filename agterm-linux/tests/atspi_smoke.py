@@ -1968,6 +1968,54 @@ def verify_v036_controls(env, state):
         server.kill()
 
 
+def verify_overlay_slot_and_theme_reload(env, state):
+    """A page or program replacing a HUD gets the slot to itself, and theme.set/config.reload answer with
+    many sessions mounted."""
+    page = os.path.join(state, "slot-page.html")
+    with open(page, "w", encoding="utf-8") as target:
+        target.write("<!doctype html><title>Slot Page</title><p>static</p>")
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, _ = launch(env)
+    try:
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+
+        def node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        def request(cmd, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": session_id, "args": args})
+
+        assert request("session.hud.open", message="replaced by a page")["ok"]
+        assert request("session.overlay.open", html=page)["ok"]
+        wait_for(lambda: (node().get("htmlOverlays") or [{}])[0].get("state") == "loaded",
+                 "the page that replaced a HUD never loaded")
+        assert request("session.overlay.close")["ok"]
+        time.sleep(0.5)
+        assert process.poll() is None, f"closing a page that replaced a HUD killed the app ({process.returncode})"
+        assert not node().get("overlay") and "hud" not in node(), node()
+
+        assert request("session.hud.open", message="replaced by a program")["ok"]
+        assert request("session.overlay.open", command="printf program-took-the-slot; sleep 30")["ok"]
+        wait_for(lambda: "program-took-the-slot" in (request("session.overlay.text").get("result") or {}).get("text", ""),
+                 "the program that replaced a HUD never ran in the slot")
+        assert request("session.overlay.close")["ok"]
+        assert process.poll() is None, f"closing a program that replaced a HUD killed the app ({process.returncode})"
+
+        for index in range(9):
+            control_json(env, "session", "new", "--name", f"mounted-{index}", "--json")
+        wait_for(lambda: all(s.get("realized") for s in window_tree(env, window_id)["workspaces"][0]["sessions"]),
+                 "the extra sessions never realized")
+        themes = control_json(env, "theme", "list", "--json")["result"]["themes"]
+        assert ".agterm-resource-manifest" not in themes, themes
+        for theme in [t for t in themes if t != "agterm"][:4] + ["agterm"]:
+            assert control_json(env, "theme", "set", theme, "--json")["result"]["theme"] == theme
+        assert control_json(env, "config", "reload", "--json")["ok"]
+        print("OK: a page or program replacing a HUD owns the slot; theme.set answers with ten sessions mounted")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3222,7 +3270,8 @@ def main():
         for child_scenario in (
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
-            "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "dashboard-modal",
+            "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "overlay-theme",
+            "dashboard-modal",
             "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -3292,6 +3341,8 @@ def main():
             verify_v035_controls(env, state)
         elif scenario == "v036-controls":
             verify_v036_controls(env, state)
+        elif scenario == "overlay-theme":
+            verify_overlay_slot_and_theme_reload(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

@@ -188,6 +188,9 @@ extension AppController {
     /// Create/show/hide the ephemeral overlay terminal (runs `overlayCommand` over the session).
     private func syncOverlay(_ s: Session, allowFocus: Bool) {
         guard let stack = sessionStacks[s.id] else { return }
+        // the store has already torn down a closed or replaced occupant; its widget leaves before a page or a
+        // new surface takes the slot, or a later close removes a widget its frame already destroyed
+        if let ov = overlaySurfaces[s.id], s.overlaySurface !== ov { unmountOverlaySurface(ov, of: s, stack: stack) }
         if syncHtmlCover(s, stack: stack, allowFocus: allowFocus) { return }
         if s.overlayActive {
             if overlaySurfaces[s.id] == nil, let cmd = s.overlayCommand {
@@ -237,16 +240,17 @@ extension AppController {
                 "overlay".withCString { gtk_stack_set_visible_child_name(stack, $0) }
                 if allowFocus, s.id == store.selectedSessionID { overlaySurfaces[s.id]?.grabFocus() }
             }
-        } else if let ov = overlaySurfaces[s.id], s.overlaySurface == nil {
-            if let frame = floatingOverlayFrames[s.id], let overlay = deckOverlay {
-                gtk_overlay_remove_overlay(overlay, W(frame))
-                floatingOverlayFrames[s.id] = nil
-            } else {
-                (s.scratchActive ? "scratch" : "main").withCString { gtk_stack_set_visible_child_name(stack, $0) }
-                gtk_stack_remove(stack, W(ov.glArea))
-            }
-            overlaySurfaces[s.id] = nil
         }
+    }
+
+    private func unmountOverlaySurface(_ ov: GhosttySurface, of s: Session, stack: OpaquePointer) {
+        if floatingOverlayFrames[s.id] != nil {
+            removeFloatingOverlayFrame(s.id)
+        } else {
+            (s.scratchActive ? "scratch" : "main").withCString { gtk_stack_set_visible_child_name(stack, $0) }
+            gtk_stack_remove(stack, W(ov.glArea))
+        }
+        overlaySurfaces[s.id] = nil
     }
 
     private static func singleQuoted(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
