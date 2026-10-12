@@ -2057,6 +2057,39 @@ def verify_overlay_exit_focus(env):
         stop(process)
 
 
+def verify_pane_overlay_swap_exit(env):
+    """A pane overlay's exit closes and records against the slot it occupies after a swap."""
+    process, _ = launch(env)
+    try:
+        focus_window(process.pid)
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+        time.sleep(1.0)
+
+        def request(cmd, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": session_id, "args": dict(args, window=window_id)})
+
+        def pane_overlays():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0].get("paneOverlays") or []
+
+        assert request("session.split")["ok"]
+        wait_for(lambda: window_tree(env, window_id)["workspaces"][0]["sessions"][0].get("split"),
+                 "the split never opened")
+        assert request("session.overlay.open", command="sleep 5; exit 7", pane="left")["ok"]
+        assert request("session.overlay.open", command="sleep 60", pane="right")["ok"]
+        wait_for(lambda: pane_overlays() == ["left", "right"], "the pane overlays never opened")
+        wait_for(lambda: request("session.swap")["ok"], "the panes never swapped")
+        wait_for(lambda: pane_overlays() == ["left"], "the swapped overlay's exit closed the other pane's overlay")
+        time.sleep(1.0)
+        assert pane_overlays() == ["left"], pane_overlays()
+        result = request("session.overlay.result", pane="right")
+        assert result["ok"] and result["result"]["exitCode"] == 7, result
+        assert request("session.overlay.result", pane="left")["error"] == "overlay still running"
+        print("OK: a swapped pane overlay's exit lands on the pane it moved to")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3312,7 +3345,7 @@ def main():
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
             "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "overlay-theme",
-            "overlay-exit-focus", "dashboard-modal",
+            "overlay-exit-focus", "pane-overlay-swap-exit", "dashboard-modal",
             "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -3386,6 +3419,8 @@ def main():
             verify_overlay_slot_and_theme_reload(env, state)
         elif scenario == "overlay-exit-focus":
             verify_overlay_exit_focus(env)
+        elif scenario == "pane-overlay-swap-exit":
+            verify_pane_overlay_swap_exit(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

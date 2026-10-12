@@ -157,14 +157,14 @@ extension AppController {
                                         reportsPaneState: false)
                 let sid = s.id
                 let owner = windowID
-                ov.onExit = {
+                ov.onExit = { [weak ov] in
                     runOnMain { MainActor.assumeIsolated {
-                        if let txt = try? String(contentsOfFile: codePath, encoding: .utf8),
-                           let code = OverlayCapture.parseExitCode(txt) {
-                            gWindows[owner]?.store.recordPaneOverlayExit(sid, pane: pane, code: code)
-                        }
+                        let code = (try? String(contentsOfFile: codePath, encoding: .utf8)).flatMap(OverlayCapture.parseExitCode)
                         try? FileManager.default.removeItem(atPath: codePath)
-                        gWindows[owner]?.closePaneOverlay(sid, pane: pane)
+                        guard let ov, let controller = gWindows[owner],
+                              let pane = Self.settlePaneOverlayExit(controller.store, sessionID: sid, surface: ov, code: code)
+                        else { return }
+                        controller.closePaneOverlay(sid, pane: pane)
                     } }
                 }
                 s.setPaneOverlaySurface(ov, pane: pane)
@@ -177,6 +177,15 @@ extension AppController {
                 paneOverlaySurfaces[s.id]?[pane] = nil
             }
         }
+    }
+
+    /// The pane whose slot holds `surface` now, its exit code recorded there; nil once no slot holds it. A swap
+    /// or a primary exit moves an overlay to the other slot between its creation and its exit.
+    static func settlePaneOverlayExit(_ store: AppStore, sessionID: UUID, surface: any TerminalSurface,
+                                      code: Int?) -> OverlayPane? {
+        guard let pane = store.session(withID: sessionID)?.paneOverlayRole(of: surface) else { return nil }
+        if let code { store.recordPaneOverlayExit(sessionID, pane: pane, code: code) }
+        return pane
     }
 
     /// A pane overlay's command exited: tear it down + reconcile.
