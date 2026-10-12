@@ -301,8 +301,8 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// that the embedded OpenGL renderer doesn't adopt from the config.
     func feed(_ bytes: String) {
         guard let surface, !bytes.isEmpty else { return }
-        // a color OSC, like a config update, waits forever on a full 64-slot app mailbox that only this thread's
-        // tick drains; surfaces redrawing through a theme change fill it, so drain it first
+        // a color OSC, like a config update, waits forever on a full 64-slot app mailbox only this thread's tick
+        // drains; draining first clears a theme change's own backlog but only narrows the hang, as other io threads can refill it
         GhosttyApp.shared.tick()
         bytes.withCString { ghostty_surface_feed(surface, $0, UInt(bytes.utf8.count)) }
     }
@@ -350,20 +350,20 @@ final class GhosttySurface: PaneRoleMutableSurface {
                                           force: Bool = false) {
         guard let surface else { return }
         let session = controller?.store.session(withID: sessionID)
-        let watermark = oscBackgroundColorHex.map {
-            BackgroundWatermark(kind: .color, colorHex: $0)
-        } ?? session?.linuxBackground(for: role.statusPane)
+        let watermark = oscBackgroundColorHex == nil ? session?.linuxBackground(for: role.statusPane) : nil
         let hudFont = controller?.hudCreationFontSize(of: self)
-        guard force || watermark != nil || dashboardFontOverride != nil || session?.fontSize != nil || hudFont != nil
-        else { return }
+        guard force || oscBackgroundColorHex != nil || watermark != nil || dashboardFontOverride != nil || session?.fontSize != nil || hudFont != nil else { return }
         let resolvedImagePath = session.flatMap {
             WatermarkRenderer.materialize(watermark, sessionID: $0.id, paneKey: $0.backgroundPaneKey(for: role.statusPane))
         }
         let effectiveWindowOpacity = windowOpacity ?? linuxSettingsStore().load().backgroundOpacity ?? 1
-        let overlay = WatermarkConfig.overlayText(watermark: watermark,
-                                                  resolvedImagePath: resolvedImagePath,
-                                                  fontSize: hudFont ?? dashboardFontOverride ?? session?.fontSize ?? fontSize,
-                                                  windowOpacity: effectiveWindowOpacity)
+        let size = hudFont ?? dashboardFontOverride ?? session?.fontSize ?? fontSize
+        // a program's OSC 11 is already libghostty's override: a `background` key would reseed the default an
+        // OSC 111 resets to, and feeding it back would replay it over any newer color the program set
+        let overlay = (oscBackgroundColorHex != nil
+            ? WatermarkConfig.oscBackgroundOverlayText(fontSize: size, windowOpacity: effectiveWindowOpacity)
+            : WatermarkConfig.overlayText(watermark: watermark, resolvedImagePath: resolvedImagePath,
+                                          fontSize: size, windowOpacity: effectiveWindowOpacity))
             + (hudFont != nil ? AppController.hudPaddingConfig : "")
         guard let config = GhosttyApp.shared.configWithOverlay(overlay, settings: settings) else { return }
         ghostty_surface_update_config(surface, config)

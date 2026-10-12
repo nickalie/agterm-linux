@@ -84,7 +84,16 @@ final class GhosttyApp: @unchecked Sendable {
         ghostty_config_free(cfg)
     }
 
-    func tick() { if let a = app { ghostty_app_tick(a) } }
+    private var ticking = false
+
+    /// A feed or config update from inside an action callback must not drain the mailbox again: the nested
+    /// tick would apply newer messages before the outer callback finishes with an older one.
+    func tick() {
+        guard let a = app, !ticking else { return }
+        ticking = true
+        defer { ticking = false }
+        ghostty_app_tick(a)
+    }
 
     func updateConfig(_ config: ghostty_config_t) {
         guard let app else { return }
