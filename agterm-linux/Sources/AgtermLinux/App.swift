@@ -319,20 +319,10 @@ private let onRevealAction: @MainActor @convention(c) (OpaquePointer?, OpaquePoi
         hasSplit: session?.hasSplit ?? false,
         coverActive: (session?.coverOverlayActive ?? false) || (session?.scratchActive ?? false)
     ), let session else { return }
-    let wantSplit = focus == .split
-    session.splitFocused = wantSplit
+    session.splitFocused = focus == .split
     gtk_window_present(WIN(controller.windowPointer))
+    // the selection's gated focus lands on the cover, page or pane the split flag names
     controller.selectSession(id)
-    if focus == .overlay, LinuxHtmlOverlays.shared.focusCover(of: session) {
-        // a page covers the session and now holds the keyboard
-    } else if focus == .overlay,
-       let cover = session.programOverlayActive ? controller.overlaySurfaces[id] : controller.scratchSurfaces[id] {
-        cover.grabFocus()
-    } else if session.hasSplit {
-        controller.focusPane(left: !wantSplit)
-    } else {
-        controller.surfaces[id]?.grabFocus()
-    }
 }
 
 /// Reconcile the Linux auto-follow selection into GTK without raising or focusing a background

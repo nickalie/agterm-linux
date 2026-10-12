@@ -18,7 +18,7 @@ extension AppController {
     func swapPanes(_ id: UUID) -> SwapRefusal? {
         guard let paned = sessionPanes[id] else { return .slotNotRealized }
         if let refusal = store.swapPanes(id) { return refusal }
-        guard let session = store.session(withID: id) else { return .noSession }
+        guard store.session(withID: id) != nil else { return .noSession }
 
         swap(&surfaces[id], &splitSurfaces[id])
         let hosts = paneHosts[id] ?? [:]
@@ -45,7 +45,6 @@ extension AppController {
 
         clearInvalidTerminalZoom()
         reconcile()
-        (session.splitFocused ? splitSurfaces[id] : surfaces[id])?.grabFocus()
         return nil
     }
 }

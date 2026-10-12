@@ -517,7 +517,7 @@ final class AppController {
     /// split the session closes. `AppStore.closePrimaryPane` decides promote-vs-close.
     func closePrimaryPane(_ id: UUID, alreadyFinalized: UUID? = nil) {
         // Capture the survivor (the split pane) before the store clears the session's split flags.
-        if dashboard.isOpen { closeDashboard(refocus: false) }; let survivor = splitSurfaces[id]
+        if dashboard.isOpen { closeDashboard() }; let survivor = splitSurfaces[id]
         store.closePrimaryPane(id, alreadyFinalized: alreadyFinalized)
         guard store.session(withID: id) != nil, let survivor, let paned = sessionPanes[id] else {
             reconcile()   // no split → the store closed the session; reconcile drops its widgets
@@ -546,7 +546,6 @@ final class AppController {
         let sid = id
         survivor.promoteToPrimary(onExit: { [weak self] in self?.closePrimaryPane(sid) })
         survivor.queueRender()
-        survivor.grabFocus()
         reconcile()
     }
 
@@ -704,7 +703,7 @@ final class AppController {
         renameEntry = nil
         resumeAutoFollow()
         rebuildAfterRename()
-        focusedSurface()?.grabFocus()
+        focusActiveSession()
     }
 
     /// A name label (session or workspace) when not renaming: a plain GtkLabel that selects on single

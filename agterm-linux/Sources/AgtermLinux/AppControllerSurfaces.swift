@@ -15,16 +15,16 @@ extension AppController {
     /// ghostty surfaces (killing the shells) while `undoPendingClose` still offers to bring it back, and
     /// the undo would then silently spawn a brand-new login shell in place of the user's running one.
     func reconcile(focusActive: Bool = true) {
-        let focusActive = focusActive && deckMayTakeFocus
+        dropClosedSessionSearch()
         let dashboardRestore = prepareDashboardForReconcile()
         clearInvalidTerminalZoom()
         for ws in store.workspaces {
             for s in ws.sessions {
                 ensurePrimary(s)
                 syncSplit(s)
-                syncPaneOverlays(s, allowFocus: focusActive)  // after split so both pane hosts exist
+                syncPaneOverlays(s)  // after split so both pane hosts exist
                 syncScratch(s)
-                syncOverlay(s, allowFocus: focusActive)   // after scratch so an open overlay wins the visible child
+                syncOverlay(s)   // after scratch so an open overlay wins the visible child
                 updatePaneDim(s)   // last: the floating-overlay backdrop mute needs syncOverlay's frame
             }
         }
@@ -36,6 +36,7 @@ extension AppController {
         LinuxPaneLeadCover.syncAll()   // a pane overlay opening or closing hides or shows the deck's cover
         // a rebuild would destroy a live rename's entry and commit its half-typed name; ending it rebuilds
         if !sidebarInteractionInProgress { rebuildSidebar() }
+        // the one grab, gated once the removals above have taken a closed session's widgets off the keyboard
         showActive(focus: focusActive)
         updateTitle()
         updateAttentionButton()
@@ -142,9 +143,9 @@ extension AppController {
     /// Create/tear down the pane-scoped overlay terminals, one per split pane. Unlike the session-wide
     /// overlay these are always full-pane, so each simply covers its host; the sibling pane stays live and
     /// interactive throughout.
-    private func syncPaneOverlays(_ s: Session, allowFocus: Bool) {
+    private func syncPaneOverlays(_ s: Session) {
         for pane in OverlayPane.allCases {
-            if syncHtmlPane(s, pane, allowFocus: allowFocus) { continue }
+            if syncHtmlPane(s, pane) { continue }
             let wanted = s.paneOverlay(pane)
             if let wanted, paneOverlaySurfaces[s.id]?[pane] == nil {
                 guard let host = paneHosts[s.id]?[pane] else { continue }
@@ -173,7 +174,6 @@ extension AppController {
                 paneOverlaySurfaces[s.id, default: [:]][pane] = ov
                 gtk_overlay_add_overlay(host, W(ov.glArea))
                 ov.realizeWidgetIfNeeded()
-                if allowFocus, s.id == store.selectedSessionID { ov.grabFocus() }
             } else if wanted == nil, let ov = paneOverlaySurfaces[s.id]?[pane] {
                 if let host = paneHosts[s.id]?[pane] { gtk_overlay_remove_overlay(host, W(ov.glArea)) }
                 paneOverlaySurfaces[s.id]?[pane] = nil
@@ -198,12 +198,12 @@ extension AppController {
     }
 
     /// Create/show/hide the ephemeral overlay terminal (runs `overlayCommand` over the session).
-    private func syncOverlay(_ s: Session, allowFocus: Bool) {
+    private func syncOverlay(_ s: Session) {
         guard let stack = sessionStacks[s.id] else { return }
         // the store has already torn down a closed or replaced occupant; its widget leaves before a page or a
         // new surface takes the slot, or a later close removes a widget its frame already destroyed
         if let ov = overlaySurfaces[s.id], s.overlaySurface !== ov { unmountOverlaySurface(ov, of: s, stack: stack) }
-        if syncHtmlCover(s, stack: stack, allowFocus: allowFocus) { return }
+        if syncHtmlCover(s, stack: stack) { return }
         if s.overlayActive {
             if overlaySurfaces[s.id] == nil, let cmd = s.overlayCommand {
                 let codePath = NSTemporaryDirectory() + "agterm-ovl-\(UUID().uuidString).code"
@@ -246,13 +246,8 @@ extension AppController {
                 }
                 ov.realizeWidgetIfNeeded()
             }
-            if floatingOverlayFrames[s.id] != nil {
-                if allowFocus, s.programOverlayActive, s.id == store.selectedSessionID {
-                    overlaySurfaces[s.id]?.grabFocus()
-                }
-            } else {
+            if floatingOverlayFrames[s.id] == nil {
                 "overlay".withCString { gtk_stack_set_visible_child_name(stack, $0) }
-                if allowFocus, s.id == store.selectedSessionID { overlaySurfaces[s.id]?.grabFocus() }
             }
         }
     }
@@ -583,14 +578,8 @@ extension AppController {
             gtk_widget_set_child_visible(W(stack), presentation.childVisible ? 1 : 0)
         }
         updateFloatingOverlayVisibility(activeID: active?.id)
-        syncSessionAsks()
-        let focus = focus && deckMayTakeFocus
-        // a visible session dialog owns its region's keyboard, so the deck must not grab the pane back
-        if focus, let active, sessionAskWantsFocus(active.id) { updateToggleIcons(); return }
-        // a page holds the keyboard itself and leaves the terminal beneath unfocused
-        if focus, let active, !LinuxHtmlOverlays.shared.focusCover(of: active) {
-            (active.topmostSurface as? GhosttySurface)?.grabFocus()
-        }
+        syncSessionAsks(focus: false)
+        if focus, let active { focusSession(active) }
         updateToggleIcons()
     }
 
@@ -783,6 +772,18 @@ extension AppController {
         store.setFontSize(id, size)
     }
 
+    /// A pane overlay reports the pane its slot holds now, which a swap or a promotion can change; a scratch or
+    /// session-wide cover spans both panes and leaves the pane focus alone, as upstream wires none on it.
+    func surfaceDidFocus(_ surface: GhosttySurface) {
+        switch surface.role {
+        case .main, .split: surfaceDidFocus(surface.sessionID, isSplit: surface.isSplitPane)
+        case .overlay:
+            guard let pane = store.session(withID: surface.sessionID)?.paneOverlayRole(of: surface) else { return }
+            surfaceDidFocus(surface.sessionID, isSplit: pane == .right)
+        case .scratch, .quick: return
+        }
+    }
+
     func surfaceDidFocus(_ id: UUID, isSplit: Bool) {
         guard store.session(withID: id)?.hasSplit == true else { return }
         store.setPaneFocus(isSplit, forSession: id)
@@ -794,7 +795,7 @@ extension AppController {
     /// Mute strength now covers three backdrops, not just the inactive split pane (upstream #327): the
     /// session left visible AROUND a floating overlay or the quick terminal is muted too, and a pane
     /// overlay is muted with the pane it covers when that pane is the unfocused half of a split.
-    private func updatePaneDim(_ s: Session) {
+    func updatePaneDim(_ s: Session) {
         let strength = linuxSettingsStore().load().inactivePaneMuteStrength ?? AppSettings.defaultInactivePaneMuteStrength
         let dimmed = 1.0 - AppSettings.muteOpacity(strength: strength)
         // a floating panel over this session mutes BOTH panes behind it; the quick terminal is

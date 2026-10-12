@@ -915,7 +915,7 @@ private let surfaceFocusEnter: @MainActor @convention(c) (OpaquePointer?, gpoint
         surface.setFocus(true)
         surface.imFocus(true)
         // Tell the controller which pane took focus so a split session's displayName/title/cwd track it.
-        surface.controller?.surfaceDidFocus(surface.sessionID, isSplit: surface.isSplitPane)
+        surface.controller?.surfaceDidFocus(surface)
     }
 }
 private let surfaceFocusLeave: @MainActor @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, data in

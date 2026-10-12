@@ -44,7 +44,7 @@ extension AppController {
         }
     }
 
-    func syncSessionAsks() {
+    func syncSessionAsks(focus: Bool = true) {
         for (id, frame) in askWidgets.sessionFrames where !drawsSessionAsk(store.session(withID: id)) {
             removeSessionAskFrame(id, frame: frame)
         }
@@ -54,7 +54,7 @@ extension AppController {
                 applySessionAskGeometry(session)
             }
         }
-        updateSessionAskVisibility()
+        updateSessionAskVisibility(focus: focus)
     }
 
     /// A viewer presenting the session draws an ask handed to it, so nothing of it is shown or answered here.
@@ -133,13 +133,18 @@ extension AppController {
 
     /// A panel is drawn only while its session is selected and its anchor still renders, mirroring the HUD's
     /// visibility rule: zoom and the dashboard cover the deck, and a pane ask is hidden by the scratch.
-    private func updateSessionAskVisibility() {
+    private func updateSessionAskVisibility(focus: Bool) {
         for (id, frame) in askWidgets.sessionFrames {
             gtk_widget_set_visible(W(frame), sessionAskVisible(id) ? 1 : 0)
         }
-        if let id = store.selectedSessionID, sessionAskWantsFocus(id), let frame = askWidgets.sessionFrames[id] {
-            _ = gtk_widget_grab_focus(W(frame))
-        }
+        if focus, let id = store.selectedSessionID { focusSessionAsk(id) }
+    }
+
+    /// Hands the keyboard to the session's dialog when it should hold it; false leaves it with the caller.
+    @discardableResult func focusSessionAsk(_ id: UUID) -> Bool {
+        guard sessionAskWantsFocus(id), let frame = askWidgets.sessionFrames[id] else { return false }
+        _ = gtk_widget_grab_focus(W(frame))
+        return true
     }
 
     func sessionAskVisible(_ id: UUID) -> Bool {
@@ -154,8 +159,7 @@ extension AppController {
     /// keys only while its own pane is the focused one, which is what lets an agent ask about one pane from
     /// the other without taking that other pane's keyboard away.
     func sessionAskWantsFocus(_ id: UUID) -> Bool {
-        guard sessionAskVisible(id), gtk_window_is_active(WIN(windowPointer)) != 0,
-              !pickController.modalPending, paletteWindow == nil, !quickVisible,
+        guard sessionAskVisible(id), gtk_window_is_active(WIN(windowPointer)) != 0, deckMayTakeFocus, !quickVisible,
               let session = store.session(withID: id) else { return false }
         guard let target = session.askTargetPane else { return true }
         return target == (session.splitFocused ? .right : .left)
@@ -163,10 +167,12 @@ extension AppController {
 
     func resolveSessionAsk(_ sessionID: UUID, id: String, _ result: ControlAskResult) {
         guard let session = store.session(withID: sessionID) else { return }
+        // as upstream's catcher does, only a dialog that held the keyboard hands it back
+        let held = askWidgets.sessionFrames[sessionID].map(holdsWindowFocus) ?? false
         guard session.resolveAsk(id: id, result) else { return }
         askWidgets.navigations[id] = nil
         syncSessionAsks()
-        MainTimer.schedule(after: 0) { [weak self] in self?.focusedSurface()?.grabFocus() }
+        if held { MainTimer.schedule(after: 0) { [weak self] in self?.focusActiveSession() } }
     }
 
     // MARK: - GUI style
@@ -245,7 +251,7 @@ extension AppController {
             askWidgets.navigations[pending.id] = nil
             pickController.cancelAsk()
         }
-        MainTimer.schedule(after: 0) { [weak self] in self?.focusedSurface()?.grabFocus() }
+        MainTimer.schedule(after: 0) { [weak self] in self?.focusActiveSession() }
     }
 
     private func dismissGuiAsk() {
@@ -371,7 +377,7 @@ extension AppController {
         askWidgets.guiWindow = nil
         askWidgets.guiButtons = []
         gtk_window_destroy(WIN(win))
-        MainTimer.schedule(after: 0) { [weak self] in self?.focusedSurface()?.grabFocus() }
+        MainTimer.schedule(after: 0) { [weak self] in self?.focusActiveSession() }
     }
 
     /// The terminal panel takes the theme's own background and foreground, so a dialog over a terminal reads

@@ -39,7 +39,6 @@ extension AppController {
         store.toggleSplit(id, axis: axis)
         reconcile()
         updateToggleIcons()
-        focusedSurface(for: id)?.grabFocus()
     }
 
     /// The palette's Close Split, GUI twin of `session.split.close`. Gated on `hasSplit`, so the hidden pane
@@ -58,13 +57,11 @@ extension AppController {
         store.closeSplit(id)
         reconcile()
         updateToggleIcons()
-        surfaces[id]?.grabFocus()
     }
 
     func closeSplitPane(_ id: UUID, alreadyFinalized: UUID? = nil) {
         store.closeSplitPane(id, alreadyFinalized: alreadyFinalized)
         reconcile()
-        surfaces[id]?.grabFocus()
     }
 
     func toggleScratch() {
@@ -76,7 +73,7 @@ extension AppController {
 
     /// Move keyboard focus between the two split panes of the active session.
     func focusPane(left: Bool) {
-        guard let id = store.selectedSessionID, store.session(withID: id)?.hasSplit == true else { return }
-        (left ? surfaces[id] : splitSurfaces[id])?.grabFocus()
+        guard let session = store.activeSession, session.hasSplit else { return }
+        setSplitFocus(!left, of: session)
     }
 }

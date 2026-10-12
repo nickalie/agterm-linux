@@ -95,7 +95,7 @@ extension AppController {
         cancelFullscreenTransitionTimeout()
         setTerminalZoom(.off, target: nil)
         TerminalZoomRegistry.shared.unregister(windowID)
-        closeDashboard(refocus: false)
+        closeDashboard()
         DashboardControllerRegistry.shared.unregister(windowID)
         PickRegistry.shared.unregister(windowID)
         autoFollowCoordinator.stop()

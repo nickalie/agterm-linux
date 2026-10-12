@@ -8,7 +8,7 @@ import agtermCore
 extension AppController {
     /// syncHtmlCover mounts the session-wide page and is true while one holds the slot; otherwise it drops a
     /// floating frame a page left behind, which no overlay surface owns.
-    func syncHtmlCover(_ s: Session, stack: OpaquePointer, allowFocus: Bool) -> Bool {
+    func syncHtmlCover(_ s: Session, stack: OpaquePointer) -> Bool {
         guard s.htmlOverlayActive, let overlay = s.htmlOverlay else {
             if overlaySurfaces[s.id] == nil { removeFloatingOverlayFrame(s.id) }
             return false
@@ -24,21 +24,17 @@ extension AppController {
         guard LinuxHtmlOverlays.shared.show(overlay, store: store, backgroundColor: s.overlayBackgroundColor,
                                             at: target) != nil else { return true }
         if case .stack = target { "overlay".withCString { gtk_stack_set_visible_child_name(stack, $0) } }
-        if allowFocus, s.id == store.selectedSessionID { LinuxHtmlOverlays.shared.focusCover(of: s) }
         return true
     }
 
     /// syncHtmlPane mounts `pane`'s page on its host and is true while one holds that slot.
-    func syncHtmlPane(_ s: Session, _ pane: OverlayPane, allowFocus: Bool) -> Bool {
+    func syncHtmlPane(_ s: Session, _ pane: OverlayPane) -> Bool {
         guard let host = paneHosts[s.id]?[pane] else { return s.paneOverlayIsHtml(pane) }
         guard let overlay = s.paneOverlay(pane), let page = overlay.html else {
             LinuxHtmlOverlays.shared.clear(.paneHost(host))
             return false
         }
         _ = LinuxHtmlOverlays.shared.show(page, store: store, backgroundColor: overlay.backgroundColor, at: .paneHost(host))
-        if allowFocus, s.id == store.selectedSessionID, s.topmostHtmlOverlay?.id == page.id {
-            LinuxHtmlOverlays.shared.focusCover(of: s)
-        }
         return true
     }
 

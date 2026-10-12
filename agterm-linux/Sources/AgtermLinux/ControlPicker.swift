@@ -313,9 +313,7 @@ extension AppController {
             resumeAutoFollow()
         }
         guard gtk_window_is_active(WIN(windowPointer)) != 0 else { return }
-        MainTimer.schedule(after: 0) { [weak self] in
-            self?.focusedSurface()?.grabFocus()
-        }
+        MainTimer.schedule(after: 0) { [weak self] in self?.focusActiveSession() }
     }
 }
 

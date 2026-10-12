@@ -156,7 +156,6 @@ extension AppController {
             return
         }
         selectSession(id)
-        focusedSurface(for: id)?.grabFocus()
     }
 
     func dismissSessionPicker() {

@@ -22,7 +22,7 @@ extension AppController {
     }
 
     func setTerminalZoom(_ mode: ControlToggleMode, target: TerminalZoomTarget?) {
-        if mode != .off, dashboard.isOpen { closeDashboard(refocus: false) }
+        if mode != .off, dashboard.isOpen { closeDashboard() }
         let old = terminalZoom.target
         terminalZoom.set(mode, target: target)
         let new = terminalZoom.target

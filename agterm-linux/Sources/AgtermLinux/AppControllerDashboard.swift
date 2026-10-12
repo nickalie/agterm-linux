@@ -107,7 +107,7 @@ extension AppController {
     func openDashboard(members: [DashboardMember], fontMode: DashboardFontMode) {
         guard !members.isEmpty else { return }
         if terminalZoom.target != nil { setTerminalZoom(.off, target: nil) }
-        if dashboard.isOpen { closeDashboard(refocus: false) }
+        if dashboard.isOpen { closeDashboard() }
         if quickVisible { setQuick(false) }
         if paletteWindow != nil { closePalette() }
         searchSurface?.endSearch()
@@ -130,7 +130,7 @@ extension AppController {
         })
     }
 
-    func closeDashboard(refocus: Bool = true) {
+    func closeDashboard() {
         cancelPendingDashboardClick()
         guard dashboard.isOpen || dashboardRuntime.host != nil else { return }
         clearDashboardFontOverrides()
@@ -154,7 +154,6 @@ extension AppController {
         restoreSessionTopPages()
         gtk_widget_set_can_target(W(splitView), 1)
         showActive()
-        if refocus { focusedSurface()?.grabFocus() }
     }
 
     func selectDashboardMember(_ member: DashboardMember) {
@@ -165,8 +164,7 @@ extension AppController {
         if let session = store.session(withID: member.session) {
             session.splitFocused = member.surface == .split
         }
-        closeDashboard(refocus: false)
-        if member.surface == .split { focusPane(left: false) } else { focusPane(left: true) }
+        closeDashboard()
     }
 
     func moveDashboardHighlight(_ direction: DashboardLayout.Direction) {
@@ -203,7 +201,7 @@ extension AppController {
         let survivors = dashboard.members.filter(existing.contains)
         let state = (survivors, dashboard.fontMode,
                      dashboard.highlighted.flatMap { survivors.contains($0) ? $0 : nil })
-        closeDashboard(refocus: false)
+        closeDashboard()
         return state
     }
 

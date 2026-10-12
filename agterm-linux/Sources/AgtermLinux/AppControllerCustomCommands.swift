@@ -101,7 +101,7 @@ extension AppController {
         dismissCustomCommands()
         runCustomCommand(command)
         // the row ran like a chord would, so the keyboard goes back to the terminal
-        if let id = store.selectedSessionID { focusedSurface(for: id)?.grabFocus() }
+        focusActiveSession()
     }
 
     /// Enabled only with a parsed command and an active session: the runner ignores a command fired

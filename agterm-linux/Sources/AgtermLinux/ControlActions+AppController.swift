@@ -444,7 +444,6 @@ extension AppController: ControlActions {
                 store.setSplitVisibility(id, shown: shown, axis: axis)
             }
             reconcile()
-            focusedSurface(for: id)?.grabFocus()
             return ok(id)
         }
     }
@@ -459,7 +458,6 @@ extension AppController: ControlActions {
             guard session.hasSplit else { return ok(id) }
             store.closeSplit(id)
             reconcile()
-            surfaces[id]?.grabFocus()
             return ok(id)
         }
     }
@@ -486,12 +484,7 @@ extension AppController: ControlActions {
             guard let parsed = ControlPaneFocusMode.parse(pane) else {
                 return err("invalid pane: \(pane ?? "other")")
             }
-            let toSplit = parsed.wantsSplit(currentSplitFocused: session.splitFocused)
-            store.setPaneFocus(toSplit, forSession: id)
-            syncSplit(session)
-            rebuildSidebar()
-            updateTitle()
-            (toSplit ? splitSurfaces[id] : surfaces[id])?.grabFocus()
+            setSplitFocus(parsed.wantsSplit(currentSplitFocused: session.splitFocused), of: session)
             return ok(id)
         }
     }
@@ -541,7 +534,7 @@ extension AppController: ControlActions {
     func setDashboard(targets: [String], window: String?, close: Bool,
                       fontMode: DashboardFontMode, mru: Bool) -> ControlResponse {
         if close {
-            closeDashboard(refocus: false)
+            closeDashboard()
             return ok()
         }
         let members: [DashboardMember]

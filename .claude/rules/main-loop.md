@@ -88,15 +88,22 @@ paths:
   scroller instead of to a row, so it survives every rebuild — a background session's status, an OSC title,
   a control command — and closes only on an outside click or a chosen item.
   Gate on the shared `AppController.sidebarInteractionInProgress` and re-arm at
-  `AppController.sidebarInteractionRetryInterval` instead of dropping the rebuild; a SYNCHRONOUS rebuild is a
-  direct consequence of a user action and is deliberately not gated.
+  `AppController.sidebarInteractionRetryInterval` instead of dropping the rebuild; a synchronous sidebar
+  action's rebuild is deliberately not gated.
   Both live with the GATE, not with either deferred job — `SoftCloseReconcileCoordinator` takes the cadence
   by injection so it stays independent of what its `deferWhile` reads.
   `reconcile` itself skips its rebuild during a rename, since the rename's end rebuilds anyway.
-- **Every deck focus grab goes through `AppController.deckMayTakeFocus`**, upstream's
-  `focusActiveSession` bail list: zoom, dashboard, rename, palette or theme picker, pick or GUI ask, and the
-  quick terminal or search entry while either holds the window's focus.
-  `reconcile` and `showActive` apply it, so a new call site needs no check of its own.
+- **A deck focus grab goes through `AppController.deckMayTakeFocus`**: upstream's `focusActiveSession`
+  bail list (zoom, dashboard, rename, palette or theme picker, pick or GUI ask, and the quick terminal while it
+  holds the window's focus, upstream's `holdsKey`) plus its surfaces' refusal to steal from an `NSText`,
+  here any visible `GtkEditable` holding the window's focus.
+  `focusSession`/`focusActiveSession` apply it.
+  `reconcile` grabs only through `showActive`, after its removals, and its overlay syncs never grab;
+  `setSplitFocus` ends in `focusSession` too, so no caller of the three grabs after it.
+  The direct `grabFocus` calls left are the zoom's own surface, the quick terminal's show, a pointer click or
+  drop on a pane, a replaced pane keeping focus it had, and the search entry handing back the keyboard it held.
+  An overlay's exit, `session.overlay.close` and `submit`, a session dialog's answer and the search entry's
+  close hand the keyboard back only when the closing widget held it.
   A deferred job still passes `reconcile(focusActive: false)`: the gate cannot see a sidebar row or any
   other widget the user moved to during the delay (the trailing soft-close reconcile does).
 - **Tests that swap `MainTimer.scheduleTimer` go through `withFakeMainTimer`** (agtermCore test fixtures):

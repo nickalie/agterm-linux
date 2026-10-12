@@ -2211,7 +2211,45 @@ def verify_focus_gate(env, state):
         type_x11_text("quicksubmit", process.pid)
         wait_for(lambda: "quicksubmit" in quick_text(), "session.overlay.submit took the keyboard from the quick terminal")
         assert "quicksubmit" not in pane_text()
+
+        def keeps_quick(marker, what):
+            time.sleep(0.5)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in quick_text(), f"{what} took the keyboard from the quick terminal")
+
+        def open_split():
+            assert request("session.split", mode="on")["ok"]
+            wait_for(lambda: node().get("split"), "the split never opened")
+            wait_for(lambda: (request("session.text", pane="right").get("result") or {}).get("text", "").strip(),
+                     "the right pane's shell never started")
+
+        def exit_pane(pane):
+            assert request("session.type", text="exit\n", pane=pane)["ok"]
+            wait_for(lambda: not node().get("split"), f"the {pane} pane's exit left the split")
+
+        open_split()
+        keeps_quick("quicksplit", "session.split")
+        assert request("session.focus", pane="left")["ok"]
+        keeps_quick("quickfocus", "session.focus")
+        wait_for(lambda: request("session.swap")["ok"], "the panes never swapped")
+        keeps_quick("quickswap", "session.swap")
+        exit_pane("right")
+        keeps_quick("quickrightexit", "a split pane's shell exit")
+        open_split()
+        exit_pane("left")
+        keeps_quick("quickleftexit", "a primary pane's shell exit")
         set_quick("hide")
+
+        open_split()
+        assert request("session.overlay.open", command="sleep 60", pane="right")["ok"]
+        wait_for(lambda: node().get("paneOverlays"), "the right pane's overlay never opened")
+        for pane in ("left", "right"):
+            assert request("session.focus", pane=pane)["ok"]
+            time.sleep(0.5)
+            assert node().get("splitFocused") is (pane == "right"), f"focusing the {pane} pane reported the other one"
+        close_overlay(pane="right")
+        assert request("session.split.close")["ok"]
+        wait_for(lambda: not node().get("split"), "session.split.close left the split")
 
         assert raw_control_json(env, {"cmd": "session.new", "args": {"window": window_id}})["ok"]
         wait_for(lambda: session_count(window_tree(env, window_id)) == 2, "session.new never landed")
@@ -2221,23 +2259,98 @@ def verify_focus_gate(env, state):
         type_x11_text("selectback", process.pid)
         wait_for(lambda: "selectback" in pane_text(), "a plain session.select did not focus the selected pane")
 
+        def others():
+            return [item["id"] for item in window_tree(env, window_id)["workspaces"][0]["sessions"] if item["id"] != first]
+
+        def search(target):
+            assert request("session.select", target=target)["ok"]
+            press_x11_key("ctrl+shift+f", process.pid)
+            time.sleep(0.5)
+
+        second = others()[0]
+        search(second)
+        type_x11_text("nee", process.pid)
+        assert request("session.split", target=second, mode="on")["ok"]
+        wait_for(lambda: next(item for item in window_tree(env, window_id)["workspaces"][0]["sessions"]
+                              if item["id"] == second).get("split"), "the searched session never split")
+        time.sleep(0.5)
+        type_x11_text("dle", process.pid)
+        time.sleep(0.5)
+        for pane in ("left", "right"):
+            text = (request("session.text", target=second, pane=pane).get("result") or {}).get("text", "")
+            assert "nee" not in text and "dle" not in text, f"session.split took the keyboard from the search entry ({pane})"
+        assert request("session.close", target=second)["ok"]
+        wait_for(lambda: session_count(window_tree(env, window_id)) == 1, "session.close never landed")
+        time.sleep(0.5)
+        type_x11_text("searchgone", process.pid)
+        wait_for(lambda: "searchgone" in pane_text(), "closing the searched session left the keyboard nowhere")
+
+        for _ in range(2):
+            assert raw_control_json(env, {"cmd": "session.new", "args": {"window": window_id}})["ok"]
+        wait_for(lambda: len(others()) == 2, "session.new never landed")
+        time.sleep(1.0)
+        search(others()[0])
+        assert raw_control_json(env, {"cmd": "session.close", "args": {"window": window_id, "targets": others()}})["ok"]
+        wait_for(lambda: not others(), "the soft close never landed")
+        time.sleep(0.5)
+        type_x11_text("softgone", process.pid)
+        wait_for(lambda: "softgone" in pane_text(), "soft-closing the searched session left its search with the keyboard")
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)
         wait_for(lambda: "pageback" in pane_text(), "closing a focused page did not hand the keyboard back to its pane")
 
-        open_overlay(command="sleep 60")
+        def focus_sidebar_footer():
+            for _ in range(2):  # the button flips the flagged view, so the second press restores the tree
+                mouse_click(lambda: named(app, "Show Flagged Only", role="button"), process.pid, button="left")
+                time.sleep(1.0)
+
+        def stays_off_pane(marker, what):
+            type_x11_text(marker, process.pid)
+            time.sleep(1.0)
+            assert marker not in pane_text(), f"{what} took the keyboard from the sidebar"
+
+        def set_hud(verb):
+            assert request(f"session.hud.{verb}", **({"message": "gate"} if verb == "open" else {}))["ok"]
+            wait_for(lambda: bool(node().get("hud")) == (verb == "open"), f"session.hud.{verb} never landed")
+            time.sleep(0.5)
+
+        focus_sidebar_footer()
+        set_hud("open")
+        stays_off_pane("hudopen", "session.hud.open")
+        set_hud("close")
+        stays_off_pane("hudclose", "session.hud.close")
+        open_overlay(html=page, cwd=pages)
+        focus_sidebar_footer()
+        assert request("session.overlay.submit", value="chosen")["ok"]
+        wait_for(lambda: not overlay_open(), "the submitted page stayed open")
+        time.sleep(0.5)
+        stays_off_pane("pagesubmit", "session.overlay.submit")
+        assert request("session.select")["ok"]  # the palette chord reaches the keymap from a terminal only
+        time.sleep(0.5)
+
         title = wait_for(lambda: next(iter(collect(app, role="frame")), None), "the window frame is missing").get_name()
         run_palette_action(app, process.pid, title, "Rename Session")
         time.sleep(0.5)
         type_x11_text("half", process.pid)
         time.sleep(0.5)
+        open_overlay(command="sleep 60")
         close_overlay()
+        ask_id = control_json(env, "ask", "open", "Gate?", "--button", "ok=OK", "--no-block", "--target", first,
+                              "--window", window_id, "--json")["id"]
+        wait_for(lambda: (node().get("ask") or {}).get("id") == ask_id, "the ask never opened")
+        time.sleep(0.5)
+        set_hud("open")
+        set_hud("close")
+        control_json(env, "ask", "cancel", ask_id, "--window", window_id, "--json")
+        wait_for(lambda: node().get("ask") is None, "ask.cancel left the session slot filled")
+        time.sleep(0.5)
         type_x11_text("way", process.pid)
         press_return(process.pid)
         wait_for(lambda: node().get("name") == "halfway",
-                 "closing an overlay over an inline rename ended the rename")
-        print("OK: control reconciles leave the keyboard with the quick terminal and an inline rename")
+                 "a control command during an inline rename ended the rename")
+        print("OK: control reconciles leave the keyboard with the quick terminal, the sidebar and an inline rename")
     finally:
         stop(process)
 

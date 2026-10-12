@@ -76,8 +76,10 @@ extension AppController {
         endSearchAutoFollowSuppression()
         searchSessionID = nil
         searchSurface = nil
+        let held = searchBar.map(holdsWindowFocus) ?? false
         gtk_widget_set_visible(W(searchBar), 0)
-        owner?.grabFocus()
+        // only the entry's own keyboard goes back, and never to a terminal off screen
+        if held, owner?.sessionID == store.selectedSessionID { owner?.grabFocus() }
     }
 
     func searchDidReportTotal(_ id: UUID, total: Int?) { searchTotal = total; updateSearchLabel() }
@@ -117,6 +119,14 @@ extension AppController {
         searchTotal = nil
         searchSelected = nil
         gtk_widget_set_visible(W(searchBar), 0)
+    }
+
+    /// A closed session takes its search along before `reconcile` gates focus, or its entry would keep the
+    /// keyboard from the session selected in its place. A soft-closed surface lives on, so its search ends.
+    func dropClosedSessionSearch() {
+        guard let id = searchSessionID ?? searchSurface?.sessionID, store.session(withID: id) == nil else { return }
+        if store.pendingHeldSessionIDs().contains(id) { searchSurface?.endSearch() }
+        abandonSearch(ownedBy: id)
     }
 
     func searchQueryChanged(_ text: String) { searchSurface?.sendSearchQuery(text) }
