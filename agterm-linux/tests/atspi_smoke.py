@@ -2090,6 +2090,60 @@ def verify_pane_overlay_swap_exit(env):
         stop(process)
 
 
+def verify_overlay_close_focus(env):
+    """session.overlay.close hands the keyboard back to the pane only when the closed overlay held it."""
+    process, _ = launch(env)
+    try:
+        focus_window(process.pid)
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+        time.sleep(1.0)
+
+        def request(cmd, target=session_id, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": target, "args": dict(args, window=window_id)})
+
+        def node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        def open_overlay(**pane):
+            assert request("session.overlay.open", command="sleep 60", **pane)["ok"]
+            wait_for(lambda: node().get("paneOverlays") if pane else node().get("overlay"), "the overlay never opened")
+            time.sleep(0.5)
+
+        def close_overlay(**pane):
+            assert request("session.overlay.close", **pane)["ok"]
+            wait_for(lambda: not (node().get("paneOverlays") if pane else node().get("overlay")),
+                     "the overlay outlived its close")
+            time.sleep(0.5)
+
+        def quick_text():
+            return raw_control_json(env, {"cmd": "quick.text", "args": {}})["result"]["text"]
+
+        for marker, pane in (("coverback", {}), ("paneback", {"pane": "left"})):
+            open_overlay(**pane)
+            close_overlay(**pane)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in request("session.text")["result"]["text"],
+                     f"closing a focused {pane or 'cover'} overlay did not hand the keyboard back to its pane")
+
+        for marker, pane in (("quickcover", {}), ("quickpane", {"pane": "left"})):
+            open_overlay(**pane)
+            assert raw_control_json(env, {"cmd": "quick", "args": {"mode": "show"}})["ok"]
+            wait_for(lambda: raw_control_json(env, {"cmd": "quick.text", "args": {}}).get("ok"),
+                     "the quick terminal never realized")
+            time.sleep(0.5)
+            close_overlay(**pane)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in quick_text(),
+                     f"closing a {pane or 'cover'} overlay took the keyboard from the quick terminal")
+            assert marker not in request("session.text")["result"]["text"]
+            assert raw_control_json(env, {"cmd": "quick", "args": {"mode": "hide"}})["ok"]
+            time.sleep(0.5)
+        print("OK: session.overlay.close refocuses the pane only when the overlay held the keyboard")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3345,7 +3399,7 @@ def main():
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
             "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "overlay-theme",
-            "overlay-exit-focus", "pane-overlay-swap-exit", "dashboard-modal",
+            "overlay-exit-focus", "pane-overlay-swap-exit", "overlay-close-focus", "dashboard-modal",
             "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -3421,6 +3475,8 @@ def main():
             verify_overlay_exit_focus(env)
         elif scenario == "pane-overlay-swap-exit":
             verify_pane_overlay_swap_exit(env)
+        elif scenario == "overlay-close-focus":
+            verify_overlay_close_focus(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

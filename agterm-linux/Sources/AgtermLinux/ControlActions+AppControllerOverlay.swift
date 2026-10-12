@@ -48,14 +48,25 @@ extension AppController {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            let refocus = overlayOwnsWindowFocus(id, pane: pane)
             // a remote job first: a HUD opened here during its run shares the slot and must not absorb the close
             guard store.closeRemoteOverlay(id, pane: pane)
                     || pane.map({ store.closePaneOverlay(id, pane: $0) }) ?? store.closeOverlay(id) else {
                 return err("no overlay")
             }
-            reconcile()
+            reconcile(focusActive: refocus)
             return ok(id)
         }
+    }
+
+    /// Whether the session's overlay, or `pane`'s, holds the window's keyboard: only then does closing it hand
+    /// the keyboard to the pane, never taking it from the quick terminal, the search entry or the sidebar.
+    private func overlayOwnsWindowFocus(_ id: UUID, pane: OverlayPane?) -> Bool {
+        guard let session = store.session(withID: id) else { return false }
+        let surface = pane.map { paneOverlaySurfaces[id]?[$0] } ?? overlaySurfaces[id]
+        let page = pane.map { session.paneOverlay($0)?.html } ?? session.htmlOverlay
+        return surface?.ownsWindowFocus == true
+            || page.flatMap { LinuxHtmlOverlays.shared.existing($0.id) }?.ownsWindowFocus == true
     }
 
     func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
