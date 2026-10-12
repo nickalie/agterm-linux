@@ -256,10 +256,7 @@ final class LinuxHtmlOverlayPage {
     }
 
     /// Whether the window's focus widget is in this panel, the web view or its strip.
-    var ownsWindowFocus: Bool {
-        guard let root = gtk_widget_get_root(W(panel)), let focus = gtk_root_get_focus(root) else { return false }
-        return focus == W(panel) || gtk_widget_is_ancestor(focus, W(panel)) != 0
-    }
+    var ownsWindowFocus: Bool { holdsWindowFocus(panel) }
 
     func setZoom(_ zoom: Double) {
         api.pointee.set_zoom(W(view), zoom)

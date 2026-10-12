@@ -155,7 +155,6 @@ extension AppController {
         }
         attachment?.record(on: created, in: store)
         reconcile()
-        (created.splitFocused ? splitSurfaces[created.id] : surfaces[created.id])?.grabFocus()
         return ControlResponse(ok: true, result: ControlResult(id: created.id.uuidString))
     }
 

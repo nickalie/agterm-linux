@@ -15,6 +15,7 @@ extension AppController {
     /// ghostty surfaces (killing the shells) while `undoPendingClose` still offers to bring it back, and
     /// the undo would then silently spawn a brand-new login shell in place of the user's running one.
     func reconcile(focusActive: Bool = true) {
+        let focusActive = focusActive && deckMayTakeFocus
         let dashboardRestore = prepareDashboardForReconcile()
         clearInvalidTerminalZoom()
         for ws in store.workspaces {
@@ -190,7 +191,7 @@ extension AppController {
 
     /// A pane overlay's command exited: tear it down + reconcile.
     func closePaneOverlay(_ id: UUID, pane: OverlayPane) {
-        let refocus = paneOverlaySurfaces[id]?[pane]?.ownsWindowFocus == true
+        let refocus = overlayOwnsWindowFocus(id, pane: pane)
         store.closePaneOverlay(id, pane: pane)
         reconcile(focusActive: refocus)
     }
@@ -225,7 +226,7 @@ extension AppController {
                         let code = (try? String(contentsOfFile: codePath, encoding: .utf8)).flatMap(OverlayCapture.parseExitCode)
                         try? FileManager.default.removeItem(atPath: codePath)
                         guard let controller = gWindows[owner] else { return }
-                        let refocus = controller.overlaySurfaces[sid]?.ownsWindowFocus == true
+                        let refocus = controller.overlayOwnsWindowFocus(sid, pane: nil)
                         guard Self.settleOverlayExit(controller.store, sessionID: sid, generation: generation, code: code)
                         else { return }
                         controller.reconcile(focusActive: refocus)
@@ -582,20 +583,12 @@ extension AppController {
         }
         updateFloatingOverlayVisibility(activeID: active?.id)
         syncSessionAsks()
+        let focus = focus && deckMayTakeFocus
         // a visible session dialog owns its region's keyboard, so the deck must not grab the pane back
         if focus, let active, sessionAskWantsFocus(active.id) { updateToggleIcons(); return }
-        if focus, let active {
-            if LinuxHtmlOverlays.shared.focusCover(of: active) {
-                // the page holds the keyboard; the terminal beneath stays unfocused
-            } else if active.programOverlayActive {
-                overlaySurfaces[active.id]?.grabFocus()
-            } else if active.scratchActive {
-                scratchSurfaces[active.id]?.grabFocus()
-            } else if active.splitFocused, let split = splitSurfaces[active.id] {
-                split.grabFocus()
-            } else {
-                surfaces[active.id]?.grabFocus()
-            }
+        // a page holds the keyboard itself and leaves the terminal beneath unfocused
+        if focus, let active, !LinuxHtmlOverlays.shared.focusCover(of: active) {
+            (active.topmostSurface as? GhosttySurface)?.grabFocus()
         }
         updateToggleIcons()
     }
@@ -832,14 +825,5 @@ extension AppController {
         for workspace in store.workspaces {
             for session in workspace.sessions { updatePaneDim(session) }
         }
-    }
-}
-
-extension GhosttySurface {
-    /// Whether this surface is its window's focus widget. Unlike `gtk_widget_has_focus`, it holds while the
-    /// window is inactive.
-    var ownsWindowFocus: Bool {
-        guard let root = gtk_widget_get_root(W(glArea)) else { return false }
-        return gtk_root_get_focus(root) == W(glArea)
     }
 }

@@ -2144,6 +2144,93 @@ def verify_overlay_close_focus(env):
         stop(process)
 
 
+def verify_focus_gate(env, state):
+    """A control command that reconciles the deck leaves the keyboard where the user put it."""
+    pages = os.path.join(state, "gate-pages")
+    os.makedirs(pages)
+    page = os.path.join(pages, "index.html")
+    with open(page, "w", encoding="utf-8") as target:
+        target.write("<html><head><title>gate</title></head><body>gate</body></html>")
+    env = dict(env, WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="1")
+    process, app = launch(env)
+    try:
+        focus_window(process.pid)
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        first = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+        time.sleep(1.0)
+
+        def request(cmd, target=first, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": target, "args": dict(args, window=window_id)})
+
+        def node():
+            return window_tree(env, window_id)["workspaces"][0]["sessions"][0]
+
+        def pane_text(target=first):
+            return request("session.text", target=target)["result"]["text"]
+
+        def quick_text():
+            return raw_control_json(env, {"cmd": "quick.text", "args": {}})["result"]["text"]
+
+        def set_quick(mode):
+            assert raw_control_json(env, {"cmd": "quick", "args": {"mode": mode}})["ok"]
+            if mode == "show":
+                wait_for(lambda: raw_control_json(env, {"cmd": "quick.text", "args": {}}).get("ok"),
+                         "the quick terminal never realized")
+            time.sleep(0.5)
+
+        def overlay_open():
+            item = node()
+            return bool(item.get("overlay") or item.get("paneOverlays") or item.get("htmlOverlays"))
+
+        def open_overlay(**args):
+            assert request("session.overlay.open", **args)["ok"]
+            wait_for(overlay_open, f"the overlay {args} never opened")
+            time.sleep(1.0)
+
+        def close_overlay(**pane):
+            assert request("session.overlay.close", **pane)["ok"]
+            wait_for(lambda: not overlay_open(), "the overlay outlived its close")
+            time.sleep(0.5)
+
+        for marker, args in (("quickcover", {"command": "sleep 60"}),
+                             ("quickpane", {"command": "sleep 60", "pane": "left"}),
+                             ("quickpage", {"html": page, "cwd": pages})):
+            set_quick("show")
+            open_overlay(**args)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in quick_text(),
+                     f"session.overlay.open {args} took the keyboard from the quick terminal")
+            set_quick("hide")
+            close_overlay(**({"pane": "left"} if "pane" in args else {}))
+
+        open_overlay(html=page, cwd=pages)
+        set_quick("show")
+        assert request("session.overlay.submit", value="chosen")["ok"]
+        wait_for(lambda: not overlay_open(), "the submitted page stayed open")
+        time.sleep(0.5)
+        type_x11_text("quicksubmit", process.pid)
+        wait_for(lambda: "quicksubmit" in quick_text(), "session.overlay.submit took the keyboard from the quick terminal")
+        assert "quicksubmit" not in pane_text()
+        set_quick("hide")
+
+        assert raw_control_json(env, {"cmd": "session.new", "args": {"window": window_id}})["ok"]
+        wait_for(lambda: session_count(window_tree(env, window_id)) == 2, "session.new never landed")
+        time.sleep(1.0)
+        assert request("session.select")["ok"]
+        time.sleep(0.5)
+        type_x11_text("selectback", process.pid)
+        wait_for(lambda: "selectback" in pane_text(), "a plain session.select did not focus the selected pane")
+
+        open_overlay(html=page, cwd=pages)
+        close_overlay()
+        type_x11_text("pageback", process.pid)
+        wait_for(lambda: "pageback" in pane_text(), "closing a focused page did not hand the keyboard back to its pane")
+
+        print("OK: control reconciles leave the keyboard with the quick terminal")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3399,7 +3486,7 @@ def main():
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
             "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "overlay-theme",
-            "overlay-exit-focus", "pane-overlay-swap-exit", "overlay-close-focus", "dashboard-modal",
+            "overlay-exit-focus", "pane-overlay-swap-exit", "overlay-close-focus", "focus-gate", "dashboard-modal",
             "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -3477,6 +3564,8 @@ def main():
             verify_pane_overlay_swap_exit(env)
         elif scenario == "overlay-close-focus":
             verify_overlay_close_focus(env)
+        elif scenario == "focus-gate":
+            verify_focus_gate(env, state)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

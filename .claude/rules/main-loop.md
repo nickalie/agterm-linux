@@ -92,14 +92,12 @@ paths:
   direct consequence of a user action and is deliberately not gated.
   Both live with the GATE, not with either deferred job — `SoftCloseReconcileCoordinator` takes the cadence
   by injection so it stays independent of what its `deferWhile` reads.
-- **A deferred job must not GRAB keyboard focus — that gate covers the sidebar only.**
-  `reconcile()` defaults to `focusActive: true`, which ends in `grab_focus` on the active session's pane, so
-  a timer-driven reconcile takes the keyboard away from whatever the user moved to during the delay.
-  `sidebarInteractionInProgress` sees only the inline rename; the in-terminal search
-  entry and the quick terminal are plain widgets in the SAME toplevel and are invisible to it, so a grab
-  silently reroutes the rest of the user's typing into a live shell.
-  Pass `reconcile(focusActive: false)` from any timer (the trailing soft-close reconcile does);
-  focus belongs to the SYNCHRONOUS reconcile that the user's own action drives.
+- **Every deck focus grab goes through `AppController.deckMayTakeFocus`**, upstream's
+  `focusActiveSession` bail list: zoom, dashboard, rename, palette or theme picker, pick or GUI ask, and the
+  quick terminal or search entry while either holds the window's focus.
+  `reconcile` and `showActive` apply it, so a new call site needs no check of its own.
+  A deferred job still passes `reconcile(focusActive: false)`: the gate cannot see a sidebar row or any
+  other widget the user moved to during the delay (the trailing soft-close reconcile does).
 - **Tests that swap `MainTimer.scheduleTimer` go through `withFakeMainTimer`** (agtermCore test fixtures):
   the seam is a process-global static and swift-testing runs in parallel, so the swap window must contain no
   `await` — the helper's synchronous closure makes that unrepresentable.
