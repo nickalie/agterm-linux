@@ -78,8 +78,8 @@ extension AppController {
         searchSurface = nil
         let held = searchBar.map(holdsWindowFocus) ?? false
         gtk_widget_set_visible(W(searchBar), 0)
-        // only the entry's own keyboard goes back, and never to a terminal off screen
-        if held, owner?.sessionID == store.selectedSessionID { owner?.grabFocus() }
+        // only the entry's own keyboard goes back, to whatever tops the session now: a cover may have opened
+        if held, owner?.sessionID == store.selectedSessionID { focusActiveSession() }
     }
 
     func searchDidReportTotal(_ id: UUID, total: Int?) { searchTotal = total; updateSearchLabel() }

@@ -2339,6 +2339,29 @@ def verify_focus_gate(env, state):
         type_x11_text("promotedback", process.pid)
         wait_for(lambda: "promotedback" in pane_text(), "Escape did not end the promoted pane's search")
 
+        def overlay_text():
+            response = request("session.overlay.text")
+            return response["result"]["text"] if response.get("ok") else ""
+
+        press_x11_key("ctrl+shift+f", process.pid)
+        time.sleep(0.5)
+        type_x11_text("plainneedle", process.pid)
+        press_escape(process.pid)
+        time.sleep(0.5)
+        type_x11_text("plainback", process.pid)
+        wait_for(lambda: "plainback" in pane_text(), "Escape did not return the keyboard to the searched pane")
+        assert "plainneedle" not in pane_text(), "the search entry never took the keyboard"
+        press_x11_key("ctrl+shift+f", process.pid)
+        time.sleep(0.5)
+        type_x11_text("coverneedle", process.pid)
+        open_overlay(command="cat")
+        press_escape(process.pid)
+        time.sleep(0.5)
+        type_x11_text("overlaygot", process.pid)
+        wait_for(lambda: "overlaygot" in overlay_text(), "Escape gave the keyboard to the pane beneath a new cover")
+        assert "overlaygot" not in pane_text() and "coverneedle" not in overlay_text()
+        close_overlay()
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)

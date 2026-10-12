@@ -101,9 +101,10 @@ paths:
   `reconcile` grabs only through `showActive`, after its removals, and its overlay syncs never grab;
   `setSplitFocus` ends in `focusSession` too, so no caller of the three grabs after it.
   The direct `grabFocus` calls left are the zoom's own surface, the quick terminal's show, a pointer click or
-  drop on a pane, a replaced pane keeping focus it had, and the search entry handing back the keyboard it held.
+  drop on a pane, and a replaced pane keeping focus it had.
   An overlay's exit, `session.overlay.close` and `submit`, a session dialog's answer and the search entry's
-  close hand the keyboard back only when the closing widget held it.
+  close hand the keyboard back only when the closing widget held it, and through the gate to the session's
+  topmost surface, never the one they opened over: a cover may have opened since.
   A deferred job still passes `reconcile(focusActive: false)`: the gate cannot see a sidebar row or any
   other widget the user moved to during the delay (the trailing soft-close reconcile does).
 - **Tests that swap `MainTimer.scheduleTimer` go through `withFakeMainTimer`** (agtermCore test fixtures):
