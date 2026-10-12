@@ -786,26 +786,37 @@ def verify_upstream_control_parity(env):
         window_id = next(item["id"] for item in window_list(env) if item["open"])
         initial_tree = window_tree(env, window_id)
         initial_session = initial_tree["workspaces"][0]["sessions"][0]["id"]
+        initial_workspace = initial_tree["workspaces"][0]["id"]
 
         bootstrap = raw_control_json(env, {"cmd": "events.read"})
         assert bootstrap["ok"], f"events.read bootstrap failed: {bootstrap}"
         anchor = bootstrap["result"]["events"]
         assert anchor["items"] == [], "events.read bootstrap replayed prior history"
 
+        control_json(env, "workspace", "focus", "on", "--target", initial_workspace,
+                     "--window", window_id, "--json")
         workspace_id = control_json(
             env, "workspace", "new", "parity-work", "--collapsed",
             "--window", window_id, "--json",
         )["result"]["id"]
-        wait_for(
-            lambda: named(app, "parity-work", role="label"),
-            "collapsed workspace was not rendered",
-        )
 
         def workspace_node():
             return next(
                 workspace for workspace in window_tree(env, window_id)["workspaces"]
                 if workspace["id"] == workspace_id
             )
+
+        background = window_tree(env, window_id)
+        assert [w["id"] for w in background["workspaces"] if w.get("active")] == [initial_workspace], (
+            "workspace.new --collapsed took the current workspace"
+        )
+        assert not workspace_node().get("focused"), "workspace.new --collapsed joined the focus set"
+        control_json(env, "workspace", "focus", "off", "--target", initial_workspace,
+                     "--window", window_id, "--json")
+        wait_for(
+            lambda: named(app, "parity-work", role="label"),
+            "collapsed workspace was not rendered",
+        )
 
         assert workspace_node().get("collapsed"), "workspace.new --collapsed did not persist model state"
         control_json(

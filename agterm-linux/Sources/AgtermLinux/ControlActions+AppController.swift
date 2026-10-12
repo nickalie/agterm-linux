@@ -234,7 +234,9 @@ extension AppController: ControlActions {
     }
 
     func createWorkspace(window: String?, name: String?, collapsed: Bool) -> ControlResponse {
-        let workspace = store.addWorkspace(name: name?.linuxTrimmedOrNil ?? store.defaultWorkspaceName, collapsed: collapsed)
+        // a collapsed create is a background one: it neither becomes current nor joins the focus set.
+        let workspace = store.addWorkspace(name: name?.linuxTrimmedOrNil ?? store.defaultWorkspaceName,
+                                           collapsed: collapsed, revealNewWorkspace: !collapsed)
         reconcile()
         return ok(workspace.id)
     }
