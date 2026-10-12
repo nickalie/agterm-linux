@@ -298,10 +298,12 @@ final class GhosttySurface: PaneRoleMutableSurface {
     }
 
     /// Feed raw bytes into the terminal as if read from the pty — used to push theme colors (OSC 11/10/4/…)
-    /// that the embedded OpenGL renderer doesn't adopt from the config. `ghostty_surface_feed` runs them
-    /// through the terminal parser under the renderer lock, so it's safe from the main thread.
+    /// that the embedded OpenGL renderer doesn't adopt from the config.
     func feed(_ bytes: String) {
         guard let surface, !bytes.isEmpty else { return }
+        // a color OSC, like a config update, waits forever on a full 64-slot app mailbox that only this thread's
+        // tick drains; surfaces redrawing through a theme change fill it, so drain it first
+        GhosttyApp.shared.tick()
         bytes.withCString { ghostty_surface_feed(surface, $0, UInt(bytes.utf8.count)) }
     }
 
@@ -310,6 +312,7 @@ final class GhosttySurface: PaneRoleMutableSurface {
     /// Apply a rebuilt ghostty config to this live surface (theme change). The caller owns `config`.
     func applyConfig(_ config: ghostty_config_t) {
         guard let surface else { return }
+        GhosttyApp.shared.tick()   // see feed
         if let size = controller?.hudCreationFontSize(of: self) {
             // a HUD's own overlay carries the padding it is sized with, which the shared config would drop
             reapplyBackgroundOverlay(force: true)
