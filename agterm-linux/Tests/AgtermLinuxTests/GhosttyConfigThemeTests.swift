@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import agtermCore
 @testable import AgtermLinux
@@ -33,6 +34,17 @@ struct GhosttyConfigThemeTests {
     func derivedSelectionHighlight() {
         #expect(ThemeColorResolver.selectionHighlight(background: "#303030", preferred: nil) == "#555555")
         #expect(ThemeColorResolver.selectionHighlight(background: "#FFFCF0", preferred: nil) == "#DBD9CE")
+    }
+
+    @Test("the staged resource manifest is not listed as a theme")
+    func bundledThemesSkipHiddenEntries() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("themes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for name in [".agterm-resource-manifest", "Nord", "Dracula"] {
+            try Data().write(to: dir.appendingPathComponent(name))
+        }
+        #expect(AppController.bundledThemes(in: dir.path) == [AppSettings.defaultTheme, "Dracula", "Nord"])
     }
 }
 

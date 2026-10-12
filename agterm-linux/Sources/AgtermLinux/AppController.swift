@@ -838,8 +838,11 @@ final class AppController {
     func reloadConfig() { applySettings(linuxSettingsStore().load()) }
 
     /// Bundled ghostty theme names (the file names in the resolved themes dir).
-    nonisolated static func bundledThemes() -> [String] {
-        var names = themesDir().map { ThemeCatalog.names(in: $0) } ?? []
+    nonisolated static func bundledThemes() -> [String] { bundledThemes(in: themesDir()) }
+
+    /// Hidden entries are skipped: `setup-linux.sh` stages `.agterm-resource-manifest` beside the themes.
+    nonisolated static func bundledThemes(in dir: String?) -> [String] {
+        var names = (dir.map { ThemeCatalog.names(in: $0) } ?? []).filter { !$0.hasPrefix(".") }
         if !names.contains(AppSettings.defaultTheme) {
             names.append(AppSettings.defaultTheme)
         }
