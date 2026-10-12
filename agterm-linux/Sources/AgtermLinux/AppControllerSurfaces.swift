@@ -209,14 +209,15 @@ extension AppController {
                                         fontSize: s.hudActive ? s.hudFontSize ?? s.fontSize : s.fontSize)
                 let sid = s.id
                 let owner = windowID
+                let generation = s.overlaySlotGeneration
                 ov.onExit = {
                     runOnMain { MainActor.assumeIsolated {
-                        if let txt = try? String(contentsOfFile: codePath, encoding: .utf8),
-                           let code = OverlayCapture.parseExitCode(txt) {
-                            gWindows[owner]?.store.recordOverlayExit(sid, code: code)
-                        }
+                        let code = (try? String(contentsOfFile: codePath, encoding: .utf8)).flatMap(OverlayCapture.parseExitCode)
                         try? FileManager.default.removeItem(atPath: codePath)
-                        gWindows[owner]?.closeOverlay(sid)
+                        guard let controller = gWindows[owner],
+                              Self.settleOverlayExit(controller.store, sessionID: sid, generation: generation, code: code)
+                        else { return }
+                        controller.reconcile()
                     } }
                 }
                 s.overlaySurface = ov
@@ -254,6 +255,15 @@ extension AppController {
     }
 
     private static func singleQuoted(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    /// An overlay surface's exit lands two main-loop hops after its process ends, so it settles the slot only
+    /// while the slot still holds the open that surface was made for; a replacement may own it by then.
+    static func settleOverlayExit(_ store: AppStore, sessionID: UUID, generation: Int, code: Int?) -> Bool {
+        guard store.session(withID: sessionID)?.overlaySlotGeneration == generation else { return false }
+        if let code { store.recordOverlayExit(sessionID, code: code) }
+        store.closeOverlay(sessionID)
+        return true
+    }
 
     /// The overlay's command exited (or a control close): tear it down + reconcile.
     func closeOverlay(_ id: UUID) {
