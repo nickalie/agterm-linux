@@ -2016,6 +2016,47 @@ def verify_overlay_slot_and_theme_reload(env, state):
         stop(process)
 
 
+def verify_overlay_exit_focus(env):
+    """An exiting overlay hands the keyboard back to its pane only when it still held it."""
+    process, _ = launch(env)
+    try:
+        focus_window(process.pid)
+        window_id = next(item["id"] for item in window_list(env) if item["open"])
+        session_id = window_tree(env, window_id)["workspaces"][0]["sessions"][0]["id"]
+        time.sleep(1.0)
+
+        def request(cmd, target=session_id, **args):
+            return raw_control_json(env, {"cmd": cmd, "target": target, "args": dict(args, window=window_id)})
+
+        def overlay_open():
+            return bool(window_tree(env, window_id)["workspaces"][0]["sessions"][0].get("overlay"))
+
+        def run_overlay(seconds):
+            assert request("session.overlay.open", command=f"sleep {seconds}")["ok"]
+            wait_for(overlay_open, "the overlay never opened")
+
+        run_overlay(2)
+        wait_for(lambda: not overlay_open(), "the focused overlay never exited")
+        time.sleep(0.5)
+        type_x11_text("panekeep", process.pid)
+        wait_for(lambda: "panekeep" in request("session.text")["result"]["text"],
+                 "a focused overlay's exit did not hand the keyboard back to its pane")
+
+        run_overlay(4)
+        assert raw_control_json(env, {"cmd": "quick", "args": {"mode": "show"}})["ok"]
+        wait_for(lambda: raw_control_json(env, {"cmd": "quick.text", "args": {}}).get("ok"),
+                 "the quick terminal never realized")
+        wait_for(lambda: not overlay_open(), "the overlay under the quick terminal never exited")
+        time.sleep(0.5)
+        type_x11_text("quickkeep", process.pid)
+        wait_for(lambda: "quickkeep" in raw_control_json(env, {"cmd": "quick.text", "args": {}})["result"]["text"],
+                 "the overlay's exit took the keyboard from the quick terminal")
+        assert "quickkeep" not in request("session.text")["result"]["text"]
+        print("OK: an overlay's exit refocuses its pane only when it held the keyboard")
+    finally:
+        stop(process)
+
+
 def verify_dashboard_modal(env):
     process, app = launch(env)
     try:
@@ -3271,7 +3312,7 @@ def main():
             "normal", "upstream-controls", "v024-controls", "v027-controls", "v029-controls", "v031-sidebar",
             "v030-hooks", "v032-keymap-hud", "v032-pane-background", "v032-pane-lead", "v033-html-overlay",
             "v034-html-bridge", "v034-session-placement", "v035-controls", "v036-controls", "overlay-theme",
-            "dashboard-modal",
+            "overlay-exit-focus", "dashboard-modal",
             "context-menu",
             "window-ownership", "preferences-pages",
             "notification-reveal", "notification-focus", "session-pickers",
@@ -3343,6 +3384,8 @@ def main():
             verify_v036_controls(env, state)
         elif scenario == "overlay-theme":
             verify_overlay_slot_and_theme_reload(env, state)
+        elif scenario == "overlay-exit-focus":
+            verify_overlay_exit_focus(env)
         elif scenario == "dashboard-modal":
             verify_dashboard_modal(env)
         elif scenario == "context-menu":

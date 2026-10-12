@@ -179,10 +179,11 @@ extension AppController {
         }
     }
 
-    /// A pane overlay's command exited (or a control close): tear it down + reconcile.
+    /// A pane overlay's command exited: tear it down + reconcile.
     func closePaneOverlay(_ id: UUID, pane: OverlayPane) {
+        let refocus = paneOverlaySurfaces[id]?[pane]?.ownsWindowFocus == true
         store.closePaneOverlay(id, pane: pane)
-        reconcile()
+        reconcile(focusActive: refocus)
     }
 
     /// Create/show/hide the ephemeral overlay terminal (runs `overlayCommand` over the session).
@@ -214,10 +215,11 @@ extension AppController {
                     runOnMain { MainActor.assumeIsolated {
                         let code = (try? String(contentsOfFile: codePath, encoding: .utf8)).flatMap(OverlayCapture.parseExitCode)
                         try? FileManager.default.removeItem(atPath: codePath)
-                        guard let controller = gWindows[owner],
-                              Self.settleOverlayExit(controller.store, sessionID: sid, generation: generation, code: code)
+                        guard let controller = gWindows[owner] else { return }
+                        let refocus = controller.overlaySurfaces[sid]?.ownsWindowFocus == true
+                        guard Self.settleOverlayExit(controller.store, sessionID: sid, generation: generation, code: code)
                         else { return }
-                        controller.reconcile()
+                        controller.reconcile(focusActive: refocus)
                     } }
                 }
                 s.overlaySurface = ov
@@ -821,5 +823,14 @@ extension AppController {
         for workspace in store.workspaces {
             for session in workspace.sessions { updatePaneDim(session) }
         }
+    }
+}
+
+extension GhosttySurface {
+    /// Whether this surface is its window's focus widget. Unlike `gtk_widget_has_focus`, it holds while the
+    /// window is inactive.
+    var ownsWindowFocus: Bool {
+        guard let root = gtk_widget_get_root(W(glArea)) else { return false }
+        return gtk_root_get_focus(root) == W(glArea)
     }
 }
