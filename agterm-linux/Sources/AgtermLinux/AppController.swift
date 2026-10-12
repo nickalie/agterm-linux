@@ -528,10 +528,14 @@ final class AppController {
         // slot to the start slot, so it fills the page and a future re-split has a free end slot.
         // Moving the host rather than the glArea is what keeps the survivor's GL context realized, and it
         // carries any pane overlay layered on it — matching the model's `promotePaneOverlay`.
+        // the paned's ref is the moved widget's last one unless focus pins it, as `swapPanes` explains
+        let survivorHost = paneHosts[id]?[.right]
+        let moved = survivorHost ?? survivor.glArea
+        _ = g_object_ref(RAW(moved))
         gtk_paned_set_start_child(paned, nil)
         gtk_paned_set_end_child(paned, nil)
-        let survivorHost = paneHosts[id]?[.right]
-        gtk_paned_set_start_child(paned, W(survivorHost ?? survivor.glArea))
+        gtk_paned_set_start_child(paned, W(moved))
+        g_object_unref(RAW(moved))
         paneHosts[id]?[.left] = survivorHost
         paneHosts[id]?[.right] = nil
         let survivorOverlay = paneOverlaySurfaces[id]?[.right]
