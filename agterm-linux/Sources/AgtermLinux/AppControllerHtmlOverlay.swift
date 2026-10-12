@@ -138,8 +138,9 @@ extension AppController {
         switch resolveSessionResponse(target) {
         case .failure(let response): return response
         case .success(let id):
+            let refocus = overlayOwnsWindowFocus(id, pane: pane)
             if let failure = store.submitHtmlOverlay(id, pane: pane, value: value) { return err(failure.message) }
-            reconcile()
+            reconcile(focusActive: refocus)
             return ok(id)
         }
     }

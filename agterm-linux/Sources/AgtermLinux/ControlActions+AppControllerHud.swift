@@ -66,7 +66,8 @@ extension AppController {
             }
             watchHudGeometry(session)
             armHudAutoHide(session, spec: spec)
-            reconcile()
+            // a HUD never takes the keyboard, so neither its open nor its close moves it
+            reconcile(focusActive: false)
             return ok(id)
         }
     }
@@ -112,7 +113,7 @@ extension AppController {
         case .failure(let response): return response
         case .success(let id):
             guard store.closeHud(id) else { return err(OverlayHudError.noHud) }
-            reconcile()
+            reconcile(focusActive: false)
             return ok(id)
         }
     }
