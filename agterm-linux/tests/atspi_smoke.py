@@ -2425,6 +2425,64 @@ def verify_focus_gate(env, state):
         hide_split_then_exit("left", "left", "hiddenpromoted")
         hide_split_then_exit("right", "right", "hiddenrightgone")
 
+        assert raw_control_json(env, {"cmd": "session.new", "args": {"window": window_id}})["ok"]
+        wait_for(lambda: len(others()) == 1, "session.new never landed")
+        second = others()[0]
+        control_json(env, "session", "rename", "gatesecond", "--target", second, "--window", window_id, "--json")
+        away = control_json(env, "workspace", "new", "gateaway", "--window", window_id, "--json")["result"]["id"]
+        control_json(env, "session", "new", "--workspace", away, "--window", window_id, "--json")
+        third = wait_for(lambda: next((item["id"] for workspace in window_tree(env, window_id)["workspaces"]
+                                       if workspace["id"] == away for item in workspace["sessions"]), None),
+                         "the second workspace's session never landed")
+        time.sleep(1.0)
+
+        def selected():
+            return next((item["id"] for workspace in window_tree(env, window_id)["workspaces"]
+                         for item in workspace["sessions"] if item.get("active")), None)
+
+        def search_first(marker):
+            assert request("session.select")["ok"]
+            wait_for(lambda: selected() == first, "session.select did not return to the first session")
+            time.sleep(0.5)
+            press_x11_key("ctrl+shift+f", process.pid)
+            time.sleep(0.5)
+            type_x11_text(f"{marker}needle", process.pid)
+            time.sleep(0.5)
+            assert f"{marker}needle" not in pane_text(), f"{marker}: the search entry never took the keyboard"
+
+        def leaves_search(marker, target, move):
+            search_first(marker)
+            move()
+            wait_for(lambda: selected() == target, f"{marker}: the selection never moved")
+            time.sleep(0.5)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in pane_text(target), f"{marker}: the deselected session's search kept the keyboard")
+            press_escape(process.pid)
+            time.sleep(0.5)
+            type_x11_text(f" {marker}esc", process.pid)  # the space feeds any meta prefix the Escape left
+            wait_for(lambda: f"{marker}esc" in pane_text(target), f"{marker}: Escape took the keyboard off the pane")
+
+        leaves_search("gonext", second, lambda: raw_control_json(
+            env, {"cmd": "session.go", "args": {"window": window_id, "to": "next"}}))
+        leaves_search("selectaway", second, lambda: request("session.select", target=second))
+        leaves_search("rowclick", second, lambda: mouse_click(
+            lambda: named(app, "gatesecond", role="label"), process.pid, button="left"))
+        leaves_search("workspacego", third, lambda: raw_control_json(
+            env, {"cmd": "workspace.go", "args": {"window": window_id, "to": "next"}}))
+
+        search_first("staying")
+        assert request("session.split", target=second, mode="on")["ok"]
+        wait_for(lambda: next(item for item in window_tree(env, window_id)["workspaces"][0]["sessions"]
+                              if item["id"] == second).get("split"), "the background session never split")
+        time.sleep(0.5)
+        type_x11_text("stayingmore", process.pid)
+        time.sleep(0.5)
+        assert "stayingmore" not in pane_text(), "a command leaving the selection alone ended the search"
+        press_escape(process.pid)
+        time.sleep(0.5)
+        type_x11_text("stayingback", process.pid)
+        wait_for(lambda: "stayingback" in pane_text(), "Escape did not end the search that stayed")
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)

@@ -366,7 +366,6 @@ final class AppController {
         let prev = store.selectedSessionID
         let focusWasEnabled = store.focusEnabled
         let needsRefresh = clearedRowChanges(id) || (prev.map(clearedRowChanges) ?? false)
-        dropSearchOnSelectionChange(from: prev, to: id)
         if userInitiated { noteUserActivity() }
         store.selectSession(id)
         let focusFilterChanged = focusWasEnabled != store.focusEnabled
@@ -378,17 +377,6 @@ final class AppController {
         updateCustomCommandsButton()
         if needsRefresh || focusFilterChanged { rebuildSidebar() }
     }
-    /// Close the search bar when the selection leaves the session it was pinned to — it searches ONE
-    /// surface, so left open it would step through scrollback the user is no longer looking at.
-    private func dropSearchOnSelectionChange(from prev: UUID?, to id: UUID?) {
-        guard prev != id, let owner = searchSurface else { return }
-        owner.endSearch()
-        endSearchAutoFollowSuppression()
-        searchSessionID = nil
-        searchSurface = nil
-        gtk_widget_set_visible(W(searchBar), 0)
-    }
-
     /// Whether selecting `id` would change its sidebar row (an unseen badge or an auto-reset glyph clears).
     private func clearedRowChanges(_ id: UUID) -> Bool {
         guard let s = store.session(withID: id) else { return false }
@@ -432,7 +420,6 @@ final class AppController {
     func applyWorkspaceStep(from prev: UUID?) {
         let selected = store.selectedSessionID
         if selected != prev {
-            dropSearchOnSelectionChange(from: prev, to: selected)
             if let selected { NotificationManager.withdraw(windowID: windowID, sessionID: selected) }
             updateRecentSessionsButton()
         }

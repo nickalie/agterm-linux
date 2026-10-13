@@ -121,17 +121,19 @@ extension AppController {
         gtk_widget_set_visible(W(searchBar), 0)
     }
 
-    /// A search whose terminal is gone, by a session close or a pane teardown, ends before `reconcile` gates
-    /// focus, or its entry would keep the keyboard from the pane shown in its place. A soft-closed surface
-    /// lives on, so its search ends; a promoted survivor keeps its search. True when the entry held the keyboard.
-    func dropDeadSearch() -> Bool {
+    /// The one bar searches one surface of the selected session, so a search whose surface is gone or whose
+    /// session is no longer selected ends before the deck gates focus, or its entry would keep the keyboard
+    /// from the session shown in its place. A promoted survivor keeps its search. True when the entry held
+    /// the keyboard, which the caller then hands to the selected session.
+    func dropStraySearch() -> Bool {
         guard let id = searchSessionID ?? searchSurface?.sessionID else { return false }
+        let held = searchBar.map(holdsWindowFocus) ?? false
         if store.session(withID: id) == nil {
             if store.pendingHeldSessionIDs().contains(id) { searchSurface?.endSearch() }
         } else if searchSurface?.isTornDown != true {
-            return false
+            guard id != store.selectedSessionID else { return false }
+            searchSurface?.endSearch()
         }
-        let held = searchBar.map(holdsWindowFocus) ?? false
         abandonSearch(ownedBy: id)
         return held
     }

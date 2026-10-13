@@ -15,7 +15,7 @@ extension AppController {
     /// ghostty surfaces (killing the shells) while `undoPendingClose` still offers to bring it back, and
     /// the undo would then silently spawn a brand-new login shell in place of the user's running one.
     func reconcile(focusActive: Bool = true) {
-        let searchHeld = dropDeadSearch()
+        let searchHeld = dropStraySearch()   // ahead of the removals, which abandon a search without its keyboard
         let dashboardRestore = prepareDashboardForReconcile()
         clearInvalidTerminalZoom()
         for ws in store.workspaces {
@@ -566,6 +566,7 @@ extension AppController {
     /// and still accepting keystrokes until the grace finalizer tears it down, so nil active means every page
     /// goes inactive rather than keeping whatever the last selection left behind.
     func showActive(focus: Bool = true) {
+        let searchHeld = dropStraySearch()   // every selection change lands here
         let active = store.activeSession
         // The selected session's panes jump the launch spawn queue. Unlike macOS, where every restored pane
         // mounts at launch and the queue drains on its own, a deck page here realizes only while it is
@@ -583,7 +584,7 @@ extension AppController {
         }
         updateFloatingOverlayVisibility(activeID: active?.id)
         syncSessionAsks(focus: false)
-        if focus, let active { focusSession(active) }
+        if focus || searchHeld, let active { focusSession(active) }
         updateToggleIcons()
     }
 
