@@ -2362,6 +2362,43 @@ def verify_focus_gate(env, state):
         assert "overlaygot" not in pane_text() and "coverneedle" not in overlay_text()
         close_overlay()
 
+        def search_then(open_cover, drop, marker):
+            open_cover()
+            press_x11_key("ctrl+shift+f", process.pid)
+            time.sleep(0.5)
+            type_x11_text(f"{marker}needle", process.pid)
+            time.sleep(0.5)
+            drop()
+            time.sleep(0.5)
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in pane_text(), f"{marker}: the keyboard never left the hidden search entry")
+            assert f"{marker}needle" not in pane_text(), f"{marker}: the search entry never took the keyboard"
+
+        def scratch_on():
+            assert request("session.scratch", mode="on")["ok"]
+            wait_for(lambda: node().get("scratch"), "the scratch never opened")
+            time.sleep(1.0)
+
+        def scratch_exit():
+            assert request("session.type", text="exit\n", pane="scratch")["ok"]
+            wait_for(lambda: not node().get("scratch"), "the scratch outlived its exit")
+
+        search_then(lambda: open_overlay(command="cat"), close_overlay, "coverclosed")
+        search_then(lambda: open_overlay(command="sleep 6"),
+                    lambda: wait_for(lambda: not overlay_open(), "the overlay outlived its program"), "coverexited")
+        search_then(scratch_on, scratch_exit, "scratchexited")
+        open_overlay(command="cat", pane="left")
+        press_x11_key("ctrl+shift+f", process.pid)
+        time.sleep(0.5)
+        close_overlay(pane="left")
+        type_x11_text("panekept", process.pid)  # the search is on the pane beneath, which lives on
+        time.sleep(0.5)
+        assert "panekept" not in pane_text(), "closing a pane overlay ended the search on the pane beneath it"
+        press_escape(process.pid)
+        time.sleep(0.5)
+        type_x11_text("panecloseddone", process.pid)
+        wait_for(lambda: "panecloseddone" in pane_text(), "Escape did not end the search beneath a pane overlay")
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)

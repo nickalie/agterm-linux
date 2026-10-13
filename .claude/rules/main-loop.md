@@ -107,6 +107,8 @@ paths:
   topmost surface, never the one they opened over: a cover may have opened since.
   A deferred job still passes `reconcile(focusActive: false)`: the gate cannot see a sidebar row or any
   other widget the user moved to during the delay (the trailing soft-close reconcile does).
+  The one exception is a search whose surface is gone while its entry held the keyboard: `reconcile` hides
+  the entry and grabs through the gate anyway, as nothing else would take the keyboard off the hidden field.
 - **Tests that swap `MainTimer.scheduleTimer` go through `withFakeMainTimer`** (agtermCore test fixtures):
   the seam is a process-global static and swift-testing runs in parallel, so the swap window must contain no
   `await` — the helper's synchronous closure makes that unrepresentable.

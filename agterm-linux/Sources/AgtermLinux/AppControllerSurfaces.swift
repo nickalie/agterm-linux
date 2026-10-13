@@ -15,7 +15,7 @@ extension AppController {
     /// ghostty surfaces (killing the shells) while `undoPendingClose` still offers to bring it back, and
     /// the undo would then silently spawn a brand-new login shell in place of the user's running one.
     func reconcile(focusActive: Bool = true) {
-        dropDeadSearch()
+        let searchHeld = dropDeadSearch()
         let dashboardRestore = prepareDashboardForReconcile()
         clearInvalidTerminalZoom()
         for ws in store.workspaces {
@@ -36,8 +36,9 @@ extension AppController {
         LinuxPaneLeadCover.syncAll()   // a pane overlay opening or closing hides or shows the deck's cover
         // a rebuild would destroy a live rename's entry and commit its half-typed name; ending it rebuilds
         if !sidebarInteractionInProgress { rebuildSidebar() }
-        // the one grab, gated once the removals above have taken a closed session's widgets off the keyboard
-        showActive(focus: focusActive)
+        // the one grab, gated once the removals above have taken a closed session's widgets off the keyboard;
+        // a dropped search's entry hid with the keyboard, so the grab hands it on whatever the caller asked
+        showActive(focus: focusActive || searchHeld)
         updateTitle()
         updateAttentionButton()
         updateDashboardButton()

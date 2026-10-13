@@ -123,15 +123,17 @@ extension AppController {
 
     /// A search whose terminal is gone, by a session close or a pane teardown, ends before `reconcile` gates
     /// focus, or its entry would keep the keyboard from the pane shown in its place. A soft-closed surface
-    /// lives on, so its search ends; a promoted survivor keeps its search.
-    func dropDeadSearch() {
-        guard let id = searchSessionID ?? searchSurface?.sessionID else { return }
+    /// lives on, so its search ends; a promoted survivor keeps its search. True when the entry held the keyboard.
+    func dropDeadSearch() -> Bool {
+        guard let id = searchSessionID ?? searchSurface?.sessionID else { return false }
         if store.session(withID: id) == nil {
             if store.pendingHeldSessionIDs().contains(id) { searchSurface?.endSearch() }
         } else if searchSurface?.isTornDown != true {
-            return
+            return false
         }
+        let held = searchBar.map(holdsWindowFocus) ?? false
         abandonSearch(ownedBy: id)
+        return held
     }
 
     func searchQueryChanged(_ text: String) { searchSurface?.sendSearchQuery(text) }
