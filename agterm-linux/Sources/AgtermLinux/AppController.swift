@@ -535,6 +535,7 @@ final class AppController {
         gtk_paned_set_start_child(paned, nil)
         gtk_paned_set_end_child(paned, nil)
         gtk_paned_set_start_child(paned, W(moved))
+        gtk_widget_set_visible(W(moved), 1)   // a hidden split's host keeps its visibility through the move
         g_object_unref(RAW(moved))
         paneHosts[id]?[.left] = survivorHost
         paneHosts[id]?[.right] = nil

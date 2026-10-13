@@ -371,9 +371,12 @@ extension AppController {
         }
         if let split = splitSurfaces[s.id] {
             if s.splitSurface == nil {
-                if let primaryHost = paneHosts[s.id]?[.left], gtk_paned_get_start_child(paned) != W(primaryHost) {
-                    gtk_paned_set_start_child(paned, nil)
-                    gtk_paned_set_start_child(paned, W(primaryHost))
+                if let primaryHost = paneHosts[s.id]?[.left] {
+                    if gtk_paned_get_start_child(paned) != W(primaryHost) {
+                        gtk_paned_set_start_child(paned, nil)
+                        gtk_paned_set_start_child(paned, W(primaryHost))
+                    }
+                    gtk_widget_set_visible(W(primaryHost), 1)   // a hidden split maximizing its pane hid it
                 }
                 // drop the right pane's overlay while its host still exists; the model already tore the
                 // surface down in `closeSplit`, so only the widget layer is left to unparent.

@@ -2399,6 +2399,32 @@ def verify_focus_gate(env, state):
         type_x11_text("panecloseddone", process.pid)
         wait_for(lambda: "panecloseddone" in pane_text(), "Escape did not end the search beneath a pane overlay")
 
+        size_reads = iter(range(1000))
+
+        def columns(pane):
+            tag = f"SZ{next(size_reads)}"
+            assert request("session.type", text=f"\nprintf '{tag}:%s:\\n' \"$(stty size)\"\n", pane=pane)["ok"]
+            found = wait_for(lambda: re.findall(rf"{tag}:\d+ (\d+):", request("session.text", pane=pane)["result"]["text"]),
+                             f"stty size never answered in the {pane} pane")
+            return int(found[-1])
+
+        def hide_split_then_exit(focus, exiting, marker):
+            open_split()
+            assert request("session.focus", pane=focus)["ok"]
+            assert request("session.split", mode="off")["ok"]
+            wait_for(lambda: not node().get("split") and node().get("hasSplit"), "the split never hid")
+            time.sleep(1.0)
+            full = columns(focus)
+            assert request("session.type", text="\nexit\n", pane=exiting)["ok"]
+            wait_for(lambda: not node().get("hasSplit"), f"the {exiting} pane's exit left the split")
+            time.sleep(1.0)
+            assert columns("left") == full, f"{marker}: the surviving pane never took the page back"
+            type_x11_text(marker, process.pid)
+            wait_for(lambda: marker in pane_text(), f"{marker}: the surviving pane never got the keyboard")
+
+        hide_split_then_exit("left", "left", "hiddenpromoted")
+        hide_split_then_exit("right", "right", "hiddenrightgone")
+
         open_overlay(html=page, cwd=pages)
         close_overlay()
         type_x11_text("pageback", process.pid)
